@@ -34,9 +34,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from yt_dlp.utils import DownloadCancelled
-
-from .config import AppConfig, load_config, save_config
+from .config import AppConfig, ConfigError, config_diagnostics, load_config, save_config
 from .cookies import (
     CredentialMode,
     clear_login_state,
@@ -49,8 +47,11 @@ from .cookies import (
 )
 from .crash import crash_log_path
 from .downloader import (
+    DownloadBatchCancelled,
+    DownloadBatchResult,
     DownloadController,
     FormatChoice,
+    PartDownloadStatus,
     VideoInfoResult,
     VideoPart,
     download_videos,
@@ -59,7 +60,8 @@ from .downloader import (
 )
 from .logger import LogEmitter, redact_sensitive, setup_logging
 from .utils import (
-    classify_error,
+    ErrorKind,
+    classify_error_details,
     ffmpeg_status_text,
     format_bytes,
     format_duration,
@@ -74,7 +76,7 @@ LOGIN_URL = "https://passport.bilibili.com/login"
 
 class ParseWorker(QObject):
     finished = Signal(str, object)
-    failed = Signal(str, str, str)
+    failed = Signal(str, str, str, str)
     cancelled = Signal(str)
     thumbnail = Signal(str, bytes)
     log = Signal(str)
@@ -113,13 +115,14 @@ class ParseWorker(QObject):
             if self._cancelled.is_set():
                 self.cancelled.emit(self.url)
             else:
-                self.failed.emit(self.url, classify_error(exc), str(exc))
+                classified = classify_error_details(exc)
+                self.failed.emit(self.url, classified.code, classified.message, redact_sensitive(exc))
 
 
 class DownloadWorker(QObject):
     progress = Signal(dict)
-    finished = Signal(list)
-    failed = Signal(str, str)
+    finished = Signal(object)
+    failed = Signal(str, str, str)
     log = Signal(str)
 
     def __init__(
@@ -155,10 +158,11 @@ class DownloadWorker(QObject):
                 self.credential_mode,
             )
             self.finished.emit(saved)
-        except DownloadCancelled as exc:
-            self.failed.emit("下载已取消。", str(exc))
+        except DownloadBatchCancelled as exc:
+            self.finished.emit(exc.result)
         except Exception as exc:  # noqa: BLE001
-            self.failed.emit(classify_error(exc), str(exc))
+            classified = classify_error_details(exc)
+            self.failed.emit(classified.code, classified.message, redact_sensitive(exc))
 
 
 class SessionValidationWorker(QObject):
@@ -506,6 +510,8 @@ class MainWindow(QMainWindow):
         self._connect()
         self._load_config_into_ui()
         self._append_log("程序已启动。")
+        for diagnostic in config_diagnostics():
+            self._append_log(f"配置诊断：{diagnostic}")
         self._append_log(ffmpeg_status_text())
         if self.safe_mode:
             self._append_log("安全模式已启用：当前解析和下载强制使用匿名模式，不会加载本地登录凭据。")
@@ -718,9 +724,15 @@ class MainWindow(QMainWindow):
     def choose_download_dir(self) -> None:
         chosen = QFileDialog.getExistingDirectory(self, "选择下载目录", self.download_dir_edit.text())
         if chosen:
-            self.download_dir_edit.setText(chosen)
-            self.config.download_dir = chosen
-            save_config(self.config)
+            try:
+                updated = AppConfig(download_dir=chosen)
+                save_config(updated)
+            except ConfigError as exc:
+                self._append_log(f"保存配置失败：{redact_sensitive(exc)}")
+                QMessageBox.warning(self, "保存配置失败", str(exc))
+                return
+            self.config = updated
+            self.download_dir_edit.setText(updated.download_dir)
 
     @Slot()
     def open_crash_log(self) -> None:
@@ -899,14 +911,14 @@ class MainWindow(QMainWindow):
         self.parse_button.setEnabled(True)
         self.download_button.setEnabled(True)
 
-    @Slot(str, str, str)
-    def on_parse_failed(self, source_url: str, friendly: str, detail: str) -> None:
+    @Slot(str, str, str, str)
+    def on_parse_failed(self, source_url: str, error_code: str, friendly: str, detail: str) -> None:
         self.parse_button.setEnabled(True)
         self.download_button.setEnabled(False)
         if not self._input_matches(source_url) or self._closing:
             return
         self.status_label.setText("解析失败")
-        if "登录态" in friendly or "cookie" in detail.lower() or "login" in detail.lower():
+        if error_code == ErrorKind.LOGIN_INVALID.value:
             self.set_login_status("解析遇到登录相关错误，正在向服务端复核", "local_pending")
             self.start_session_validation()
         self._append_log(f"解析失败：{friendly}")
@@ -986,8 +998,14 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "请选择目录", "请选择下载目录。")
             return
 
-        self.config.download_dir = download_dir
-        save_config(self.config)
+        try:
+            updated_config = AppConfig(download_dir=download_dir)
+            save_config(updated_config)
+        except ConfigError as exc:
+            self._append_log(f"保存配置失败：{redact_sensitive(exc)}")
+            QMessageBox.warning(self, "保存配置失败", str(exc))
+            return
+        self.config = updated_config
 
         selector = str(self.format_combo.currentData() or "bestvideo+bestaudio/best")
         self._append_log(f"下载格式选择器：{selector}")
@@ -1037,56 +1055,104 @@ class MainWindow(QMainWindow):
     def cancel_download(self) -> None:
         if self.download_controller:
             self.download_controller.cancel()
-            self.status_label.setText("正在取消...")
-            self._append_log("已请求取消下载。")
+            if self.download_controller.waiting_for_merge:
+                text = "已请求取消，正在等待当前 FFmpeg 合并安全结束..."
+            else:
+                text = "正在取消下载..."
+            self.status_label.setText(text)
+            self._append_log(text)
 
     @Slot(dict)
     def on_download_progress(self, status: dict[str, Any]) -> None:
         raw_status = status.get("status", "")
         downloaded = status.get("downloaded_bytes") or 0
         total = status.get("total_bytes") or status.get("total_bytes_estimate") or 0
-        filename = status.get("filename") or status.get("info_dict", {}).get("filepath") or "-"
+        info_dict = status.get("info_dict") if isinstance(status.get("info_dict"), dict) else {}
+        filename = status.get("filename") or info_dict.get("filepath") or "-"
         speed = status.get("speed")
         eta = status.get("eta")
+        overall = status.get("overall_percent")
+        if isinstance(overall, (int, float)):
+            self.progress_bar.setValue(max(self.progress_bar.value(), min(100, int(overall))))
 
-        if total:
-            percent = min(100, int(downloaded * 100 / total))
-            self.progress_bar.setValue(percent)
-
-        if raw_status == "downloading":
-            self.status_label.setText("正在下载")
-        elif raw_status == "finished":
-            self.status_label.setText("下载完成，正在合并...")
-            self.progress_bar.setValue(100)
-        elif raw_status == "processing":
-            self.status_label.setText("正在处理/合并...")
+        part_number = status.get("part_number") or "-"
+        part_count = status.get("part_count") or "-"
+        phase = status.get("phase") or raw_status
+        if phase == "downloading":
+            self.status_label.setText(f"正在下载第 {part_number}/{part_count} 个分 P")
+        elif phase == "merging":
+            if self.download_controller and self.download_controller.waiting_for_merge:
+                self.status_label.setText("已请求取消，正在等待当前 FFmpeg 合并安全结束...")
+            else:
+                self.status_label.setText(f"正在合并第 {part_number}/{part_count} 个分 P")
+        elif phase == "completed":
+            self.status_label.setText(f"第 {part_number}/{part_count} 个分 P 已完成")
+        elif phase == "failed":
+            self.status_label.setText(f"第 {part_number}/{part_count} 个分 P 失败，继续处理其余任务")
 
         self.metrics_label.setText(
             f"已下载：{format_bytes(downloaded)} / {format_bytes(total)}    "
             f"速度：{format_speed(speed)}    剩余：{format_eta(eta)}    文件：{filename}"
         )
 
-    @Slot(list)
-    def on_download_finished(self, saved: list[str]) -> None:
+    @Slot(object)
+    def on_download_finished(self, result: DownloadBatchResult | list[str]) -> None:
         self.download_button.setEnabled(self._can_download_current())
         self.cancel_button.setEnabled(False)
         self.parse_button.setEnabled(True)
-        self.progress_bar.setValue(100)
-        target = self.download_dir_edit.text()
-        self.status_label.setText(f"下载完成，已保存到：{target}")
-        self._append_log(f"下载完成，已保存到：{target}")
-        if not self._closing:
-            QMessageBox.information(self, "下载完成", f"已保存到：{target}")
+        if not isinstance(result, DownloadBatchResult):
+            saved = list(result)
+            self.progress_bar.setValue(100)
+            summary = f"下载完成，保存了 {len(saved)} 个文件。"
+            details = "\n".join(saved)
+            self.status_label.setText(summary)
+            self._append_log(summary)
+            if not self._closing:
+                QMessageBox.information(self, "下载完成", f"{summary}\n\n{details}")
+            return
 
-    @Slot(str, str)
-    def on_download_failed(self, friendly: str, detail: str) -> None:
+        completed = result.completed
+        failed = result.failed
+        cancelled = tuple(item for item in result.part_results if item.status is PartDownloadStatus.CANCELLED)
+        if not cancelled:
+            self.progress_bar.setValue(100)
+        summary = f"任务结束：成功 {len(completed)}，失败 {len(failed)}，取消 {len(cancelled)}。"
+        self.status_label.setText(summary)
+        self._append_log(summary)
+        for item in completed:
+            for path in item.saved_files:
+                self._append_log(f"P{item.part.index} 已保存：{path}")
+        for item in failed:
+            message = item.error.message if item.error else "下载失败"
+            self._append_log(f"P{item.part.index} 失败：{message}；{item.detail}")
+
+        if any(item.error and item.error.kind is ErrorKind.LOGIN_INVALID for item in failed):
+            self.set_login_status("下载遇到登录相关错误，正在向服务端复核", "local_pending")
+            self.start_session_validation()
+
+        saved_preview = "\n".join(result.saved_files[:10])
+        if len(result.saved_files) > 10:
+            saved_preview += f"\n……另有 {len(result.saved_files) - 10} 个文件"
+        dialog_text = summary + (f"\n\n已保存文件：\n{saved_preview}" if saved_preview else "")
+        if self._closing:
+            return
+        if failed:
+            QMessageBox.warning(self, "下载任务部分失败", dialog_text)
+        else:
+            QMessageBox.information(self, "下载任务结束", dialog_text)
+
+    @Slot(str, str, str)
+    def on_download_failed(self, error_code: str, friendly: str, detail: str) -> None:
         self.download_button.setEnabled(self._can_download_current())
         self.cancel_button.setEnabled(False)
         self.parse_button.setEnabled(True)
         self.status_label.setText(friendly)
         self._append_log(f"下载失败：{friendly}")
         self._append_log(detail)
-        if friendly != "下载已取消。" and not self._closing:
+        if error_code == ErrorKind.LOGIN_INVALID.value:
+            self.set_login_status("下载遇到登录相关错误，正在向服务端复核", "local_pending")
+            self.start_session_validation()
+        if not self._closing:
             QMessageBox.warning(self, "下载失败", f"{friendly}\n\n详细信息：{detail}")
 
     def _active_threads(self) -> list[QThread]:
