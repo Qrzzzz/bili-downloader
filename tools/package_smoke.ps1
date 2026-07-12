@@ -1,7 +1,6 @@
 param(
     [Parameter(Mandatory = $true)][string]$Executable,
-    [ValidateRange(5, 300)][int]$TimeoutSeconds = 60,
-    [switch]$RequireBundledChromium
+    [ValidateRange(5, 300)][int]$TimeoutSeconds = 60
 )
 
 Set-StrictMode -Version Latest
@@ -102,10 +101,6 @@ try {
     if ([string]$playwrightResult.page_url -ne "about:blank") {
         throw "Packaged Playwright smoke did not load about:blank."
     }
-    if ($RequireBundledChromium -and [string]$playwrightResult.browser -ne "playwright-chromium") {
-        throw "Packaged Playwright smoke did not use the bundled Chromium runtime."
-    }
-
     Write-Host "Package smoke passed: $executablePath"
     Write-Host "Version: $($versionInfo.ProductVersion)"
 }

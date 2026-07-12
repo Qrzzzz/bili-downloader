@@ -239,7 +239,7 @@ class LoginWorker(QObject):
             "headless": False,
         }
         errors: list[str] = []
-        for channel in (None, "chrome", "msedge"):
+        for channel in ("msedge", "chrome", None):
             try:
                 if channel:
                     return playwright.chromium.launch(channel=channel, **launch_kwargs)
@@ -261,7 +261,7 @@ class LoginWorker(QObject):
             outcome = LoginOutcome(
                 "failed",
                 "Playwright 未安装或浏览器依赖缺失。",
-                f"{redact_sensitive(exc)}\n请运行 build.ps1，或手动执行：python -m playwright install chromium",
+                f"{redact_sensitive(exc)}\n请重新安装 requirements.txt，并确认系统 Edge 或 Chrome 可以正常启动。",
             )
         else:
             browser = None

@@ -41,7 +41,7 @@ def main() -> int:
             from playwright.sync_api import sync_playwright
 
             with sync_playwright() as playwright:
-                for channel in (None, "chrome", "msedge"):
+                for channel in ("msedge", "chrome", None):
                     label = "playwright-chromium" if channel is None else channel
                     browser = None
                     context = None

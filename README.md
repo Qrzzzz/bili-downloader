@@ -40,12 +40,10 @@
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) "ms-playwright")
-.\.venv\Scripts\python.exe -m playwright install chromium
 .\.venv\Scripts\python.exe -m app.main
 ```
 
-如果不使用项目内的 `ms-playwright\` 目录，也可以按 Playwright 默认方式安装浏览器。不要把 Playwright 下载的浏览器目录提交到 Git 仓库。
+扫码登录优先使用 Windows 自带的 Microsoft Edge，其次使用系统 Chrome。发布包不内置 Chromium，也不会在构建时下载浏览器。
 
 ## 环境诊断与更新检查
 
@@ -77,13 +75,7 @@ dist\BiliDownloader\BiliDownloader.v1.1.exe
 .\build.ps1 -OneFile
 ```
 
-onefile 启动通常更慢，且 Playwright Chromium 与 FFmpeg 等外部依赖更难排查。面向公开发布时，建议维护者先验证 onedir 包。
-
-如果当前网络无法下载 Playwright Chromium，但接受使用系统 Chrome 或 Edge fallback，可以跳过浏览器下载：
-
-```powershell
-.\build.ps1 -SkipPlaywrightBrowserInstall
-```
+onefile 启动通常更慢，且外部浏览器与 FFmpeg 等依赖更难排查。面向公开发布时，建议维护者先验证 onedir 包。
 
 发布前请阅读 [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)，确认没有把本地登录态、日志、下载文件、浏览器 profile、构建缓存或未确认许可证义务的二进制文件放入仓库或发布包。
 
@@ -125,14 +117,7 @@ FFmpeg 用于合并音视频流。你可以选择以下方式之一：
 
 ### 扫码登录打不开怎么办？
 
-请先确认已安装 Playwright Chromium：
-
-```powershell
-$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) "ms-playwright")
-.\.venv\Scripts\python.exe -m playwright install chromium
-```
-
-如果是打包后的程序，请确认发布包中包含必要的 Playwright 运行文件，或者系统中已安装可用的 Chrome / Edge。
+请确认系统中的 Microsoft Edge 或 Chrome 可以正常启动，并在“环境诊断”中检查登录浏览器状态。程序不会下载或内置 Chromium；如果系统浏览器损坏或被组织策略禁用，需要先修复浏览器环境。
 
 ### 解析失败怎么办？
 

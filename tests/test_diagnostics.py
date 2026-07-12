@@ -94,8 +94,8 @@ def test_playwright_probe_uses_browser_fallback(monkeypatch: pytest.MonkeyPatch)
         def launch(self, **kwargs: Any) -> Browser:
             channel = kwargs.get("channel")
             launches.append(channel)
-            if channel is None:
-                raise RuntimeError("bundled browser unavailable")
+            if channel == "msedge":
+                raise RuntimeError("system Edge unavailable")
             return Browser()
 
     class Playwright:
@@ -120,7 +120,7 @@ def test_playwright_probe_uses_browser_fallback(monkeypatch: pytest.MonkeyPatch)
 
     assert item.status is diagnostics.DiagnosticStatus.OK
     assert item.summary == "系统 Chrome 可启动"
-    assert launches == [None, "chrome"]
+    assert launches == ["msedge", "chrome"]
 
 
 def test_collect_diagnostics_does_not_remote_validate_login(

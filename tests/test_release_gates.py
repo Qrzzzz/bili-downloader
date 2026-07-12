@@ -25,6 +25,16 @@ def test_release_version_is_1_1_and_windows_compatible() -> None:
     assert "StringStruct('OriginalFilename', 'BiliDownloader.v1.1.exe')" in resource
 
 
+def test_lite_build_does_not_bundle_playwright_chromium() -> None:
+    root = Path(__file__).resolve().parents[1]
+    build_script = (root / "build.ps1").read_text(encoding="utf-8")
+    spec = (root / "BiliDownloader.spec").read_text(encoding="utf-8")
+
+    assert "playwright install chromium" not in build_script
+    assert "ms-playwright" not in spec
+    assert "BILI_BROWSER_ROOT" not in spec
+
+
 def test_parse_smoke_writes_structured_412_without_traceback(
     isolated_paths: object,
     monkeypatch,

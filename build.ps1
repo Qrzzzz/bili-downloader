@@ -1,7 +1,6 @@
 param(
     [switch]$Clean,
-    [switch]$OneFile,
-    [switch]$SkipPlaywrightBrowserInstall
+    [switch]$OneFile
 )
 
 Set-StrictMode -Version Latest
@@ -86,19 +85,6 @@ if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
 Invoke-CheckedNative -FilePath $venvPython -ArgumentList @("-m", "pip", "install", "--upgrade", "pip") -Step "Upgrade pip"
 Invoke-CheckedNative -FilePath $venvPython -ArgumentList @("-m", "pip", "install", "-r", "requirements.txt") -Step "Install runtime dependencies"
 
-$bundledBrowserRoot = Join-Path $Root "ms-playwright"
-if (-not $SkipPlaywrightBrowserInstall) {
-    $env:PLAYWRIGHT_BROWSERS_PATH = $bundledBrowserRoot
-    Invoke-CheckedNative -FilePath $venvPython -ArgumentList @("-m", "playwright", "install", "chromium") -Step "Install Playwright Chromium"
-}
-$browserSource = $null
-if (Test-Path -LiteralPath $bundledBrowserRoot -PathType Container) {
-    $browserSource = $bundledBrowserRoot
-} elseif (-not [string]::IsNullOrWhiteSpace($env:PLAYWRIGHT_BROWSERS_PATH) -and
-        (Test-Path -LiteralPath $env:PLAYWRIGHT_BROWSERS_PATH -PathType Container)) {
-    $browserSource = [System.IO.Path]::GetFullPath($env:PLAYWRIGHT_BROWSERS_PATH)
-}
-
 Invoke-CheckedNative -FilePath $venvPython -ArgumentList @("-m", "compileall", "-q", "app", "tools") -Step "Compile Python sources"
 
 $version = Invoke-CapturedNative -FilePath $venvPython -ArgumentList @("-c", "from app import __version__; print(__version__)") -Step "Read application version"
@@ -133,11 +119,6 @@ $env:BILI_BUILD_ONEFILE = if ($OneFile) { "1" } else { "0" }
 $env:BILI_ARTIFACT_BASENAME = "BiliDownloader.v$version"
 $env:BILI_VERSION_FILE = $versionInfoPath
 $env:BILI_BUILD_METADATA = $buildInfoPath
-if ($null -ne $browserSource) {
-    $env:BILI_BROWSER_ROOT = $browserSource
-} else {
-    Remove-Item Env:BILI_BROWSER_ROOT -ErrorAction SilentlyContinue
-}
 Invoke-CheckedNative -FilePath $venvPython -ArgumentList @("-m", "PyInstaller", "--noconfirm", "--clean", "BiliDownloader.spec") -Step "Build application with PyInstaller"
 
 $artifact = if ($OneFile) {

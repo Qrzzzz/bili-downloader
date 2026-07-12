@@ -53,14 +53,6 @@ ffmpeg_file = root / "tools" / "ffmpeg.exe"
 if ffmpeg_file.exists():
     datas.append((str(ffmpeg_file), "tools"))
 
-browser_root = Path(os.environ.get("BILI_BROWSER_ROOT", root / "ms-playwright"))
-if browser_root.exists():
-    for item in browser_root.rglob("*"):
-        if item.is_file():
-            relative_parent = item.relative_to(browser_root).parent
-            datas.append((str(item), str(Path("ms-playwright") / relative_parent)))
-
-
 a = Analysis(
     ["app/main.py"],
     pathex=[str(root)],

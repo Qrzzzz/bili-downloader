@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - Unified the product name as **Bili Downloader Lite**, including the main window title and Windows metadata.
 - Standardized Windows release filenames as `BiliDownloader.v<version>.exe`.
 - Routed batch-level failures through the same structured result flow as completed and partially failed downloads.
+- Kept Lite release packages compact by using system Edge first and Chrome second instead of bundling Chromium.
 
 ## [1.0] - 2026-07-12
 
