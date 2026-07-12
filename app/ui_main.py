@@ -61,6 +61,7 @@ from .downloader import (
     parse_video_info,
 )
 from .logger import LogEmitter, redact_sensitive, setup_logging
+from .ui_dialogs import DiagnosticsDialog
 from .utils import (
     ErrorKind,
     classify_error_details,
@@ -525,6 +526,7 @@ class MainWindow(QMainWindow):
         self.session_worker: SessionValidationWorker | None = None
         self.download_controller: DownloadController | None = None
         self.login_dialog: LoginDialog | None = None
+        self.diagnostics_dialog: DiagnosticsDialog | None = None
         self.safe_mode = safe_mode
         self.credential_mode = CredentialMode.ANONYMOUS if safe_mode else CredentialMode.SAVED
         self.login_status_code = "none"
@@ -635,9 +637,11 @@ class MainWindow(QMainWindow):
         self.qr_login_button = QPushButton("扫码登录")
         self.logout_button = QPushButton("退出登录 / 清除登录状态")
         self.view_crash_log_button = QPushButton("查看错误日志")
+        self.diagnostics_button = QPushButton("环境诊断")
         login_buttons.addWidget(self.qr_login_button)
         login_buttons.addWidget(self.logout_button)
         login_buttons.addWidget(self.view_crash_log_button)
+        login_buttons.addWidget(self.diagnostics_button)
         compliance = QLabel(
             "不输入账号密码，不读取 Chrome/Edge/Firefox 等日常浏览器 Cookie。扫码登录只使用本程序打开的 Bilibili 官方登录页，登录态仅保存在本机应用数据目录。"
         )
@@ -685,6 +689,7 @@ class MainWindow(QMainWindow):
         self.qr_login_button.clicked.connect(self.start_qr_login)
         self.logout_button.clicked.connect(self.logout)
         self.view_crash_log_button.clicked.connect(self.open_crash_log)
+        self.diagnostics_button.clicked.connect(self.open_diagnostics)
         self.select_all_button.clicked.connect(self.select_all_parts)
         self.select_first_button.clicked.connect(self.select_first_part)
         self.log_emitter.message.connect(self._append_log)
@@ -775,6 +780,18 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             logging.getLogger("bili_downloader").exception("打开 crash.log 失败")
             QMessageBox.information(self, "错误日志位置", f"无法自动打开日志。\n\n路径：{path}\n\n错误：{redact_sensitive(exc)}")
+
+    @Slot()
+    def open_diagnostics(self) -> None:
+        if self.diagnostics_dialog is not None:
+            self.diagnostics_dialog.show()
+            self.diagnostics_dialog.raise_()
+            self.diagnostics_dialog.activateWindow()
+            return
+        dialog = DiagnosticsDialog(AppConfig(**asdict(self.config)), self)
+        dialog.destroyed.connect(lambda: setattr(self, "diagnostics_dialog", None))
+        self.diagnostics_dialog = dialog
+        dialog.show()
 
     @Slot()
     def start_qr_login(self) -> None:
@@ -1189,6 +1206,8 @@ class MainWindow(QMainWindow):
         candidates = [self.parse_thread, self.session_thread, self.download_thread]
         if self.login_dialog is not None:
             candidates.append(self.login_dialog.thread)
+        if self.diagnostics_dialog is not None:
+            candidates.extend(self.diagnostics_dialog.active_threads())
         active: list[QThread] = []
         for thread in candidates:
             if thread is None or thread in active:
@@ -1207,6 +1226,8 @@ class MainWindow(QMainWindow):
             self.session_worker.request_cancel()
         if self.login_dialog is not None:
             self.login_dialog.request_shutdown()
+        if self.diagnostics_dialog is not None:
+            self.diagnostics_dialog.request_shutdown()
         if self.download_controller:
             self.download_controller.cancel()
         for thread in self._active_threads():
@@ -1242,6 +1263,7 @@ class MainWindow(QMainWindow):
         self.cancel_button.setEnabled(False)
         self.qr_login_button.setEnabled(False)
         self.logout_button.setEnabled(False)
+        self.diagnostics_button.setEnabled(False)
         self.status_label.setText("正在安全关闭，请稍候...")
         self._request_shutdown()
 
