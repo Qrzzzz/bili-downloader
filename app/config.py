@@ -135,8 +135,14 @@ def _fallback(diagnostics: list[str], reason: str) -> AppConfig:
 
 def load_config() -> AppConfig:
     with _CONFIG_LOCK:
-        path = config_path()
         diagnostics: list[str] = []
+        try:
+            path = config_path()
+        except (OSError, TypeError, ValueError) as exc:
+            return _fallback(
+                diagnostics,
+                f"无法访问应用配置目录（{type(exc).__name__}），已使用默认配置。",
+            )
 
         try:
             if path.stat().st_size > MAX_CONFIG_BYTES:
@@ -188,7 +194,10 @@ def save_config(config: AppConfig) -> None:
     payload = json.dumps(asdict(validated), ensure_ascii=False, indent=2) + "\n"
 
     with _CONFIG_LOCK:
-        path = config_path()
+        try:
+            path = config_path()
+        except (OSError, TypeError, ValueError) as exc:
+            raise ConfigSaveError(f"无法访问应用配置目录：{type(exc).__name__}。") from exc
         temporary: Path | None = None
         descriptor: int | None = None
         try:

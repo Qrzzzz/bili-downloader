@@ -137,7 +137,9 @@ def _legacy_credential_files() -> list[Path]:
 def ensure_playwright_runtime() -> None:
     bundled = resource_root() / "ms-playwright"
     if bundled.exists():
-        os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(bundled))
+        # A packaged app must use the browser shipped with that artifact rather
+        # than silently succeeding through a developer/user cache.
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
 
 
 def normalize_cookie_domain(domain: str) -> str:
@@ -209,11 +211,18 @@ def cookies_indicate_logged_in(cookies: Iterable[dict[str, Any]]) -> bool:
     return LOGIN_COOKIE_NAMES.issubset(found)
 
 
-def _validate_cookie_set(cookies: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def _validate_cookie_set(
+    cookies: Iterable[dict[str, Any]],
+    *,
+    require_unexpired: bool = True,
+) -> list[dict[str, Any]]:
     selected = filter_bilibili_cookies(cookies)
     if not selected:
         raise SessionSaveError("登录态中没有允许的 Bilibili Cookie")
-    if not cookies_indicate_logged_in(selected):
+    login_names = {str(cookie.get("name") or "") for cookie in selected if cookie.get("value")}
+    if not LOGIN_COOKIE_NAMES.issubset(login_names):
+        raise SessionSaveError("登录态中缺少必要的 Bilibili 登录 Cookie")
+    if require_unexpired and not cookies_indicate_logged_in(selected):
         raise SessionSaveError("登录态中缺少有效的 Bilibili 登录 Cookie")
     return selected
 
@@ -382,7 +391,8 @@ def _decode_envelope(data: bytes) -> SessionSnapshot:
         if not generation or generation != str(envelope.get("generation") or ""):
             raise ValueError("generation mismatch")
         saved_at = float(payload.get("saved_at") or 0)
-        cookies = _validate_cookie_set(payload.get("cookies") or [])
+        # Expiration is a normal session state, not structural corruption.
+        cookies = _validate_cookie_set(payload.get("cookies") or [], require_unexpired=False)
     except SessionSaveError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -636,6 +646,8 @@ def cookiefile_lease(mode: CredentialMode | str = CredentialMode.SAVED) -> Itera
         if snapshot is None:
             yield None
             return
+        if not cookies_indicate_logged_in(snapshot.cookies):
+            raise SessionSaveError("登录态已失效或过期，请重新扫码登录")
         leases = session_dir() / "leases"
         if leases.exists():
             # The session lock guarantees no live lease belongs to another task.
@@ -687,37 +699,37 @@ def ensure_cookiefile_from_saved_state(network_check: bool = False) -> Path | No
     raise SessionSaveError("长期 cookies.txt 已停用；请使用 cookiefile_lease")
 
 
-def _credential_targets() -> list[Path]:
+def _credential_targets() -> tuple[list[Path], list[str]]:
     current_root = app_data_dir()
     roots = [current_root]
     legacy_root = _legacy_app_root()
     if legacy_root is not None and legacy_root not in roots:
         roots.append(legacy_root)
     targets: list[Path] = []
+    failures: list[str] = []
     for root in roots:
         targets.append(root / SESSION_DIR_NAME)
-        if root.exists():
-            try:
+        try:
+            if root.exists():
                 targets.extend(
                     child
                     for child in root.iterdir()
                     if child.name.lower().startswith(("session_corrupted_", "session-quarantine", "credential-backup"))
                 )
-            except OSError:
-                pass
-    return list(dict.fromkeys(targets))
+        except OSError as exc:
+            failures.append(f"无法枚举登录态目录 {root}: {redact_sensitive(exc)}")
+    return list(dict.fromkeys(targets)), failures
 
 
 def clear_login_state() -> ClearLoginResult:
     deleted: list[str] = []
-    failures: list[str] = []
-    targets = _credential_targets()
+    targets, failures = _credential_targets()
     try:
         with _session_transaction():
             for target in targets:
-                if not target.exists():
-                    continue
                 try:
+                    if not target.exists():
+                        continue
                     if target.is_dir():
                         shutil.rmtree(target)
                     else:
@@ -728,5 +740,12 @@ def clear_login_state() -> ClearLoginResult:
     except SessionBusyError as exc:
         failures.append(str(exc))
 
-    remaining = tuple(str(target) for target in targets if target.exists())
+    remaining_items: list[str] = []
+    for target in targets:
+        try:
+            if target.exists():
+                remaining_items.append(str(target))
+        except OSError as exc:
+            failures.append(f"无法复查登录态路径 {target}: {redact_sensitive(exc)}")
+    remaining = tuple(remaining_items)
     return ClearLoginResult(not failures and not remaining, tuple(deleted), tuple(failures), remaining)
