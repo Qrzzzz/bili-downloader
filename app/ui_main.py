@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
 import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import Any
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -71,30 +72,46 @@ LOGIN_URL = "https://passport.bilibili.com/login"
 
 
 class ParseWorker(QObject):
-    finished = Signal(object)
-    failed = Signal(str, str)
-    thumbnail = Signal(bytes)
+    finished = Signal(str, object)
+    failed = Signal(str, str, str)
+    cancelled = Signal(str)
+    thumbnail = Signal(str, bytes)
     log = Signal(str)
 
     def __init__(self, url: str, config: AppConfig) -> None:
         super().__init__()
         self.url = url
         self.config = config
+        self._cancelled = threading.Event()
         self.emitter = LogEmitter()
         self.emitter.message.connect(self.log.emit)
+
+    def request_cancel(self) -> None:
+        self._cancelled.set()
 
     @Slot()
     def run(self) -> None:
         try:
             result = parse_video_info(self.url, self.config, self.emitter)
+            if self._cancelled.is_set():
+                self.cancelled.emit(self.url)
+                return
             if result.thumbnail_url:
                 try:
-                    self.thumbnail.emit(fetch_thumbnail(result.thumbnail_url))
+                    thumbnail = fetch_thumbnail(result.thumbnail_url)
+                    if not self._cancelled.is_set():
+                        self.thumbnail.emit(self.url, thumbnail)
                 except Exception as exc:  # noqa: BLE001
                     self.log.emit(f"封面加载失败：{exc}")
-            self.finished.emit(result)
+            if self._cancelled.is_set():
+                self.cancelled.emit(self.url)
+            else:
+                self.finished.emit(self.url, result)
         except Exception as exc:  # noqa: BLE001
-            self.failed.emit(classify_error(exc), str(exc))
+            if self._cancelled.is_set():
+                self.cancelled.emit(self.url)
+            else:
+                self.failed.emit(self.url, classify_error(exc), str(exc))
 
 
 class DownloadWorker(QObject):
@@ -143,33 +160,53 @@ class SessionValidationWorker(QObject):
     finished = Signal(str, str)
     log = Signal(str)
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._cancelled = threading.Event()
+
+    def request_cancel(self) -> None:
+        self._cancelled.set()
+
     @Slot()
     def run(self) -> None:
         try:
             status = validate_saved_session()
-            self.finished.emit(status.code, status.text)
+            if self._cancelled.is_set():
+                self.finished.emit("cancelled", "")
+            else:
+                self.finished.emit(status.code, status.text)
         except Exception as exc:  # noqa: BLE001
             logging.getLogger("bili_downloader").exception("登录态后台验证发生未预期异常")
             self.log.emit(f"登录态验证失败：{redact_sensitive(exc)}")
-            self.finished.emit("expired", "登录状态异常，请重新扫码登录")
+            if self._cancelled.is_set():
+                self.finished.emit("cancelled", "")
+            else:
+                self.finished.emit("expired", "登录状态异常，请重新扫码登录")
+
+
+@dataclass(frozen=True)
+class LoginOutcome:
+    code: str
+    friendly: str = ""
+    detail: str = ""
 
 
 class LoginWorker(QObject):
     status = Signal(str)
     screenshot = Signal(bytes)
-    succeeded = Signal()
-    failed = Signal(str, str)
+    completed = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
-        self._cancelled = False
-        self._refresh_requested = False
+        self._cancelled = threading.Event()
+        self._refresh_requested = threading.Event()
+        self.terminal_outcome: LoginOutcome | None = None
 
     def request_cancel(self) -> None:
-        self._cancelled = True
+        self._cancelled.set()
 
     def request_refresh(self) -> None:
-        self._refresh_requested = True
+        self._refresh_requested.set()
 
     def _launch_browser(self, playwright):
         launch_kwargs = {
@@ -188,90 +225,108 @@ class LoginWorker(QObject):
 
     @Slot()
     def run(self) -> None:
+        outcome: LoginOutcome | None = None
         try:
             ensure_playwright_runtime()
             from playwright.sync_api import Error as PlaywrightError
             from playwright.sync_api import sync_playwright
         except Exception as exc:  # noqa: BLE001
             logging.getLogger("bili_downloader").exception("Playwright 初始化失败")
-            self.failed.emit(
+            outcome = LoginOutcome(
+                "failed",
                 "Playwright 未安装或浏览器依赖缺失。",
                 f"{redact_sensitive(exc)}\n请运行 build.ps1，或手动执行：python -m playwright install chromium",
             )
-            return
-
-        browser = None
-        context = None
-        try:
-            self.status.emit("请使用 Bilibili App 扫码登录")
-            with sync_playwright() as playwright:
-                browser = self._launch_browser(playwright)
-                context = browser.new_context(
-                    locale="zh-CN",
-                    viewport={"width": 520, "height": 720},
-                )
-                page = context.new_page()
-                page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
-                page.bring_to_front()
-
-                last_screenshot = 0.0
-                deadline = time.monotonic() + 300
-                while not self._cancelled and time.monotonic() < deadline:
-                    if self._refresh_requested:
-                        self._refresh_requested = False
-                        self.status.emit("请使用 Bilibili App 扫码登录")
+        else:
+            browser = None
+            context = None
+            try:
+                self.status.emit("请使用 Bilibili App 扫码登录")
+                with sync_playwright() as playwright:
+                    try:
+                        browser = self._launch_browser(playwright)
+                        context = browser.new_context(
+                            locale="zh-CN",
+                            viewport={"width": 520, "height": 720},
+                        )
+                        page = context.new_page()
                         page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
                         page.bring_to_front()
 
-                    cookies = context.cookies(
-                        [
-                            "https://www.bilibili.com",
-                            "https://passport.bilibili.com",
-                            "https://api.bilibili.com",
-                        ]
-                    )
-                    if cookies_indicate_logged_in(cookies):
-                        self.status.emit("登录成功，正在保存登录状态")
-                        save_context_storage_state_atomic(context)
-                        self.succeeded.emit()
-                        return
+                        last_screenshot = 0.0
+                        deadline = time.monotonic() + 300
+                        while not self._cancelled.is_set() and time.monotonic() < deadline:
+                            if self._refresh_requested.is_set():
+                                self._refresh_requested.clear()
+                                self.status.emit("请使用 Bilibili App 扫码登录")
+                                page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
+                                page.bring_to_front()
 
-                    try:
-                        body_text = page.locator("body").inner_text(timeout=1000)
-                        if any(token in body_text for token in ("扫码成功", "扫描成功", "确认登录", "请在手机")):
-                            self.status.emit("已扫码，请在手机上确认")
-                        elif any(token in body_text for token in ("二维码已失效", "二维码已过期", "刷新二维码")):
-                            self.status.emit("登录失败或二维码已过期，请重试")
-                    except PlaywrightError:
-                        pass
+                            cookies = context.cookies(
+                                [
+                                    "https://www.bilibili.com",
+                                    "https://passport.bilibili.com",
+                                    "https://api.bilibili.com",
+                                ]
+                            )
+                            if cookies_indicate_logged_in(cookies):
+                                self.status.emit("登录成功，正在保存登录状态")
+                                save_context_storage_state_atomic(context)
+                                outcome = LoginOutcome("success")
+                                break
 
-                    now = time.monotonic()
-                    if now - last_screenshot > 1.0:
-                        try:
-                            self.screenshot.emit(page.screenshot(type="png", full_page=False))
-                            last_screenshot = now
-                        except PlaywrightError:
-                            pass
-                    page.wait_for_timeout(500)
+                            try:
+                                body_text = page.locator("body").inner_text(timeout=1000)
+                                if any(
+                                    token in body_text
+                                    for token in ("扫码成功", "扫描成功", "确认登录", "请在手机")
+                                ):
+                                    self.status.emit("已扫码，请在手机上确认")
+                                elif any(
+                                    token in body_text for token in ("二维码已失效", "二维码已过期", "刷新二维码")
+                                ):
+                                    self.status.emit("登录失败或二维码已过期，请重试")
+                            except PlaywrightError:
+                                pass
 
-                if self._cancelled:
-                    self.failed.emit("已取消扫码登录。", "")
-                else:
-                    self.failed.emit("登录失败或二维码已过期，请重试。", "扫码登录超过 5 分钟未完成。")
-        except Exception as exc:  # noqa: BLE001
-            logging.getLogger("bili_downloader").exception("扫码登录流程失败")
-            self.failed.emit("扫码登录失败。", redact_sensitive(exc))
-        finally:
-            if context is not None:
-                try:
-                    context.close()
-                except Exception:  # noqa: BLE001
-                    logging.getLogger("bili_downloader").exception("关闭扫码登录浏览器上下文失败")
-            if browser is not None:
-                try:
-                    browser.close()
-                except Exception:  # noqa: BLE001
-                    logging.getLogger("bili_downloader").exception("关闭扫码登录浏览器失败")
+                            now = time.monotonic()
+                            if now - last_screenshot > 1.0:
+                                try:
+                                    self.screenshot.emit(page.screenshot(type="png", full_page=False))
+                                    last_screenshot = now
+                                except PlaywrightError:
+                                    pass
+                            page.wait_for_timeout(500)
+
+                        if outcome is None:
+                            if self._cancelled.is_set():
+                                outcome = LoginOutcome("cancelled", "已取消扫码登录。")
+                            else:
+                                outcome = LoginOutcome(
+                                    "timeout",
+                                    "登录失败或二维码已过期，请重试。",
+                                    "扫码登录超过 5 分钟未完成。",
+                                )
+                    finally:
+                        # Playwright objects must be closed before leaving sync_playwright().
+                        if context is not None:
+                            try:
+                                context.close()
+                            except Exception:  # noqa: BLE001
+                                logging.getLogger("bili_downloader").exception("关闭扫码登录浏览器上下文失败")
+                        if browser is not None:
+                            try:
+                                browser.close()
+                            except Exception:  # noqa: BLE001
+                                logging.getLogger("bili_downloader").exception("关闭扫码登录浏览器失败")
+            except Exception as exc:  # noqa: BLE001
+                logging.getLogger("bili_downloader").exception("扫码登录流程失败")
+                outcome = LoginOutcome("failed", "扫码登录失败。", redact_sensitive(exc))
+
+        if outcome is None:
+            outcome = LoginOutcome("failed", "扫码登录失败。", "登录线程未产生终态。")
+        self.terminal_outcome = outcome
+        self.completed.emit(outcome)
 
 
 class LoginDialog(QDialog):
@@ -284,6 +339,8 @@ class LoginDialog(QDialog):
         self.worker: LoginWorker | None = None
         self.thread: QThread | None = None
         self.login_succeeded = False
+        self._pending_outcome: LoginOutcome | None = None
+        self._dismiss_requested = False
 
         layout = QVBoxLayout(self)
         self.preview_label = QLabel("正在打开 Bilibili 官方登录页面...")
@@ -316,20 +373,19 @@ class LoginDialog(QDialog):
         thread.started.connect(worker.run)
         worker.status.connect(self.on_status)
         worker.screenshot.connect(self.on_screenshot)
-        worker.succeeded.connect(self.on_success)
-        worker.failed.connect(self.on_failed)
-        worker.succeeded.connect(thread.quit)
-        worker.failed.connect(thread.quit)
+        worker.completed.connect(self.on_terminal)
+        worker.completed.connect(thread.quit)
+        thread.finished.connect(self.on_thread_finished)
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(lambda: setattr(self, "thread", None))
-        thread.finished.connect(lambda: setattr(self, "worker", None))
         self.worker = worker
         self.thread = thread
         thread.start()
 
     @Slot()
     def refresh_qr(self) -> None:
+        if not self.thread or not self.thread.isRunning() or self._dismiss_requested:
+            return
         self.status_label.setText("请使用 Bilibili App 扫码登录")
         self.status_for_main.emit("等待扫码")
         if self.worker:
@@ -337,9 +393,15 @@ class LoginDialog(QDialog):
 
     @Slot()
     def cancel_login(self) -> None:
+        self.request_shutdown()
+
+    def request_shutdown(self) -> None:
+        self._dismiss_requested = True
+        self.refresh_button.setEnabled(False)
+        self.cancel_button.setEnabled(False)
+        self.status_label.setText("正在关闭扫码登录...")
         if self.worker:
             self.worker.request_cancel()
-        self.reject()
 
     @Slot(str)
     def on_status(self, text: str) -> None:
@@ -361,24 +423,49 @@ class LoginDialog(QDialog):
                 pixmap.scaled(self.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
             )
 
-    @Slot()
-    def on_success(self) -> None:
-        self.login_succeeded = True
-        self.status_label.setText("登录成功，正在保存登录状态")
-        self.status_for_main.emit("已登录")
-        self.accept()
+    @Slot(object)
+    def on_terminal(self, outcome: LoginOutcome) -> None:
+        # Store only. The dialog must not accept/reject until QThread.finished.
+        self._pending_outcome = outcome
+        self.refresh_button.setEnabled(False)
+        self.cancel_button.setEnabled(False)
+        if outcome.code == "success":
+            self.status_label.setText("登录成功，正在关闭登录窗口...")
+        elif outcome.code == "cancelled":
+            self.status_label.setText("正在关闭扫码登录...")
+        else:
+            self.status_label.setText(outcome.friendly or "扫码登录失败。")
 
-    @Slot(str, str)
-    def on_failed(self, friendly: str, detail: str) -> None:
-        if friendly.startswith("已取消"):
+    @Slot()
+    def on_thread_finished(self) -> None:
+        worker = self.worker
+        outcome = self._pending_outcome or (worker.terminal_outcome if worker else None)
+        self.thread = None
+        self.worker = None
+        if outcome is None:
+            outcome = LoginOutcome("failed", "扫码登录失败。", "登录线程结束但未返回终态。")
+
+        if outcome.code == "success":
+            self.login_succeeded = True
+            self.status_for_main.emit("已登录")
+            self.accept()
             return
-        self.status_label.setText(friendly)
-        self.status_for_main.emit("登录已失效")
-        QMessageBox.warning(self, "扫码登录失败", f"{friendly}\n\n详细信息：{detail}")
+
+        if outcome.code != "cancelled" and not self._dismiss_requested:
+            self.status_for_main.emit("登录已失效")
+            if not self.parent() or not getattr(self.parent(), "_closing", False):
+                QMessageBox.warning(
+                    self,
+                    "扫码登录失败",
+                    f"{outcome.friendly}\n\n详细信息：{outcome.detail}",
+                )
+        self.reject()
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        if self.worker and not self.login_succeeded:
-            self.worker.request_cancel()
+        if self.thread and self.thread.isRunning():
+            self.request_shutdown()
+            event.ignore()
+            return
         super().closeEvent(event)
 
 
@@ -398,8 +485,13 @@ class MainWindow(QMainWindow):
         self.session_thread: QThread | None = None
         self.session_worker: SessionValidationWorker | None = None
         self.download_controller: DownloadController | None = None
+        self.login_dialog: LoginDialog | None = None
         self.safe_mode = safe_mode
         self.login_status_code = "none"
+        self._parsed_url: str | None = None
+        self._closing = False
+        self._allow_close = False
+        self._shutdown_wait_attempted = False
 
         self.log_emitter = LogEmitter()
         self.logger = setup_logging()
@@ -477,6 +569,7 @@ class MainWindow(QMainWindow):
         dir_row.addWidget(self.download_dir_edit, 1)
         dir_row.addWidget(self.browse_button)
         self.download_button = QPushButton("下载")
+        self.download_button.setEnabled(False)
         self.cancel_button = QPushButton("取消")
         self.cancel_button.setEnabled(False)
         buttons = QHBoxLayout()
@@ -542,6 +635,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(QStatusBar(self))
 
     def _connect(self) -> None:
+        self.url_edit.textChanged.connect(self.invalidate_current_video)
         self.parse_button.clicked.connect(self.start_parse)
         self.browse_button.clicked.connect(self.choose_download_dir)
         self.download_button.clicked.connect(self.start_download)
@@ -601,6 +695,8 @@ class MainWindow(QMainWindow):
 
     @Slot(str, str)
     def on_session_validated(self, code: str, text: str) -> None:
+        if code == "cancelled" or self._closing:
+            return
         self.set_login_status(text, code)
         if code == "logged_in":
             self._append_log("登录态验证成功。")
@@ -629,6 +725,10 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def start_qr_login(self) -> None:
+        if self.login_dialog is not None:
+            self.login_dialog.raise_()
+            self.login_dialog.activateWindow()
+            return
         result = QMessageBox.question(
             self,
             "保存登录态提示",
@@ -641,19 +741,24 @@ class MainWindow(QMainWindow):
 
         self.set_login_status("等待扫码")
         dialog = LoginDialog(self)
+        self.login_dialog = dialog
         dialog.status_for_main.connect(self.set_login_status)
-        accepted = dialog.exec()
-        if accepted and dialog.login_succeeded:
-            self.set_login_status("已登录", "logged_in")
-            self._append_log("扫码登录成功，登录态已保存在本机。")
-            if self.url_edit.text().strip():
-                self._append_log("登录成功，正在重新解析当前链接以刷新可用清晰度。")
-                self.start_parse()
-        else:
-            if has_saved_session():
-                self.start_session_validation()
-            else:
-                self.refresh_login_status()
+        try:
+            accepted = dialog.exec()
+            # LoginDialog can only finish after its worker thread has stopped.
+            if accepted and dialog.login_succeeded:
+                self.set_login_status("已登录", "logged_in")
+                self._append_log("扫码登录成功，登录态已保存在本机。")
+                if self.url_edit.text().strip() and not self._closing:
+                    self._append_log("登录成功，正在重新解析当前链接以刷新可用清晰度。")
+                    self.start_parse()
+            elif not self._closing:
+                if has_saved_session():
+                    self.start_session_validation()
+                else:
+                    self.refresh_login_status()
+        finally:
+            self.login_dialog = None
 
     @Slot()
     def logout(self) -> None:
@@ -670,8 +775,38 @@ class MainWindow(QMainWindow):
         self.set_login_status("未登录", "none")
         self._append_log("已清除本程序保存的扫码登录态。")
 
+    @Slot(str)
+    def invalidate_current_video(self, _text: str = "") -> None:
+        """Discard every download-capable object as soon as the input changes."""
+        if self.parse_worker:
+            self.parse_worker.request_cancel()
+        self.current_info = None
+        self.current_formats = []
+        self._parsed_url = None
+        self.parts_list.clear()
+        self.format_combo.clear()
+        self.title_label.setText("-")
+        self.uploader_label.setText("-")
+        self.duration_label.setText("-")
+        self.parts_label.setText("-")
+        self.cover_label.clear()
+        self.cover_label.setText("封面")
+        self.download_button.setEnabled(False)
+        if self.url_edit.text().strip() and not self._closing:
+            self.status_label.setText("链接已更改，请重新解析")
+
+    def _input_matches(self, source_url: str) -> bool:
+        try:
+            return normalize_bilibili_url(self.url_edit.text()) == source_url
+        except ValueError:
+            return False
+
+    def _can_download_current(self) -> bool:
+        return bool(self.current_info and self._parsed_url and self._input_matches(self._parsed_url))
+
     @Slot()
     def start_parse(self) -> None:
+        self.invalidate_current_video()
         try:
             url = normalize_bilibili_url(self.url_edit.text())
         except ValueError as exc:
@@ -695,20 +830,33 @@ class MainWindow(QMainWindow):
         worker.thumbnail.connect(self.set_thumbnail)
         worker.finished.connect(self.on_parse_finished)
         worker.failed.connect(self.on_parse_failed)
+        worker.cancelled.connect(self.on_parse_cancelled)
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
+        worker.cancelled.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(lambda: setattr(self, "parse_thread", None))
-        thread.finished.connect(lambda: setattr(self, "parse_worker", None))
+        thread.finished.connect(self.on_parse_thread_finished)
         self.parse_worker = worker
         self.parse_thread = thread
         thread.start()
 
-    @Slot(object)
-    def on_parse_finished(self, result: VideoInfoResult) -> None:
+    @Slot()
+    def on_parse_thread_finished(self) -> None:
+        self.parse_thread = None
+        self.parse_worker = None
+        if not self._closing:
+            self.parse_button.setEnabled(True)
+            self.download_button.setEnabled(self._can_download_current())
+
+    @Slot(str, object)
+    def on_parse_finished(self, source_url: str, result: VideoInfoResult) -> None:
+        if not self._input_matches(source_url) or self._closing:
+            self._append_log("解析结果已过期，已丢弃。")
+            return
         self.current_info = result
         self.current_formats = result.formats
+        self._parsed_url = source_url
         self.title_label.setText(result.title)
         self.uploader_label.setText(result.uploader)
         self.duration_label.setText(format_duration(result.duration))
@@ -721,16 +869,24 @@ class MainWindow(QMainWindow):
         self.parse_button.setEnabled(True)
         self.download_button.setEnabled(True)
 
-    @Slot(str, str)
-    def on_parse_failed(self, friendly: str, detail: str) -> None:
+    @Slot(str, str, str)
+    def on_parse_failed(self, source_url: str, friendly: str, detail: str) -> None:
         self.parse_button.setEnabled(True)
-        self.download_button.setEnabled(True)
+        self.download_button.setEnabled(False)
+        if not self._input_matches(source_url) or self._closing:
+            return
         self.status_label.setText("解析失败")
         if "登录态" in friendly or "cookie" in detail.lower() or "login" in detail.lower():
             self.set_login_status("登录已失效", "expired")
         self._append_log(f"解析失败：{friendly}")
         self._append_log(detail)
         QMessageBox.warning(self, "解析失败", f"{friendly}\n\n详细信息：{detail}")
+
+    @Slot(str)
+    def on_parse_cancelled(self, _source_url: str) -> None:
+        if not self._closing:
+            self.parse_button.setEnabled(True)
+            self.download_button.setEnabled(False)
 
     def notice_resolution_limits(self, choices: list[FormatChoice]) -> None:
         max_height = max((choice.height or 0 for choice in choices), default=0)
@@ -741,9 +897,9 @@ class MainWindow(QMainWindow):
         else:
             self._append_log("未登录时可能只能解析普通清晰度；如需 1080p 及以上清晰度，请扫码登录后重新解析。")
 
-    @Slot(bytes)
-    def set_thumbnail(self, data: bytes) -> None:
-        if not data:
+    @Slot(str, bytes)
+    def set_thumbnail(self, source_url: str, data: bytes) -> None:
+        if not data or not self._input_matches(source_url) or self._closing:
             return
         pixmap = QPixmap()
         if pixmap.loadFromData(data):
@@ -785,7 +941,8 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def start_download(self) -> None:
-        if not self.current_info:
+        if not self._can_download_current():
+            self.invalidate_current_video()
             QMessageBox.information(self, "请先解析", "请先解析视频，再开始下载。")
             return
         parts = self.selected_parts()
@@ -829,11 +986,20 @@ class MainWindow(QMainWindow):
         worker.failed.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(lambda: setattr(self, "download_thread", None))
-        thread.finished.connect(lambda: setattr(self, "download_worker", None))
+        thread.finished.connect(self.on_download_thread_finished)
         self.download_worker = worker
         self.download_thread = thread
         thread.start()
+
+    @Slot()
+    def on_download_thread_finished(self) -> None:
+        self.download_thread = None
+        self.download_worker = None
+        self.download_controller = None
+        if not self._closing:
+            self.cancel_button.setEnabled(False)
+            self.parse_button.setEnabled(True)
+            self.download_button.setEnabled(self._can_download_current())
 
     @Slot()
     def cancel_download(self) -> None:
@@ -870,25 +1036,96 @@ class MainWindow(QMainWindow):
 
     @Slot(list)
     def on_download_finished(self, saved: list[str]) -> None:
-        self.download_button.setEnabled(True)
+        self.download_button.setEnabled(self._can_download_current())
         self.cancel_button.setEnabled(False)
         self.parse_button.setEnabled(True)
         self.progress_bar.setValue(100)
         target = self.download_dir_edit.text()
         self.status_label.setText(f"下载完成，已保存到：{target}")
         self._append_log(f"下载完成，已保存到：{target}")
-        QMessageBox.information(self, "下载完成", f"已保存到：{target}")
+        if not self._closing:
+            QMessageBox.information(self, "下载完成", f"已保存到：{target}")
 
     @Slot(str, str)
     def on_download_failed(self, friendly: str, detail: str) -> None:
-        self.download_button.setEnabled(True)
+        self.download_button.setEnabled(self._can_download_current())
         self.cancel_button.setEnabled(False)
         self.parse_button.setEnabled(True)
         self.status_label.setText(friendly)
         self._append_log(f"下载失败：{friendly}")
         self._append_log(detail)
-        if friendly != "下载已取消。":
+        if friendly != "下载已取消。" and not self._closing:
             QMessageBox.warning(self, "下载失败", f"{friendly}\n\n详细信息：{detail}")
+
+    def _active_threads(self) -> list[QThread]:
+        candidates = [self.parse_thread, self.session_thread, self.download_thread]
+        if self.login_dialog is not None:
+            candidates.append(self.login_dialog.thread)
+        active: list[QThread] = []
+        for thread in candidates:
+            if thread is None or thread in active:
+                continue
+            try:
+                if thread.isRunning():
+                    active.append(thread)
+            except RuntimeError:
+                continue
+        return active
+
+    def _request_shutdown(self) -> None:
+        if self.parse_worker:
+            self.parse_worker.request_cancel()
+        if self.session_worker:
+            self.session_worker.request_cancel()
+        if self.login_dialog is not None:
+            self.login_dialog.request_shutdown()
+        if self.download_controller:
+            self.download_controller.cancel()
+        for thread in self._active_threads():
+            thread.requestInterruption()
+            # quit() is cooperative: it never destroys a running worker.
+            thread.quit()
+
+    def _wait_for_shutdown(self, timeout_ms: int = 1500) -> bool:
+        deadline = time.monotonic() + timeout_ms / 1000
+        for thread in self._active_threads():
+            remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+            if remaining_ms <= 0 or not thread.wait(remaining_ms):
+                return False
+        return not self._active_threads()
+
+    def _finish_close_when_idle(self) -> None:
+        if not self._closing:
+            return
+        if self._active_threads():
+            QTimer.singleShot(100, self._finish_close_when_idle)
+            return
+        self._allow_close = True
+        self.close()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._allow_close:
+            super().closeEvent(event)
+            return
+
+        self._closing = True
+        self.parse_button.setEnabled(False)
+        self.download_button.setEnabled(False)
+        self.cancel_button.setEnabled(False)
+        self.qr_login_button.setEnabled(False)
+        self.logout_button.setEnabled(False)
+        self.status_label.setText("正在安全关闭，请稍候...")
+        self._request_shutdown()
+
+        if not self._shutdown_wait_attempted:
+            self._shutdown_wait_attempted = True
+            if self._wait_for_shutdown():
+                self._allow_close = True
+                super().closeEvent(event)
+                return
+
+        event.ignore()
+        QTimer.singleShot(100, self._finish_close_when_idle)
 
     @Slot(str)
     def _append_log(self, message: str) -> None:
