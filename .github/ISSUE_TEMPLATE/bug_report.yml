@@ -21,7 +21,7 @@ body:
     attributes:
       label: 程序版本
       description: 请填写 Release 版本、commit hash 或本地构建说明。
-      placeholder: v0.1.0 / commit hash
+      placeholder: v1.0 / commit hash
     validations:
       required: true
   - type: input

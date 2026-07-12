@@ -15,6 +15,12 @@ from .config import app_data_dir, logs_dir
 from .logger import redact_sensitive
 
 
+CRASH_LOG_MAX_BYTES = 2 * 1024 * 1024
+CRASH_LOG_BACKUP_COUNT = 2
+_CRASH_LOG_LOCK = threading.RLock()
+_TRUNCATION_MARKER = b"\n...[crash log entry truncated]...\n"
+
+
 def crash_log_path() -> Path:
     path = logs_dir() / "crash.log"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -25,14 +31,90 @@ def app_running_lock_path() -> Path:
     return app_data_dir() / "app_running.lock"
 
 
+def _bounded_utf8(text: str, max_bytes: int) -> bytes:
+    encoded = text.encode("utf-8", errors="backslashreplace")
+    if len(encoded) <= max_bytes:
+        return encoded
+    if max_bytes <= len(_TRUNCATION_MARKER):
+        return encoded[:max_bytes].decode("utf-8", errors="ignore").encode("utf-8")
+
+    available = max_bytes - len(_TRUNCATION_MARKER)
+    head_size = available * 2 // 3
+    tail_size = available - head_size
+    head = encoded[:head_size].decode("utf-8", errors="ignore").encode("utf-8")
+    tail = encoded[-tail_size:].decode("utf-8", errors="ignore").encode("utf-8")
+    return head + _TRUNCATION_MARKER + tail
+
+
+def _backup_path(path: Path, index: int) -> Path:
+    return path.with_name(f"{path.name}.{index}")
+
+
+def _move_bounded_backup(source: Path, destination: Path) -> None:
+    if not source.exists():
+        return
+    try:
+        if source.stat().st_size > CRASH_LOG_MAX_BYTES:
+            source.unlink(missing_ok=True)
+            return
+    except OSError:
+        source.unlink(missing_ok=True)
+        return
+    os.replace(source, destination)
+
+
+def _rotate_crash_log(path: Path) -> None:
+    if CRASH_LOG_BACKUP_COUNT <= 0:
+        path.unlink(missing_ok=True)
+        return
+
+    _backup_path(path, CRASH_LOG_BACKUP_COUNT).unlink(missing_ok=True)
+    for index in range(CRASH_LOG_BACKUP_COUNT - 1, 0, -1):
+        _move_bounded_backup(_backup_path(path, index), _backup_path(path, index + 1))
+    _move_bounded_backup(path, _backup_path(path, 1))
+
+
+def _prune_crash_backups(path: Path) -> None:
+    for candidate in path.parent.glob(f"{path.name}.*"):
+        suffix = candidate.name.removeprefix(f"{path.name}.")
+        if not suffix.isdigit():
+            continue
+        try:
+            too_old = int(suffix) > CRASH_LOG_BACKUP_COUNT
+            too_large = candidate.stat().st_size > CRASH_LOG_MAX_BYTES
+            if too_old or too_large:
+                candidate.unlink(missing_ok=True)
+        except OSError:
+            # A later crash must still be writable even if an old backup is locked.
+            continue
+
+
 def _write_crash_text(text: str) -> None:
     try:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        with crash_log_path().open("a", encoding="utf-8") as handle:
-            handle.write(f"\n===== {timestamp} =====\n")
-            handle.write(redact_sensitive(text))
-            if not text.endswith("\n"):
-                handle.write("\n")
+        sanitized = redact_sensitive(text)
+        suffix = "" if sanitized.endswith("\n") else "\n"
+        entry = _bounded_utf8(f"\n===== {timestamp} =====\n{sanitized}{suffix}", CRASH_LOG_MAX_BYTES)
+        path = crash_log_path()
+        with _CRASH_LOG_LOCK:
+            _prune_crash_backups(path)
+            try:
+                current_size = path.stat().st_size if path.exists() else 0
+            except OSError:
+                current_size = CRASH_LOG_MAX_BYTES
+            if current_size + len(entry) > CRASH_LOG_MAX_BYTES:
+                try:
+                    _rotate_crash_log(path)
+                except OSError:
+                    path.unlink(missing_ok=True)
+
+            try:
+                remaining_size = path.stat().st_size if path.exists() else 0
+            except OSError:
+                remaining_size = CRASH_LOG_MAX_BYTES
+            mode = "ab" if remaining_size + len(entry) <= CRASH_LOG_MAX_BYTES else "wb"
+            with path.open(mode) as handle:
+                handle.write(entry)
     except Exception:
         # Last-resort crash logging must never raise a second exception.
         pass
