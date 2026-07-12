@@ -139,7 +139,7 @@ def _playwright_item(cancelled: Callable[[], bool]) -> DiagnosticItem:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as playwright:
-            for channel, label in ((None, "内置 Chromium"), ("chrome", "系统 Chrome"), ("msedge", "系统 Edge")):
+            for channel, label in (("msedge", "系统 Edge"), ("chrome", "系统 Chrome"), (None, "Playwright Chromium")):
                 if cancelled():
                     return DiagnosticItem("登录浏览器", DiagnosticStatus.WARNING, "检测已取消")
                 try:
