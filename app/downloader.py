@@ -119,6 +119,14 @@ class DownloadBatchResult(list[str]):
     def completed(self) -> tuple[PartDownloadResult, ...]:
         return tuple(result for result in self.part_results if result.status is PartDownloadStatus.COMPLETED)
 
+    def merged_with_retry(self, retry_result: DownloadBatchResult) -> DownloadBatchResult:
+        """Replace retried part results while preserving the original batch order."""
+
+        replacements = {result.part.url: result for result in retry_result.part_results}
+        merged = [replacements.pop(result.part.url, result) for result in self.part_results]
+        merged.extend(replacements.values())
+        return DownloadBatchResult(merged)
+
 
 class DownloadBatchCancelled(DownloadCancelled):
     def __init__(self, result: DownloadBatchResult) -> None:
