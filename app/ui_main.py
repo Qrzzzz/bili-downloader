@@ -340,6 +340,17 @@ class LoginWorker(QObject):
         self.completed.emit(outcome)
 
 
+class LoginThread(QThread):
+    """Run the blocking login workflow without moving its QObject ownership."""
+
+    def __init__(self, worker: LoginWorker, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self.worker = worker
+
+    def run(self) -> None:
+        self.worker.run()
+
+
 class LoginDialog(QDialog):
     status_for_main = Signal(str)
 
@@ -380,16 +391,13 @@ class LoginDialog(QDialog):
         self.start_worker()
 
     def start_worker(self) -> None:
-        thread = QThread(self)
         worker = LoginWorker()
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
+        worker.setParent(self)
+        thread = LoginThread(worker, self)
         worker.status.connect(self.on_status)
         worker.screenshot.connect(self.on_screenshot)
         worker.completed.connect(self.on_terminal)
-        worker.completed.connect(thread.quit)
         thread.finished.connect(self.on_thread_finished)
-        thread.finished.connect(worker.deleteLater)
         self.worker = worker
         self.thread = thread
         thread.start()
