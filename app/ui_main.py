@@ -349,8 +349,10 @@ class LoginDialog(QDialog):
         self.resize(600, 760)
         self.worker: LoginWorker | None = None
         self.thread: QThread | None = None
+        self._finished_thread: QThread | None = None
         self.login_succeeded = False
         self._pending_outcome: LoginOutcome | None = None
+        self._final_outcome: LoginOutcome | None = None
         self._dismiss_requested = False
 
         layout = QVBoxLayout(self)
@@ -388,7 +390,6 @@ class LoginDialog(QDialog):
         worker.completed.connect(thread.quit)
         thread.finished.connect(self.on_thread_finished)
         thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
         self.worker = worker
         self.thread = thread
         thread.start()
@@ -449,12 +450,31 @@ class LoginDialog(QDialog):
 
     @Slot()
     def on_thread_finished(self) -> None:
+        thread = self.thread
         worker = self.worker
         outcome = self._pending_outcome or (worker.terminal_outcome if worker else None)
+        # QThread is parented to the dialog, so retain its Python wrapper until
+        # the dialog itself is destroyed. Calling deleteLater() while the
+        # finished signal is still unwinding can race PySide's wrapper cleanup
+        # during rapid dialog close/reopen cycles on Windows.
+        self._finished_thread = thread
         self.thread = None
         self.worker = None
         if outcome is None:
             outcome = LoginOutcome("failed", "扫码登录失败。", "登录线程结束但未返回终态。")
+
+        self._final_outcome = outcome
+        # Let QThread.finished fully unwind before closing the dialog. This
+        # prevents nested dialog.finished handlers from touching the native
+        # QThread while Windows is still completing its teardown.
+        QTimer.singleShot(0, self._finish_dialog)
+
+    @Slot()
+    def _finish_dialog(self) -> None:
+        outcome = self._final_outcome
+        if outcome is None:
+            return
+        self._final_outcome = None
 
         if outcome.code == "success":
             self.login_succeeded = True

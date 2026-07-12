@@ -120,7 +120,7 @@ def test_login_dialog_repeated_terminal_paths_wait_for_thread_finished(
 
     monkeypatch.setattr(ui, "LoginWorker", FakeLoginWorker)
 
-    for _ in range(3):
+    for _ in range(10):
         dialog = ui.LoginDialog()
         qtbot.addWidget(dialog)
         thread = dialog.thread
