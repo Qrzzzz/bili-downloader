@@ -14,9 +14,6 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     env:
-      APPDATA: ${{ runner.temp }}\BiliDownloader\AppData\Roaming
-      LOCALAPPDATA: ${{ runner.temp }}\BiliDownloader\AppData\Local
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}\BiliDownloader\ms-playwright
       PYTHONUTF8: "1"
       QT_QPA_PLATFORM: offscreen
 
@@ -35,7 +32,17 @@ jobs:
 
       - name: Prepare isolated application directories
         shell: powershell
-        run: New-Item -ItemType Directory -Force -Path $env:APPDATA, $env:LOCALAPPDATA, $env:PLAYWRIGHT_BROWSERS_PATH | Out-Null
+        run: |
+          $appRoot = Join-Path $env:RUNNER_TEMP "BiliDownloader"
+          $appData = Join-Path $appRoot "AppData\Roaming"
+          $localAppData = Join-Path $appRoot "AppData\Local"
+          $browserPath = Join-Path $appRoot "ms-playwright"
+          New-Item -ItemType Directory -Force -Path $appData, $localAppData, $browserPath | Out-Null
+          @(
+            "APPDATA=$appData"
+            "LOCALAPPDATA=$localAppData"
+            "PLAYWRIGHT_BROWSERS_PATH=$browserPath"
+          ) | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Install dependencies
         shell: powershell
