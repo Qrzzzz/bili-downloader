@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal, Slot
@@ -9,9 +10,13 @@ from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
+    QAbstractItemView,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -26,6 +31,7 @@ from .diagnostics import (
     check_latest_release,
     collect_diagnostics,
 )
+from .downloader import DownloadBatchResult, PartDownloadResult, PartDownloadStatus, VideoPart
 
 
 class _DiagnosticWorker(QObject):
@@ -203,3 +209,148 @@ class DiagnosticsDialog(QDialog):
             event.ignore()
             return
         super().closeEvent(event)
+
+
+class DownloadResultDialog(QDialog):
+    retry_requested = Signal(object)
+
+    def __init__(
+        self,
+        result: DownloadBatchResult,
+        *,
+        video_title: str,
+        format_label: str,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("下载结果")
+        self.resize(860, 500)
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.result = result
+        self.retry_valid = True
+        self.video_title = video_title
+
+        layout = QVBoxLayout(self)
+        self.context_label = QLabel(f"视频：{video_title}\n清晰度：{format_label}")
+        self.context_label.setWordWrap(True)
+        self.summary_label = QLabel()
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["分 P", "标题", "状态", "输出文件", "错误"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+
+        buttons = QHBoxLayout()
+        self.open_file_button = QPushButton("打开文件")
+        self.open_folder_button = QPushButton("打开所在目录")
+        self.retry_button = QPushButton("重试失败项")
+        self.close_button = QPushButton("关闭")
+        buttons.addWidget(self.open_file_button)
+        buttons.addWidget(self.open_folder_button)
+        buttons.addStretch(1)
+        buttons.addWidget(self.retry_button)
+        buttons.addWidget(self.close_button)
+
+        layout.addWidget(self.context_label)
+        layout.addWidget(self.summary_label)
+        layout.addWidget(self.table, 1)
+        layout.addLayout(buttons)
+
+        self.table.itemSelectionChanged.connect(self._update_actions)
+        self.open_file_button.clicked.connect(self.open_selected_file)
+        self.open_folder_button.clicked.connect(self.open_selected_folder)
+        self.retry_button.clicked.connect(self.retry_failed)
+        self.close_button.clicked.connect(self.close)
+        self.set_result(result)
+
+    def set_result(self, result: DownloadBatchResult) -> None:
+        self.result = result
+        completed = len(result.completed)
+        failed = len(result.failed)
+        cancelled = sum(item.status is PartDownloadStatus.CANCELLED for item in result.part_results)
+        self.summary_label.setText(f"任务结束：成功 {completed}，失败 {failed}，取消 {cancelled}。")
+        self.table.setRowCount(len(result.part_results))
+        status_labels = {
+            PartDownloadStatus.COMPLETED: "成功",
+            PartDownloadStatus.FAILED: "失败",
+            PartDownloadStatus.CANCELLED: "取消",
+        }
+        for row, item in enumerate(result.part_results):
+            saved = "；".join(Path(path).name for path in item.saved_files)
+            error = item.error.message if item.error else ""
+            values = [f"P{item.part.index}", item.part.title, status_labels[item.status], saved, error]
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                cell.setData(Qt.UserRole, item)
+                if column == 3 and item.saved_files:
+                    cell.setToolTip("\n".join(item.saved_files))
+                if column == 4 and item.detail:
+                    cell.setToolTip(item.detail)
+                self.table.setItem(row, column, cell)
+        self.table.resizeColumnsToContents()
+        if self.table.rowCount():
+            self.table.selectRow(0)
+        self.retry_button.setEnabled(bool(result.failed) and self.retry_valid)
+        self._update_actions()
+
+    def merge_retry_result(self, result: DownloadBatchResult) -> None:
+        self.set_result(self.result.merged_with_retry(result))
+
+    def invalidate_retry(self) -> None:
+        self.retry_valid = False
+        self.retry_button.setEnabled(False)
+        self.retry_button.setToolTip("链接或解析目标已改变，不能重试旧任务。")
+
+    def set_busy(self, busy: bool) -> None:
+        self.retry_button.setEnabled(not busy and self.retry_valid and bool(self.result.failed))
+        self.close_button.setEnabled(not busy)
+        if busy:
+            self.summary_label.setText("正在重试失败项...")
+
+    def _selected_result(self) -> PartDownloadResult | None:
+        row = self.table.currentRow()
+        if row < 0:
+            return None
+        item = self.table.item(row, 0)
+        value = item.data(Qt.UserRole) if item else None
+        return value if isinstance(value, PartDownloadResult) else None
+
+    def _selected_existing_file(self) -> Path | None:
+        item = self._selected_result()
+        if not item or item.status is not PartDownloadStatus.COMPLETED:
+            return None
+        return next((Path(path) for path in item.saved_files if Path(path).is_file()), None)
+
+    @Slot()
+    def _update_actions(self) -> None:
+        path = self._selected_existing_file()
+        self.open_file_button.setEnabled(path is not None)
+        self.open_folder_button.setEnabled(path is not None)
+
+    @Slot()
+    def open_selected_file(self) -> None:
+        path = self._selected_existing_file()
+        if path is not None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        else:
+            QMessageBox.information(self, "文件不存在", "文件可能已被移动或删除。")
+        self._update_actions()
+
+    @Slot()
+    def open_selected_folder(self) -> None:
+        path = self._selected_existing_file()
+        if path is not None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+        else:
+            QMessageBox.information(self, "文件不存在", "文件可能已被移动或删除。")
+        self._update_actions()
+
+    @Slot()
+    def retry_failed(self) -> None:
+        if not self.retry_valid:
+            return
+        parts = tuple(item.part for item in self.result.failed)
+        if parts:
+            self.set_busy(True)
+            self.retry_requested.emit(parts)
