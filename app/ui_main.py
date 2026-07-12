@@ -34,6 +34,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from . import __version__
 from .config import AppConfig, ConfigError, config_diagnostics, load_config, save_config
 from .cookies import (
     CredentialMode,
@@ -481,7 +483,7 @@ class LoginDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self, safe_mode: bool = False) -> None:
         super().__init__()
-        self.setWindowTitle("合规用途 Bilibili 视频下载器")
+        self.setWindowTitle(f"合规用途 Bilibili 视频下载器 V{__version__}")
         self.resize(1040, 760)
 
         self.config: AppConfig = load_config()

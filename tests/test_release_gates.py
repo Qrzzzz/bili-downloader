@@ -7,6 +7,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
+def test_release_version_is_1_0_and_windows_compatible() -> None:
+    app = importlib.import_module("app")
+    version_tool = importlib.import_module("tools.write_version_info")
+
+    assert app.__version__ == "1.0"
+    assert version_tool._numeric_version(app.__version__) == (1, 0, 0, 0)
+
+
 def test_parse_smoke_writes_structured_412_without_traceback(
     isolated_paths: object,
     monkeypatch,
