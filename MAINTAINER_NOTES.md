@@ -1,0 +1,56 @@
+# Maintainer Notes
+
+本文件记录仓库公开发布前的维护者注意事项。当前整理只修改仓库级文档、模板和忽略规则，没有修改源码逻辑。
+
+## 本次整理范围
+
+- 未修改 `app/` 下任何 `.py` 文件。
+- 未修改 `build.ps1`。
+- 未修改 `BiliDownloader.spec`。
+- 未修改 `requirements.txt` 的依赖版本。
+- 已补充 README、合规说明、安全说明、贡献说明、发布检查清单、第三方声明、issue 模板、PR 模板、`.gitignore` 和 `.gitattributes`。
+
+## 只读审计发现
+
+- 当前目录尚未初始化为 Git 仓库。
+- `app/` 是当前源码目录。
+- 顶层存在 `.venv/`，不应提交。
+- 顶层存在 `build/` 和 `dist/`，属于 PyInstaller 构建产物，不应提交。
+- `dist/` 中包含打包后的 `BiliDownloader.exe` 以及第三方运行时文件，应作为 Release 附件重新构建和发布，不应直接提交到仓库。
+- `app/__pycache__/` 中存在 Python 字节码缓存，不应提交。
+- `tools/` 当前仅发现 `.gitkeep`，未发现 `ffmpeg.exe`。
+- `BiliDownloader.spec` 使用 `Path(SPECPATH)`，审计时未发现硬编码本机绝对路径或个人用户名路径。
+
+## 不应提交的内容
+
+- 登录态、Cookie、`storage_state.json`、`cookies.txt`
+- `session/`、`sessions/`、浏览器 profile、Playwright 用户数据目录
+- `logs/`、`crash.log`、`app.log`
+- 真实下载记录、测试视频、下载输出目录
+- `.venv/`、`build/`、`dist/`、`__pycache__/`
+- Playwright 下载的 Chromium 缓存
+- `ffmpeg.exe`、`ffprobe.exe`，除非维护者明确决定按许可证要求分发
+- 本机绝对路径、个人用户名路径、账号信息、token
+- 用户配置文件，例如本地 `config.json` 或 `settings.json`
+
+## 发布前人工确认
+
+- 确认 `LICENSE` 中的版权主体和年份是否需要补全。
+- 确认 MIT License 是否适用于本项目全部原创代码。
+- 确认第三方依赖许可证和 notice，尤其是 PySide6 / Qt、yt-dlp、Playwright、PyInstaller、FFmpeg。
+- 如果发布包包含 FFmpeg，确认 FFmpeg 构建来源、许可证组合、源码提供义务和 notice 要求。
+- 补充安全问题私密联系方式，或启用 GitHub Security Advisories。
+- 补充真实截图，避免截图包含账号信息、Cookie、私密视频链接或本机路径。
+- 在干净环境重新构建 Release 包，不要复用当前 `dist/`。
+- 为 Release 附件生成 SHA256 校验值。
+- 检查杀毒误报说明和用户下载来源说明。
+
+## 以后可考虑的改进
+
+以下只是维护建议，本次未改源码：
+
+- 为关键解析、下载、登录态处理路径补充最小测试。
+- 增加发布脚本的许可证/notice 收集步骤。
+- 增加预发布 secret scan 和大文件检查。
+- 增加更明确的版本号来源，方便 bug report 和 Release 对应。
+- 在 UI 中持续保持合规提示，避免误导用户理解工具能力边界。

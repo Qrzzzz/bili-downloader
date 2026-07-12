@@ -1,0 +1,103 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging and build output
+build/
+dist/
+*.egg-info/
+*.spec.bak
+*.manifest
+*.log
+pip-wheel-metadata/
+
+# PyInstaller and local release artifacts
+*.exe
+*.msi
+*.zip
+*.7z
+*.rar
+
+# Logs, crash reports, locks
+logs/
+log/
+crash.log
+app.log
+*.log
+app_running.lock
+
+# Login state, cookies, browser sessions
+session/
+sessions/
+session_corrupted_*/
+storage_state.json
+storage_state.tmp.json
+cookies.txt
+cookies.tmp.txt
+user_data/
+playwright-profile/
+browser-profile/
+profile/
+
+# Playwright browsers and reports
+ms-playwright/
+playwright-report/
+test-results/
+.playwright/
+
+# Downloads and generated media
+downloads/
+download/
+output/
+outputs/
+videos/
+*.mp4
+*.mkv
+*.flv
+*.avi
+*.mov
+*.webm
+*.m4v
+*.m4a
+*.mp3
+*.wav
+*.part
+*.ytdl
+*.temp
+*.tmp
+
+# FFmpeg binaries and local tools
+ffmpeg.exe
+ffprobe.exe
+tools/ffmpeg.exe
+tools/ffprobe.exe
+
+# Local configuration and secrets
+.env
+.env.*
+*.local
+config.json
+settings.json
+*.user
+*.suo
+
+# Windows and editor files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+.idea/
+.vscode/
