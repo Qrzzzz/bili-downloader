@@ -4,10 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1] - 2026-07-12
+
+### Added
+
+- Added a local environment diagnostics window with a redacted report and manual GitHub update checks.
+- Added an actionable per-part download result window with file and folder shortcuts.
+- Added failed-part retry while preserving the original download quality, directory, and credential mode.
+
 ### Changed
 
 - Unified the product name as **Bili Downloader Lite**, including the main window title and Windows metadata.
 - Standardized Windows release filenames as `BiliDownloader.v<version>.exe`.
+- Routed batch-level failures through the same structured result flow as completed and partially failed downloads.
 
 ## [1.0] - 2026-07-12
 

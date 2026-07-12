@@ -282,7 +282,7 @@ def test_url_change_parse_failure_and_stale_callback_cannot_download_old_video(
 
     window = ui.MainWindow(safe_mode=True)
     qtbot.addWidget(window)
-    assert window.windowTitle() == "Bili Downloader Lite V1.0"
+    assert window.windowTitle() == "Bili Downloader Lite V1.1"
     window.url_edit.setText(url_a)
     result_a = _video_result(ui, "A", url_a)
     window.on_parse_finished(url_a, result_a)
@@ -430,7 +430,7 @@ def test_diagnostics_dialog_only_checks_updates_after_manual_action(
     report = diagnostics.DiagnosticReport(
         (
             diagnostics.DiagnosticItem(
-                "程序", diagnostics.DiagnosticStatus.INFO, "V1.0，测试"
+                "程序", diagnostics.DiagnosticStatus.INFO, "V1.1，测试"
             ),
         )
     )
