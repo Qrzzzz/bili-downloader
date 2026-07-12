@@ -17,8 +17,18 @@ function Invoke-CheckedNative {
         [Parameter(Mandatory = $true)][string]$Step
     )
 
-    & $FilePath @ArgumentList
-    $exitCode = $LASTEXITCODE
+    # Windows PowerShell 5.1 surfaces native stderr as ErrorRecord objects.
+    # Tools such as PyInstaller legitimately write INFO lines there, so only
+    # the native exit code is authoritative.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $FilePath @ArgumentList
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
     if ($exitCode -ne 0) {
         throw "$Step failed with exit code $exitCode."
     }
@@ -31,8 +41,15 @@ function Invoke-CapturedNative {
         [Parameter(Mandatory = $true)][string]$Step
     )
 
-    $output = & $FilePath @ArgumentList
-    $exitCode = $LASTEXITCODE
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = & $FilePath @ArgumentList
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
     if ($exitCode -ne 0) {
         throw "$Step failed with exit code $exitCode."
     }
