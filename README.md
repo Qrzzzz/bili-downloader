@@ -2,7 +2,7 @@
 
 一个 Windows 桌面程序，用于在用户提供 Bilibili 视频链接后解析并下载用户有权访问的视频内容。
 
-当前稳定版本：**1.0**。
+当前稳定版本：**1.1**。
 
 本项目的目标是提供一个本地运行的桌面工具，帮助用户在合法、授权、个人备份或学习场景下处理自己有权访问的视频内容。项目不支持绕过会员、付费、DRM、地区限制、风控或任何访问权限限制，也不鼓励或允许侵犯版权。
 
@@ -15,6 +15,8 @@
 - 支持选择分 P、保存目录和下载清晰度。
 - 使用 yt-dlp Python API 下载，使用 FFmpeg 合并音视频。
 - 支持下载进度、重试、取消下载、日志窗口和本地日志文件。
+- 支持逐分 P 下载结果、打开输出文件或目录，以及仅重试失败项。
+- 提供本地环境诊断、脱敏报告和由用户主动触发的 GitHub 更新检查。
 - 登录态仅保存在用户本机应用数据目录中。
 
 ## 安装方式
@@ -23,7 +25,7 @@
 
 发布包应至少包含：
 
-- `BiliDownloader.v1.0.exe`
+- `BiliDownloader.v1.1.exe`
 - 必要的运行时文件
 - 发布说明
 - 校验值，例如 SHA256
@@ -45,6 +47,10 @@ $env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) "ms-playwright")
 
 如果不使用项目内的 `ms-playwright\` 目录，也可以按 Playwright 默认方式安装浏览器。不要把 Playwright 下载的浏览器目录提交到 Git 仓库。
 
+## 环境诊断与更新检查
+
+主界面的“环境诊断”会在后台检查 FFmpeg、登录浏览器、应用目录、下载目录和本地登录状态，并可复制脱敏报告。打开诊断窗口本身不会联网；只有用户点击“检查更新”时才会访问 GitHub Release，程序不会自动下载或安装更新。
+
 ## 打包 Windows exe
 
 项目提供 `build.ps1` 用于本地打包：
@@ -56,7 +62,7 @@ $env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) "ms-playwright")
 默认输出位置：
 
 ```text
-dist\BiliDownloader\BiliDownloader.v1.0.exe
+dist\BiliDownloader\BiliDownloader.v1.1.exe
 ```
 
 清理后重新打包：

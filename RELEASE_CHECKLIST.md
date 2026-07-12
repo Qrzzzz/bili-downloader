@@ -39,5 +39,5 @@ git status --short
 git diff --check
 git ls-files --others --ignored --exclude-standard
 rg -n -i "SESSDATA|bili_jct|DedeUserID|storage_state|cookies\\.txt|token|password" -g "!dist/**" -g "!build/**" -g "!.venv/**"
-Get-FileHash .\dist\BiliDownloader\BiliDownloader.v1.0.exe -Algorithm SHA256
+Get-FileHash .\dist\BiliDownloader\BiliDownloader.v1.1.exe -Algorithm SHA256
 ```
