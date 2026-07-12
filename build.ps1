@@ -4,46 +4,160 @@ param(
     [switch]$SkipPlaywrightBrowserInstall
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location $Root
 
-if ($Clean) {
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue ".\build", ".\dist"
-}
+$Root = [System.IO.Path]::GetFullPath((Split-Path -Parent $MyInvocation.MyCommand.Path))
+Set-Location -LiteralPath $Root
 
-if (-not (Test-Path ".\.venv\Scripts\python.exe")) {
-    python -m venv .venv
-}
+function Invoke-CheckedNative {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string[]]$ArgumentList,
+        [Parameter(Mandatory = $true)][string]$Step
+    )
 
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-
-$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $Root "ms-playwright"
-if (-not $SkipPlaywrightBrowserInstall) {
-    $installArgs = @("-m", "playwright", "install", "chromium")
-    $install = Start-Process -FilePath ".\.venv\Scripts\python.exe" -ArgumentList $installArgs -PassThru -NoNewWindow
-    if (-not $install.WaitForExit(600000)) {
-        Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue
-        Get-Process node -ErrorAction SilentlyContinue |
-            Where-Object { $_.Path -like "*$Root*\.venv\Lib\site-packages\playwright\driver\node.exe" } |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-        Write-Warning "Playwright Chromium install timed out. The app can still use system Chrome/Edge through Playwright, or rerun: .\.venv\Scripts\python.exe -m playwright install chromium"
-    } elseif ($install.ExitCode -ne 0) {
-        Write-Warning "Playwright Chromium install failed with exit code $($install.ExitCode). The app can still use system Chrome/Edge through Playwright."
+    # Windows PowerShell 5.1 surfaces native stderr as ErrorRecord objects.
+    # Tools such as PyInstaller legitimately write INFO lines there, so only
+    # the native exit code is authoritative.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $FilePath @ArgumentList
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($exitCode -ne 0) {
+        throw "$Step failed with exit code $exitCode."
     }
 }
 
-.\.venv\Scripts\python.exe -m compileall app
+function Invoke-CapturedNative {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string[]]$ArgumentList,
+        [Parameter(Mandatory = $true)][string]$Step
+    )
 
-if ($OneFile) {
-    .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name BiliDownloader --icon assets\icon.ico app\main.py
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = & $FilePath @ArgumentList
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($exitCode -ne 0) {
+        throw "$Step failed with exit code $exitCode."
+    }
+    return (($output | ForEach-Object { [string]$_ }) -join "`n").Trim()
+}
+
+function Remove-ScopedBuildDirectory {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $target = [System.IO.Path]::GetFullPath((Join-Path $Root $Name))
+    $rootPrefix = $Root.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $target.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove path outside repository root: $target"
+    }
+    if (Test-Path -LiteralPath $target) {
+        Remove-Item -LiteralPath $target -Recurse -Force
+    }
+}
+
+if ($Clean) {
+    Remove-ScopedBuildDirectory -Name "build"
+    Remove-ScopedBuildDirectory -Name "dist"
+}
+
+$systemPython = (Get-Command python -ErrorAction Stop).Source
+$venvPython = Join-Path $Root ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
+    Invoke-CheckedNative -FilePath $systemPython -ArgumentList @("-m", "venv", ".venv") -Step "Create virtual environment"
+}
+if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
+    throw "Virtual environment Python was not created: $venvPython"
+}
+
+Invoke-CheckedNative -FilePath $venvPython -ArgumentList @("-m", "pip", "install", "--upgrade", "pip") -Step "Upgrade pip"
+Invoke-CheckedNative -FilePath $venvPython -ArgumentList @("-m", "pip", "install", "-r", "requirements.txt") -Step "Install runtime dependencies"
+
+$bundledBrowserRoot = Join-Path $Root "ms-playwright"
+if (-not $SkipPlaywrightBrowserInstall) {
+    $env:PLAYWRIGHT_BROWSERS_PATH = $bundledBrowserRoot
+    Invoke-CheckedNative -FilePath $venvPython -ArgumentList @("-m", "playwright", "install", "chromium") -Step "Install Playwright Chromium"
+}
+$browserSource = $null
+if (Test-Path -LiteralPath $bundledBrowserRoot -PathType Container) {
+    $browserSource = $bundledBrowserRoot
+} elseif (-not [string]::IsNullOrWhiteSpace($env:PLAYWRIGHT_BROWSERS_PATH) -and
+        (Test-Path -LiteralPath $env:PLAYWRIGHT_BROWSERS_PATH -PathType Container)) {
+    $browserSource = [System.IO.Path]::GetFullPath($env:PLAYWRIGHT_BROWSERS_PATH)
+}
+
+Invoke-CheckedNative -FilePath $venvPython -ArgumentList @("-m", "compileall", "-q", "app", "tools") -Step "Compile Python sources"
+
+$version = Invoke-CapturedNative -FilePath $venvPython -ArgumentList @("-c", "from app import __version__; print(__version__)") -Step "Read application version"
+if ([string]::IsNullOrWhiteSpace($version)) {
+    throw "Application version is empty."
+}
+
+$commit = Invoke-CapturedNative -FilePath "git" -ArgumentList @("rev-parse", "HEAD") -Step "Read Git commit"
+if ($commit -notmatch "^[0-9a-fA-F]{40,64}$") {
+    throw "Git returned an invalid commit id: $commit"
+}
+$dirtyOutput = Invoke-CapturedNative -FilePath "git" -ArgumentList @("status", "--porcelain", "--untracked-files=all") -Step "Check Git worktree state"
+$isDirty = -not [string]::IsNullOrWhiteSpace($dirtyOutput)
+
+$metadataDir = Join-Path $Root "build\metadata"
+New-Item -ItemType Directory -Force -Path $metadataDir | Out-Null
+$versionInfoPath = Join-Path $metadataDir "BiliDownloader.version"
+$buildInfoPath = Join-Path $metadataDir "build-info.json"
+$metadataArgs = @(
+    "tools\write_version_info.py",
+    "--version", $version,
+    "--commit", $commit,
+    "--version-file", $versionInfoPath,
+    "--metadata-file", $buildInfoPath
+)
+if ($isDirty) {
+    $metadataArgs += "--dirty"
+}
+Invoke-CheckedNative -FilePath $venvPython -ArgumentList $metadataArgs -Step "Generate build metadata"
+
+$env:BILI_BUILD_ONEFILE = if ($OneFile) { "1" } else { "0" }
+$env:BILI_ARTIFACT_BASENAME = "BiliDownloader.v$version"
+$env:BILI_VERSION_FILE = $versionInfoPath
+$env:BILI_BUILD_METADATA = $buildInfoPath
+if ($null -ne $browserSource) {
+    $env:BILI_BROWSER_ROOT = $browserSource
 } else {
-    .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean BiliDownloader.spec
+    Remove-Item Env:BILI_BROWSER_ROOT -ErrorAction SilentlyContinue
+}
+Invoke-CheckedNative -FilePath $venvPython -ArgumentList @("-m", "PyInstaller", "--noconfirm", "--clean", "BiliDownloader.spec") -Step "Build application with PyInstaller"
+
+$artifact = if ($OneFile) {
+    Join-Path $Root "dist\BiliDownloader.v$version.exe"
+} else {
+    Join-Path $Root "dist\BiliDownloader\BiliDownloader.v$version.exe"
+}
+if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
+    throw "PyInstaller reported success but the expected artifact is missing: $artifact"
 }
 
-if ($LASTEXITCODE -ne 0) {
-    throw "PyInstaller failed with exit code $LASTEXITCODE"
+$artifactVersion = (Get-Item -LiteralPath $artifact).VersionInfo
+if ([string]::IsNullOrWhiteSpace($artifactVersion.FileVersion) -or -not $artifactVersion.FileVersion.StartsWith($version)) {
+    throw "Built artifact has unexpected FileVersion '$($artifactVersion.FileVersion)'; expected '$version'."
+}
+if ([string]::IsNullOrWhiteSpace($artifactVersion.Comments) -or -not $artifactVersion.Comments.Contains($commit)) {
+    throw "Built artifact does not contain the expected Git commit in its version metadata."
 }
 
-Write-Host "Build done: dist\BiliDownloader\BiliDownloader.exe"
+$mode = if ($OneFile) { "onefile" } else { "onedir" }
+$dirtyLabel = if ($isDirty) { " dirty" } else { "" }
+Write-Host "Build done ($mode): $artifact"
+Write-Host "Version: $version  Git: $commit$dirtyLabel"

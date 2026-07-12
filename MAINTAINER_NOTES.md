@@ -16,7 +16,7 @@
 - `app/` 是当前源码目录。
 - 顶层存在 `.venv/`，不应提交。
 - 顶层存在 `build/` 和 `dist/`，属于 PyInstaller 构建产物，不应提交。
-- `dist/` 中包含打包后的 `BiliDownloader.exe` 以及第三方运行时文件，应作为 Release 附件重新构建和发布，不应直接提交到仓库。
+- `dist/` 中包含打包后的 `BiliDownloader.v1.0.exe` 以及第三方运行时文件，应作为 Release 附件重新构建和发布，不应直接提交到仓库。
 - `app/__pycache__/` 中存在 Python 字节码缓存，不应提交。
 - `tools/` 当前仅发现 `.gitkeep`，未发现 `ffmpeg.exe`。
 - `BiliDownloader.spec` 使用 `Path(SPECPATH)`，审计时未发现硬编码本机绝对路径或个人用户名路径。
