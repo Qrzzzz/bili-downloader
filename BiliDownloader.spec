@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
+import re
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
@@ -8,6 +9,13 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 
 block_cipher = None
 root = Path(SPECPATH)
+version_source = (root / "app" / "__init__.py").read_text(encoding="utf-8")
+version_match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', version_source, re.MULTILINE)
+if version_match is None:
+    raise RuntimeError("Unable to read application version from app/__init__.py")
+artifact_name = os.environ.get("BILI_ARTIFACT_BASENAME", f"BiliDownloader.v{version_match.group(1)}")
+if not re.fullmatch(r"BiliDownloader\.v\d+\.\d+(?:\.\d+){0,2}", artifact_name):
+    raise RuntimeError(f"Invalid versioned artifact name: {artifact_name!r}")
 onefile = os.environ.get("BILI_BUILD_ONEFILE") == "1"
 version_file = Path(
     os.environ.get("BILI_VERSION_FILE", root / "build" / "metadata" / "BiliDownloader.version")
@@ -71,7 +79,7 @@ a = Analysis(
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe_options = dict(
-    name="BiliDownloader",
+    name=artifact_name,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -113,7 +113,10 @@ jobs:
       - name: Smoke onedir package
         shell: powershell
         timeout-minutes: 3
-        run: .\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader\BiliDownloader.exe -RequireBundledChromium
+        run: |
+          $artifact = Get-ChildItem -LiteralPath .\dist\BiliDownloader -Filter "BiliDownloader.v*.exe" | Select-Object -First 1
+          if ($null -eq $artifact) { throw "Versioned onedir artifact was not found." }
+          .\tools\package_smoke.ps1 -Executable $artifact.FullName -RequireBundledChromium
 
       - name: Build onefile package through spec
         shell: powershell
@@ -123,4 +126,7 @@ jobs:
       - name: Smoke onefile package
         shell: powershell
         timeout-minutes: 3
-        run: .\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.exe -RequireBundledChromium
+        run: |
+          $artifact = Get-ChildItem -LiteralPath .\dist -Filter "BiliDownloader.v*.exe" | Select-Object -First 1
+          if ($null -eq $artifact) { throw "Versioned onefile artifact was not found." }
+          .\tools\package_smoke.ps1 -Executable $artifact.FullName -RequireBundledChromium

@@ -1,4 +1,4 @@
-# BiliDownloader
+# Bili Downloader Lite
 
 一个 Windows 桌面程序，用于在用户提供 Bilibili 视频链接后解析并下载用户有权访问的视频内容。
 
@@ -23,7 +23,7 @@
 
 发布包应至少包含：
 
-- `BiliDownloader.exe`
+- `BiliDownloader.v1.0.exe`
 - 必要的运行时文件
 - 发布说明
 - 校验值，例如 SHA256
@@ -56,7 +56,7 @@ $env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) "ms-playwright")
 默认输出位置：
 
 ```text
-dist\BiliDownloader\BiliDownloader.exe
+dist\BiliDownloader\BiliDownloader.v1.0.exe
 ```
 
 清理后重新打包：

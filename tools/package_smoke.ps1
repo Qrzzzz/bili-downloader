@@ -18,6 +18,10 @@ if ([string]::IsNullOrWhiteSpace($versionInfo.FileVersion) -or
     [string]::IsNullOrWhiteSpace($versionInfo.Comments)) {
     throw "Packaged executable is missing traceable version metadata: $executablePath"
 }
+$expectedFilename = "BiliDownloader.v$($versionInfo.FileVersion).exe"
+if ([System.IO.Path]::GetFileName($executablePath) -cne $expectedFilename) {
+    throw "Packaged executable must be named '$expectedFilename': $executablePath"
+}
 
 function Stop-ProcessTree {
     param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process)

@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Unified the product name as **Bili Downloader Lite**, including the main window title and Windows metadata.
+- Standardized Windows release filenames as `BiliDownloader.v<version>.exe`.
+
 ## [1.0] - 2026-07-12
 
 ### Added

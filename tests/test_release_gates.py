@@ -11,8 +11,18 @@ def test_release_version_is_1_0_and_windows_compatible() -> None:
     app = importlib.import_module("app")
     version_tool = importlib.import_module("tools.write_version_info")
 
+    assert app.__app_name__ == "Bili Downloader Lite"
     assert app.__version__ == "1.0"
     assert version_tool._numeric_version(app.__version__) == (1, 0, 0, 0)
+    resource = version_tool._version_resource(
+        app.__version__,
+        (1, 0, 0, 0),
+        "a" * 40,
+        False,
+        "2026-07-12T00:00:00Z",
+    )
+    assert "StringStruct('ProductName', 'Bili Downloader Lite')" in resource
+    assert "StringStruct('OriginalFilename', 'BiliDownloader.v1.0.exe')" in resource
 
 
 def test_parse_smoke_writes_structured_412_without_traceback(

@@ -42,6 +42,7 @@ def _version_resource(
     short_commit = commit[:12]
     trace_version = f"{version}+g{short_commit}{'.dirty' if dirty else ''}"
     comments = f"Git commit {commit}; dirty={str(dirty).lower()}; built_at={built_at}"
+    original_filename = f"BiliDownloader.v{version}.exe"
     return f"""# UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
@@ -59,13 +60,13 @@ VSVersionInfo(
       StringTable(
         '040904B0',
         [
-          StringStruct('CompanyName', 'BiliDownloader contributors'),
-          StringStruct('FileDescription', 'BiliDownloader desktop application'),
+          StringStruct('CompanyName', 'Bili Downloader Lite contributors'),
+          StringStruct('FileDescription', 'Bili Downloader Lite desktop application'),
           StringStruct('FileVersion', {version!r}),
           StringStruct('InternalName', 'BiliDownloader'),
           StringStruct('LegalCopyright', 'MIT License'),
-          StringStruct('OriginalFilename', 'BiliDownloader.exe'),
-          StringStruct('ProductName', 'BiliDownloader'),
+          StringStruct('OriginalFilename', {original_filename!r}),
+          StringStruct('ProductName', 'Bili Downloader Lite'),
           StringStruct('ProductVersion', {trace_version!r}),
           StringStruct('Comments', {comments!r})
         ]
@@ -93,7 +94,7 @@ def main() -> int:
     built_at = _build_timestamp().isoformat().replace("+00:00", "Z")
     build_id = f"{args.version}+g{args.commit[:12]}{'.dirty' if args.dirty else ''}"
     metadata = {
-        "application": "BiliDownloader",
+        "application": "Bili Downloader Lite",
         "version": args.version,
         "git_commit": args.commit.lower(),
         "dirty": args.dirty,

@@ -12,7 +12,7 @@ from app.crash import acquire_running_lock, install_exception_hooks, log_current
 
 
 def main(safe_mode: bool = False) -> int:
-    parser = argparse.ArgumentParser(description="合规用途 Bilibili 视频下载器")
+    parser = argparse.ArgumentParser(description="Bili Downloader Lite")
     parser.add_argument("--self-test", action="store_true", help="打开主界面后自动退出，用于构建验证")
     parser.add_argument("--parse-test", metavar="URL", help=argparse.SUPPRESS)
     parser.add_argument("--parse-output", metavar="PATH", help=argparse.SUPPRESS)

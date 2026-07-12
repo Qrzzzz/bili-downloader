@@ -130,6 +130,7 @@ if ($isDirty) {
 Invoke-CheckedNative -FilePath $venvPython -ArgumentList $metadataArgs -Step "Generate build metadata"
 
 $env:BILI_BUILD_ONEFILE = if ($OneFile) { "1" } else { "0" }
+$env:BILI_ARTIFACT_BASENAME = "BiliDownloader.v$version"
 $env:BILI_VERSION_FILE = $versionInfoPath
 $env:BILI_BUILD_METADATA = $buildInfoPath
 if ($null -ne $browserSource) {
@@ -140,9 +141,9 @@ if ($null -ne $browserSource) {
 Invoke-CheckedNative -FilePath $venvPython -ArgumentList @("-m", "PyInstaller", "--noconfirm", "--clean", "BiliDownloader.spec") -Step "Build application with PyInstaller"
 
 $artifact = if ($OneFile) {
-    Join-Path $Root "dist\BiliDownloader.exe"
+    Join-Path $Root "dist\BiliDownloader.v$version.exe"
 } else {
-    Join-Path $Root "dist\BiliDownloader\BiliDownloader.exe"
+    Join-Path $Root "dist\BiliDownloader\BiliDownloader.v$version.exe"
 }
 if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
     throw "PyInstaller reported success but the expected artifact is missing: $artifact"

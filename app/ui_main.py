@@ -511,7 +511,7 @@ class LoginDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self, safe_mode: bool = False) -> None:
         super().__init__()
-        self.setWindowTitle(f"合规用途 Bilibili 视频下载器 V{__version__}")
+        self.setWindowTitle(f"Bili Downloader Lite V{__version__}")
         self.resize(1040, 760)
 
         self.config: AppConfig = load_config()
