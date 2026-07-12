@@ -106,7 +106,7 @@ jobs:
       - name: Smoke onedir package
         shell: powershell
         timeout-minutes: 3
-        run: .\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader\BiliDownloader.exe
+        run: .\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader\BiliDownloader.exe -RequireBundledChromium
 
       - name: Build onefile package through spec
         shell: powershell
@@ -116,4 +116,4 @@ jobs:
       - name: Smoke onefile package
         shell: powershell
         timeout-minutes: 3
-        run: .\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.exe
+        run: .\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.exe -RequireBundledChromium
