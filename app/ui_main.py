@@ -1238,8 +1238,7 @@ def run_app(self_test: bool = False, safe_mode: bool = False) -> int:
     window.show()
 
     if self_test:
-        from PySide6.QtCore import QTimer
-
-        QTimer.singleShot(3500, app.quit)
+        # Exercise MainWindow.closeEvent instead of bypassing graceful shutdown.
+        QTimer.singleShot(350, window.close)
 
     return app.exec()

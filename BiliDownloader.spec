@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
@@ -7,6 +8,15 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 
 block_cipher = None
 root = Path(SPECPATH)
+onefile = os.environ.get("BILI_BUILD_ONEFILE") == "1"
+version_file = Path(
+    os.environ.get("BILI_VERSION_FILE", root / "build" / "metadata" / "BiliDownloader.version")
+)
+build_metadata = Path(
+    os.environ.get("BILI_BUILD_METADATA", root / "build" / "metadata" / "build-info.json")
+)
+if not version_file.is_file() or not build_metadata.is_file():
+    raise RuntimeError("Build metadata is missing. Run build.ps1 instead of invoking the spec directly.")
 
 hiddenimports = []
 hiddenimports += collect_submodules("yt_dlp")
@@ -25,6 +35,7 @@ datas += collect_data_files("playwright")
 datas += copy_metadata("yt-dlp")
 datas += copy_metadata("certifi")
 datas += copy_metadata("playwright")
+datas.append((str(build_metadata), "."))
 
 icon_file = root / "assets" / "icon.ico"
 if icon_file.exists():
@@ -34,7 +45,7 @@ ffmpeg_file = root / "tools" / "ffmpeg.exe"
 if ffmpeg_file.exists():
     datas.append((str(ffmpeg_file), "tools"))
 
-browser_root = root / "ms-playwright"
+browser_root = Path(os.environ.get("BILI_BROWSER_ROOT", root / "ms-playwright"))
 if browser_root.exists():
     for item in browser_root.rglob("*"):
         if item.is_file():
@@ -59,16 +70,14 @@ a = Analysis(
 )
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
+exe_options = dict(
     name="BiliDownloader",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -76,15 +85,32 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(icon_file) if icon_file.exists() else None,
+    version=str(version_file),
 )
 
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name="BiliDownloader",
-)
+if onefile:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.datas,
+        [],
+        **exe_options,
+    )
+else:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        **exe_options,
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.datas,
+        strip=False,
+        upx=True,
+        upx_exclude=[],
+        name="BiliDownloader",
+    )

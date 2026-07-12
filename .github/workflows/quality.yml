@@ -10,8 +10,16 @@ permissions:
   contents: read
 
 jobs:
-  syntax:
+  quality:
     runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      APPDATA: ${{ runner.temp }}\BiliDownloader\AppData\Roaming
+      LOCALAPPDATA: ${{ runner.temp }}\BiliDownloader\AppData\Local
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}\BiliDownloader\ms-playwright
+      PYTHONUTF8: "1"
+      QT_QPA_PLATFORM: offscreen
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -21,12 +29,91 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Prepare isolated application directories
+        shell: powershell
+        run: New-Item -ItemType Directory -Force -Path $env:APPDATA, $env:LOCALAPPDATA, $env:PLAYWRIGHT_BROWSERS_PATH | Out-Null
 
       - name: Install dependencies
-        run: python -m pip install -r requirements.txt
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed with exit code $LASTEXITCODE" }
+          python -m pip install -r requirements-dev.txt
+          if ($LASTEXITCODE -ne 0) { throw "dependency installation failed with exit code $LASTEXITCODE" }
 
-      - name: Compile Python sources
-        run: python -m compileall -q app
+      - name: Run unit and integration tests
+        shell: powershell
+        timeout-minutes: 10
+        run: |
+          python -m pytest -q
+          if ($LASTEXITCODE -ne 0) { throw "pytest failed with exit code $LASTEXITCODE" }
 
-      - name: Check command-line entry point
-        run: python -m app.main --help
+      - name: Compile and import Python sources
+        shell: powershell
+        run: |
+          python -m compileall -q app tests tools
+          if ($LASTEXITCODE -ne 0) { throw "compileall failed with exit code $LASTEXITCODE" }
+          python -c "import app.config, app.cookies, app.crash, app.downloader, app.logger, app.main, app.ui_main, app.utils"
+          if ($LASTEXITCODE -ne 0) { throw "application import smoke failed with exit code $LASTEXITCODE" }
+
+      - name: Check installed dependency consistency
+        shell: powershell
+        run: |
+          python -m pip check
+          if ($LASTEXITCODE -ne 0) { throw "pip check failed with exit code $LASTEXITCODE" }
+
+      - name: Run source self-test
+        shell: powershell
+        timeout-minutes: 2
+        run: |
+          python -m app.main --self-test
+          if ($LASTEXITCODE -ne 0) { throw "source self-test failed with exit code $LASTEXITCODE" }
+
+      - name: Install Playwright Chromium
+        shell: powershell
+        timeout-minutes: 10
+        run: |
+          python -m playwright install chromium
+          if ($LASTEXITCODE -ne 0) { throw "Playwright Chromium installation failed with exit code $LASTEXITCODE" }
+
+      - name: Run Playwright about blank smoke
+        shell: powershell
+        timeout-minutes: 2
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP "playwright-smoke.json"
+          python tools/playwright_smoke.py --output $output
+          if ($LASTEXITCODE -ne 0) { throw "Playwright smoke failed with exit code $LASTEXITCODE" }
+          Get-Content -LiteralPath $output -Encoding utf8
+
+      - name: Run anonymous public parse smoke
+        shell: powershell
+        timeout-minutes: 3
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP "public-parse-smoke.json"
+          python tools/public_parse_smoke.py --output $output
+          if ($LASTEXITCODE -ne 0) { throw "public parse smoke failed with exit code $LASTEXITCODE" }
+          Get-Content -LiteralPath $output -Encoding utf8
+
+      - name: Build onedir package
+        shell: powershell
+        timeout-minutes: 15
+        run: .\build.ps1 -Clean -SkipPlaywrightBrowserInstall
+
+      - name: Smoke onedir package
+        shell: powershell
+        timeout-minutes: 3
+        run: .\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader\BiliDownloader.exe
+
+      - name: Build onefile package through spec
+        shell: powershell
+        timeout-minutes: 15
+        run: .\build.ps1 -Clean -OneFile -SkipPlaywrightBrowserInstall
+
+      - name: Smoke onefile package
+        shell: powershell
+        timeout-minutes: 3
+        run: .\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.exe
