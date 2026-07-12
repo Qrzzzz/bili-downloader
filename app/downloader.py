@@ -13,7 +13,7 @@ from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadCancelled
 
 from .config import AppConfig
-from .cookies import cookie_options
+from .cookies import CredentialMode, cookiefile_lease
 from .logger import LogEmitter, YtdlpQtLogger
 from .utils import ensure_dir, find_ffmpeg, format_duration, sanitize_windows_filename
 
@@ -51,7 +51,11 @@ BVID_PATH_RE = re.compile(r"/video/(BV[0-9A-Za-z]+)", re.IGNORECASE)
 AVID_PATH_RE = re.compile(r"/video/(?:av)?(\d+)", re.IGNORECASE)
 
 
-def base_ydl_options(config: AppConfig, emitter: LogEmitter | None = None) -> dict[str, Any]:
+def base_ydl_options(
+    config: AppConfig,
+    emitter: LogEmitter | None = None,
+    cookiefile: Path | None = None,
+) -> dict[str, Any]:
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": False,
@@ -59,7 +63,8 @@ def base_ydl_options(config: AppConfig, emitter: LogEmitter | None = None) -> di
         "windowsfilenames": True,
         "noprogress": True,
     }
-    opts.update(cookie_options(config))
+    if cookiefile is not None:
+        opts["cookiefile"] = str(cookiefile)
 
     ffmpeg = find_ffmpeg()
     if ffmpeg:
@@ -242,31 +247,37 @@ def _pages_to_parts(view: dict[str, Any]) -> list[VideoPart]:
     return parts
 
 
-def parse_video_info(url: str, config: AppConfig, emitter: LogEmitter | None = None) -> VideoInfoResult:
-    opts = base_ydl_options(config, emitter)
+def parse_video_info(
+    url: str,
+    config: AppConfig,
+    emitter: LogEmitter | None = None,
+    credential_mode: CredentialMode | str = CredentialMode.SAVED,
+) -> VideoInfoResult:
     logging.getLogger("bili_downloader").info("开始解析：%s", url)
     requested_page = _requested_page_from_url(url)
     view = _fetch_bilibili_view(url)
-    with YoutubeDL(opts) as ydl:
-        if view:
-            parts = _pages_to_parts(view)
-            current_part_index = min(requested_page, len(parts)) if parts else 1
-            reference_url = _canonical_part_url(view, current_part_index) or url
-            reference = ydl.extract_info(reference_url, download=False)
-            info = reference
-        else:
-            info = ydl.extract_info(url, download=False)
-            entries = list(info.get("entries") or [])
-            if entries:
-                parts = [_entry_to_part(entry, url, idx) for idx, entry in enumerate(entries, start=1)]
-                current_part_index = min(requested_page, len(parts))
-                reference = next((entry for entry in entries if entry.get("formats")), entries[0])
-                if not reference.get("formats") and parts:
-                    reference = ydl.extract_info(parts[current_part_index - 1].url, download=False)
+    with cookiefile_lease(credential_mode) as cookiefile:
+        opts = base_ydl_options(config, emitter, cookiefile)
+        with YoutubeDL(opts) as ydl:
+            if view:
+                parts = _pages_to_parts(view)
+                current_part_index = min(requested_page, len(parts)) if parts else 1
+                reference_url = _canonical_part_url(view, current_part_index) or url
+                reference = ydl.extract_info(reference_url, download=False)
+                info = reference
             else:
-                parts = [_entry_to_part(info, url, 1)]
-                current_part_index = 1
-                reference = info
+                info = ydl.extract_info(url, download=False)
+                entries = list(info.get("entries") or [])
+                if entries:
+                    parts = [_entry_to_part(entry, url, idx) for idx, entry in enumerate(entries, start=1)]
+                    current_part_index = min(requested_page, len(parts))
+                    reference = next((entry for entry in entries if entry.get("formats")), entries[0])
+                    if not reference.get("formats") and parts:
+                        reference = ydl.extract_info(parts[current_part_index - 1].url, download=False)
+                else:
+                    parts = [_entry_to_part(info, url, 1)]
+                    current_part_index = 1
+                    reference = info
 
     owner = view.get("owner") if isinstance(view, dict) else {}
     if not isinstance(owner, dict):
@@ -319,6 +330,7 @@ def download_videos(
     progress_hook,
     emitter: LogEmitter | None = None,
     controller: DownloadController | None = None,
+    credential_mode: CredentialMode | str = CredentialMode.SAVED,
 ) -> list[str]:
     target_dir = ensure_dir(download_dir)
     ffmpeg = find_ffmpeg()
@@ -334,31 +346,32 @@ def download_videos(
         progress_hook(status)
 
     outtmpl = os.path.join(target_dir, "%(title).200B-%(id)s.%(ext)s")
-    opts = base_ydl_options(config, emitter)
-    opts.update(
-        {
-            "format": format_selector,
-            "outtmpl": {"default": outtmpl},
-            "merge_output_format": "mp4",
-            "continuedl": True,
-            "retries": 5,
-            "fragment_retries": 5,
-            "windowsfilenames": True,
-            "progress_hooks": [hook],
-            "postprocessor_hooks": [hook],
-            "paths": {"home": target_dir},
-            "noplaylist": True,
-        }
-    )
+    with cookiefile_lease(credential_mode) as cookiefile:
+        opts = base_ydl_options(config, emitter, cookiefile)
+        opts.update(
+            {
+                "format": format_selector,
+                "outtmpl": {"default": outtmpl},
+                "merge_output_format": "mp4",
+                "continuedl": True,
+                "retries": 5,
+                "fragment_retries": 5,
+                "windowsfilenames": True,
+                "progress_hooks": [hook],
+                "postprocessor_hooks": [hook],
+                "paths": {"home": target_dir},
+                "noplaylist": True,
+            }
+        )
 
-    with YoutubeDL(opts) as ydl:
-        for part in parts:
-            if controller.cancelled:
-                raise DownloadCancelled("用户已取消下载")
-            safe_title = sanitize_windows_filename(part.title)
-            if emitter:
-                emitter.message.emit(f"开始下载 P{part.index}：{safe_title}")
-            ydl.download([part.url])
-            saved_files.append(target_dir)
+        with YoutubeDL(opts) as ydl:
+            for part in parts:
+                if controller.cancelled:
+                    raise DownloadCancelled("用户已取消下载")
+                safe_title = sanitize_windows_filename(part.title)
+                if emitter:
+                    emitter.message.emit(f"开始下载 P{part.index}：{safe_title}")
+                ydl.download([part.url])
+                saved_files.append(target_dir)
 
     return saved_files

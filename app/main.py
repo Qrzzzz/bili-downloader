@@ -57,10 +57,15 @@ def main(safe_mode: bool = False) -> int:
 
     if args.parse_test:
         from app.config import AppConfig
+        from app.cookies import CredentialMode
         from app.downloader import parse_video_info
         from app.utils import normalize_bilibili_url
 
-        info = parse_video_info(normalize_bilibili_url(args.parse_test), AppConfig())
+        info = parse_video_info(
+            normalize_bilibili_url(args.parse_test),
+            AppConfig(),
+            credential_mode=CredentialMode.ANONYMOUS,
+        )
         payload = {
             "title": info.title,
             "uploader": info.uploader,

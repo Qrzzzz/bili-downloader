@@ -38,6 +38,7 @@ from yt_dlp.utils import DownloadCancelled
 
 from .config import AppConfig, load_config, save_config
 from .cookies import (
+    CredentialMode,
     clear_login_state,
     cookies_indicate_logged_in,
     describe_login_status,
@@ -78,10 +79,11 @@ class ParseWorker(QObject):
     thumbnail = Signal(str, bytes)
     log = Signal(str)
 
-    def __init__(self, url: str, config: AppConfig) -> None:
+    def __init__(self, url: str, config: AppConfig, credential_mode: CredentialMode) -> None:
         super().__init__()
         self.url = url
         self.config = config
+        self.credential_mode = credential_mode
         self._cancelled = threading.Event()
         self.emitter = LogEmitter()
         self.emitter.message.connect(self.log.emit)
@@ -92,7 +94,7 @@ class ParseWorker(QObject):
     @Slot()
     def run(self) -> None:
         try:
-            result = parse_video_info(self.url, self.config, self.emitter)
+            result = parse_video_info(self.url, self.config, self.emitter, self.credential_mode)
             if self._cancelled.is_set():
                 self.cancelled.emit(self.url)
                 return
@@ -127,6 +129,7 @@ class DownloadWorker(QObject):
         download_dir: str,
         format_selector: str,
         controller: DownloadController,
+        credential_mode: CredentialMode,
     ) -> None:
         super().__init__()
         self.parts = parts
@@ -134,6 +137,7 @@ class DownloadWorker(QObject):
         self.download_dir = download_dir
         self.format_selector = format_selector
         self.controller = controller
+        self.credential_mode = credential_mode
         self.emitter = LogEmitter()
         self.emitter.message.connect(self.log.emit)
 
@@ -148,6 +152,7 @@ class DownloadWorker(QObject):
                 self.progress.emit,
                 self.emitter,
                 self.controller,
+                self.credential_mode,
             )
             self.finished.emit(saved)
         except DownloadCancelled as exc:
@@ -181,7 +186,7 @@ class SessionValidationWorker(QObject):
             if self._cancelled.is_set():
                 self.finished.emit("cancelled", "")
             else:
-                self.finished.emit("expired", "登录状态异常，请重新扫码登录")
+                self.finished.emit("offline", "暂时无法验证登录状态，本地凭据未被更改")
 
 
 @dataclass(frozen=True)
@@ -409,7 +414,7 @@ class LoginDialog(QDialog):
         if "已扫码" in text:
             self.status_for_main.emit("等待手机确认")
         elif "成功" in text:
-            self.status_for_main.emit("已登录")
+            self.status_for_main.emit("正在保存本地登录凭据")
         elif "失败" in text or "过期" in text:
             self.status_for_main.emit("登录已失效")
         else:
@@ -447,7 +452,7 @@ class LoginDialog(QDialog):
 
         if outcome.code == "success":
             self.login_succeeded = True
-            self.status_for_main.emit("已登录")
+            self.status_for_main.emit("本地登录凭据待服务端验证")
             self.accept()
             return
 
@@ -487,6 +492,7 @@ class MainWindow(QMainWindow):
         self.download_controller: DownloadController | None = None
         self.login_dialog: LoginDialog | None = None
         self.safe_mode = safe_mode
+        self.credential_mode = CredentialMode.ANONYMOUS if safe_mode else CredentialMode.SAVED
         self.login_status_code = "none"
         self._parsed_url: str | None = None
         self._closing = False
@@ -502,7 +508,7 @@ class MainWindow(QMainWindow):
         self._append_log("程序已启动。")
         self._append_log(ffmpeg_status_text())
         if self.safe_mode:
-            self._append_log("检测到上次程序可能异常退出，已暂时禁用自动登录。")
+            self._append_log("安全模式已启用：当前解析和下载强制使用匿名模式，不会加载本地登录凭据。")
 
     def _build_ui(self) -> None:
         central = QWidget(self)
@@ -650,7 +656,10 @@ class MainWindow(QMainWindow):
     def _load_config_into_ui(self) -> None:
         self.download_dir_edit.setText(self.config.download_dir)
         if self.safe_mode:
-            self.set_login_status("检测到上次程序异常退出，已暂时禁用自动登录。你可以重新扫码登录。", "safe_mode")
+            self.set_login_status(
+                "安全模式：本地凭据已禁用，解析和下载将匿名进行；重新扫码后可恢复登录模式。",
+                "safe_mode",
+            )
             return
         if has_saved_session():
             self.set_login_status("检测登录状态中", "checking")
@@ -662,13 +671,15 @@ class MainWindow(QMainWindow):
         if code is not None:
             self.login_status_code = code
         elif status == "已登录":
-            self.login_status_code = "logged_in"
+            self.login_status_code = "verified"
+        elif "本地登录凭据" in status or "本地凭据" in status:
+            self.login_status_code = "local_pending"
         elif "检测" in status or "等待" in status:
             self.login_status_code = "checking"
         elif "未登录" in status:
             self.login_status_code = "none"
         elif "失效" in status or "异常" in status:
-            self.login_status_code = "expired"
+            self.login_status_code = "invalid"
         self.login_status_label.setText(f"登录状态：{status}")
 
     def refresh_login_status(self) -> None:
@@ -698,9 +709,9 @@ class MainWindow(QMainWindow):
         if code == "cancelled" or self._closing:
             return
         self.set_login_status(text, code)
-        if code == "logged_in":
+        if code == "verified":
             self._append_log("登录态验证成功。")
-        elif code in {"expired", "none"}:
+        elif code in {"invalid", "offline", "local_pending", "none"}:
             self._append_log(f"登录态验证结果：{text}")
 
     @Slot()
@@ -747,8 +758,11 @@ class MainWindow(QMainWindow):
             accepted = dialog.exec()
             # LoginDialog can only finish after its worker thread has stopped.
             if accepted and dialog.login_succeeded:
-                self.set_login_status("已登录", "logged_in")
-                self._append_log("扫码登录成功，登录态已保存在本机。")
+                self.credential_mode = CredentialMode.SAVED
+                self.safe_mode = False
+                self.set_login_status("本地登录凭据待服务端验证", "local_pending")
+                self._append_log("扫码登录完成，已保存受保护的本地凭据，正在请求服务端验证。")
+                self.start_session_validation()
                 if self.url_edit.text().strip() and not self._closing:
                     self._append_log("登录成功，正在重新解析当前链接以刷新可用清晰度。")
                     self.start_parse()
@@ -762,6 +776,13 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def logout(self) -> None:
+        if self._active_threads():
+            QMessageBox.information(
+                self,
+                "暂时无法退出登录",
+                "解析、验证、登录或下载任务仍在使用登录态。请先取消任务并等待其完全结束。",
+            )
+            return
         result = QMessageBox.question(
             self,
             "退出登录",
@@ -771,9 +792,18 @@ class MainWindow(QMainWindow):
         )
         if result != QMessageBox.Yes:
             return
-        clear_login_state()
-        self.set_login_status("未登录", "none")
-        self._append_log("已清除本程序保存的扫码登录态。")
+        clear_result = clear_login_state()
+        self.invalidate_current_video()
+        if clear_result.ok:
+            self.credential_mode = CredentialMode.ANONYMOUS
+            self.set_login_status("无本地登录凭据", "none")
+            self._append_log("已清除本程序保存的全部登录凭据。")
+            return
+
+        self.set_login_status("登录凭据清理失败，仍有残留", "invalid")
+        details = "\n".join((*clear_result.failures, *clear_result.remaining)) or "未知清理错误"
+        self._append_log(f"登录凭据清理失败：{details}")
+        QMessageBox.warning(self, "清理登录凭据失败", f"以下项目未能清理：\n{details}")
 
     @Slot(str)
     def invalidate_current_video(self, _text: str = "") -> None:
@@ -823,7 +853,7 @@ class MainWindow(QMainWindow):
         self._append_log(f"解析链接：{url}")
 
         thread = QThread(self)
-        worker = ParseWorker(url, AppConfig(**asdict(self.config)))
+        worker = ParseWorker(url, AppConfig(**asdict(self.config)), self.credential_mode)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.log.connect(self._append_log)
@@ -877,7 +907,8 @@ class MainWindow(QMainWindow):
             return
         self.status_label.setText("解析失败")
         if "登录态" in friendly or "cookie" in detail.lower() or "login" in detail.lower():
-            self.set_login_status("登录已失效", "expired")
+            self.set_login_status("解析遇到登录相关错误，正在向服务端复核", "local_pending")
+            self.start_session_validation()
         self._append_log(f"解析失败：{friendly}")
         self._append_log(detail)
         QMessageBox.warning(self, "解析失败", f"{friendly}\n\n详细信息：{detail}")
@@ -892,7 +923,7 @@ class MainWindow(QMainWindow):
         max_height = max((choice.height or 0 for choice in choices), default=0)
         if max_height >= 1080:
             return
-        if self.login_status_code == "logged_in":
+        if self.login_status_code in {"verified", "local_pending", "offline"}:
             self._append_log("当前账号无该清晰度权限或视频本身不提供该清晰度；程序不会绕过会员、付费、地区或 DRM 限制。")
         else:
             self._append_log("未登录时可能只能解析普通清晰度；如需 1080p 及以上清晰度，请扫码登录后重新解析。")
@@ -975,6 +1006,7 @@ class MainWindow(QMainWindow):
             download_dir,
             selector,
             self.download_controller,
+            self.credential_mode,
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
