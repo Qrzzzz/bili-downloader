@@ -137,8 +137,8 @@ def _legacy_credential_files() -> list[Path]:
 def ensure_playwright_runtime() -> None:
     bundled = resource_root() / "ms-playwright"
     if bundled.exists():
-        # A packaged app must use the browser shipped with that artifact rather
-        # than silently succeeding through a developer/user cache.
+        # Official Lite builds do not ship this directory. Keep support for a
+        # source checkout or custom build that explicitly supplies it.
         os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
 
 

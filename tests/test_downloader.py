@@ -328,6 +328,40 @@ def test_partial_failure_retains_completed_parts_and_real_saved_paths(
     assert {Path(path).name for path in result.saved_files} == {"p1-final.mp4", "p3-final.mp4"}
 
 
+def test_retry_result_merge_preserves_order_and_replaces_only_retried_parts(
+    downloader: Any,
+    tmp_path: Path,
+) -> None:
+    parts = _parts(downloader)
+    first_file = tmp_path / "p1.mp4"
+    retried_file = tmp_path / "p2.mp4"
+    first_file.write_bytes(b"first")
+    retried_file.write_bytes(b"retried")
+    failure = downloader.ErrorClassification(downloader.ErrorKind.TIMEOUT, "超时", True)
+    original = downloader.DownloadBatchResult(
+        (
+            downloader.PartDownloadResult(parts[0], downloader.PartDownloadStatus.COMPLETED, (str(first_file),)),
+            downloader.PartDownloadResult(parts[1], downloader.PartDownloadStatus.FAILED, error=failure),
+            downloader.PartDownloadResult(parts[2], downloader.PartDownloadStatus.CANCELLED),
+        )
+    )
+    retry = downloader.DownloadBatchResult(
+        (
+            downloader.PartDownloadResult(parts[1], downloader.PartDownloadStatus.COMPLETED, (str(retried_file),)),
+        )
+    )
+
+    merged = original.merged_with_retry(retry)
+
+    assert [item.part.url for item in merged.part_results] == [part.url for part in parts]
+    assert [item.status for item in merged.part_results] == [
+        downloader.PartDownloadStatus.COMPLETED,
+        downloader.PartDownloadStatus.COMPLETED,
+        downloader.PartDownloadStatus.CANCELLED,
+    ]
+    assert merged.saved_files == (str(first_file), str(retried_file))
+
+
 def test_cancel_before_download_marks_every_part_cancelled(
     downloader: Any,
     tmp_path: Path,

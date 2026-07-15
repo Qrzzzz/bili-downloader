@@ -36,12 +36,10 @@ jobs:
           $appRoot = Join-Path $env:RUNNER_TEMP "BiliDownloader"
           $appData = Join-Path $appRoot "AppData\Roaming"
           $localAppData = Join-Path $appRoot "AppData\Local"
-          $browserPath = Join-Path $appRoot "ms-playwright"
-          New-Item -ItemType Directory -Force -Path $appData, $localAppData, $browserPath | Out-Null
+          New-Item -ItemType Directory -Force -Path $appData, $localAppData | Out-Null
           @(
             "APPDATA=$appData"
             "LOCALAPPDATA=$localAppData"
-            "PLAYWRIGHT_BROWSERS_PATH=$browserPath"
           ) | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Install dependencies
@@ -64,7 +62,7 @@ jobs:
         run: |
           python -m compileall -q app tests tools
           if ($LASTEXITCODE -ne 0) { throw "compileall failed with exit code $LASTEXITCODE" }
-          python -c "import app.config, app.cookies, app.crash, app.downloader, app.logger, app.main, app.ui_main, app.utils"
+          python -c "import app.config, app.cookies, app.crash, app.diagnostics, app.downloader, app.logger, app.main, app.ui_dialogs, app.ui_main, app.utils"
           if ($LASTEXITCODE -ne 0) { throw "application import smoke failed with exit code $LASTEXITCODE" }
 
       - name: Check installed dependency consistency
@@ -80,14 +78,7 @@ jobs:
           python -m app.main --self-test
           if ($LASTEXITCODE -ne 0) { throw "source self-test failed with exit code $LASTEXITCODE" }
 
-      - name: Install Playwright Chromium
-        shell: powershell
-        timeout-minutes: 10
-        run: |
-          python -m playwright install chromium
-          if ($LASTEXITCODE -ne 0) { throw "Playwright Chromium installation failed with exit code $LASTEXITCODE" }
-
-      - name: Run Playwright about blank smoke
+      - name: Run system browser Playwright smoke
         shell: powershell
         timeout-minutes: 2
         run: |
@@ -108,7 +99,7 @@ jobs:
       - name: Build onedir package
         shell: powershell
         timeout-minutes: 15
-        run: .\build.ps1 -Clean -SkipPlaywrightBrowserInstall
+        run: .\build.ps1 -Clean
 
       - name: Smoke onedir package
         shell: powershell
@@ -116,12 +107,12 @@ jobs:
         run: |
           $artifact = Get-ChildItem -LiteralPath .\dist\BiliDownloader -Filter "BiliDownloader.v*.exe" | Select-Object -First 1
           if ($null -eq $artifact) { throw "Versioned onedir artifact was not found." }
-          .\tools\package_smoke.ps1 -Executable $artifact.FullName -RequireBundledChromium
+          .\tools\package_smoke.ps1 -Executable $artifact.FullName
 
       - name: Build onefile package through spec
         shell: powershell
         timeout-minutes: 15
-        run: .\build.ps1 -Clean -OneFile -SkipPlaywrightBrowserInstall
+        run: .\build.ps1 -Clean -OneFile
 
       - name: Smoke onefile package
         shell: powershell
@@ -129,4 +120,4 @@ jobs:
         run: |
           $artifact = Get-ChildItem -LiteralPath .\dist -Filter "BiliDownloader.v*.exe" | Select-Object -First 1
           if ($null -eq $artifact) { throw "Versioned onefile artifact was not found." }
-          .\tools\package_smoke.ps1 -Executable $artifact.FullName -RequireBundledChromium
+          .\tools\package_smoke.ps1 -Executable $artifact.FullName

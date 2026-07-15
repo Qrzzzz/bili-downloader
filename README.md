@@ -2,7 +2,7 @@
 
 一个 Windows 桌面程序，用于在用户提供 Bilibili 视频链接后解析并下载用户有权访问的视频内容。
 
-当前稳定版本：**1.0**。
+当前稳定版本：**1.1**。
 
 本项目的目标是提供一个本地运行的桌面工具，帮助用户在合法、授权、个人备份或学习场景下处理自己有权访问的视频内容。项目不支持绕过会员、付费、DRM、地区限制、风控或任何访问权限限制，也不鼓励或允许侵犯版权。
 
@@ -15,6 +15,8 @@
 - 支持选择分 P、保存目录和下载清晰度。
 - 使用 yt-dlp Python API 下载，使用 FFmpeg 合并音视频。
 - 支持下载进度、重试、取消下载、日志窗口和本地日志文件。
+- 支持逐分 P 下载结果、打开输出文件或目录，以及仅重试失败项。
+- 提供本地环境诊断、脱敏报告和由用户主动触发的 GitHub 更新检查。
 - 登录态仅保存在用户本机应用数据目录中。
 
 ## 安装方式
@@ -23,7 +25,7 @@
 
 发布包应至少包含：
 
-- `BiliDownloader.v1.0.exe`
+- `BiliDownloader.v1.1.exe`
 - 必要的运行时文件
 - 发布说明
 - 校验值，例如 SHA256
@@ -38,12 +40,14 @@
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) "ms-playwright")
-.\.venv\Scripts\python.exe -m playwright install chromium
 .\.venv\Scripts\python.exe -m app.main
 ```
 
-如果不使用项目内的 `ms-playwright\` 目录，也可以按 Playwright 默认方式安装浏览器。不要把 Playwright 下载的浏览器目录提交到 Git 仓库。
+扫码登录优先使用 Windows 自带的 Microsoft Edge，其次使用系统 Chrome。发布包不内置 Chromium，也不会在构建时下载浏览器。
+
+## 环境诊断与更新检查
+
+主界面的“环境诊断”会在后台检查 FFmpeg、登录浏览器、应用目录、下载目录和本地登录状态，并可复制脱敏报告。打开诊断窗口本身不会联网；只有用户点击“检查更新”时才会访问 GitHub Release，程序不会自动下载或安装更新。
 
 ## 打包 Windows exe
 
@@ -56,7 +60,7 @@ $env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) "ms-playwright")
 默认输出位置：
 
 ```text
-dist\BiliDownloader\BiliDownloader.v1.0.exe
+dist\BiliDownloader\BiliDownloader.v1.1.exe
 ```
 
 清理后重新打包：
@@ -71,13 +75,7 @@ dist\BiliDownloader\BiliDownloader.v1.0.exe
 .\build.ps1 -OneFile
 ```
 
-onefile 启动通常更慢，且 Playwright Chromium 与 FFmpeg 等外部依赖更难排查。面向公开发布时，建议维护者先验证 onedir 包。
-
-如果当前网络无法下载 Playwright Chromium，但接受使用系统 Chrome 或 Edge fallback，可以跳过浏览器下载：
-
-```powershell
-.\build.ps1 -SkipPlaywrightBrowserInstall
-```
+onefile 启动通常更慢，且外部浏览器与 FFmpeg 等依赖更难排查。面向公开发布时，建议维护者先验证 onedir 包。
 
 发布前请阅读 [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)，确认没有把本地登录态、日志、下载文件、浏览器 profile、构建缓存或未确认许可证义务的二进制文件放入仓库或发布包。
 
@@ -119,14 +117,7 @@ FFmpeg 用于合并音视频流。你可以选择以下方式之一：
 
 ### 扫码登录打不开怎么办？
 
-请先确认已安装 Playwright Chromium：
-
-```powershell
-$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path (Get-Location) "ms-playwright")
-.\.venv\Scripts\python.exe -m playwright install chromium
-```
-
-如果是打包后的程序，请确认发布包中包含必要的 Playwright 运行文件，或者系统中已安装可用的 Chrome / Edge。
+请确认系统中的 Microsoft Edge 或 Chrome 可以正常启动，并在“环境诊断”中检查登录浏览器状态。程序不会下载或内置 Chromium；如果系统浏览器损坏或被组织策略禁用，需要先修复浏览器环境。
 
 ### 解析失败怎么办？
 

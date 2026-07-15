@@ -1,22 +1,22 @@
 # Maintainer Notes
 
-本文件记录仓库公开发布前的维护者注意事项。当前整理只修改仓库级文档、模板和忽略规则，没有修改源码逻辑。
+本文件记录仓库发布与维护注意事项。
 
-## 本次整理范围
+## v1.1 更新范围
 
-- 未修改 `app/` 下任何 `.py` 文件。
-- 未修改 `build.ps1`。
-- 未修改 `BiliDownloader.spec`。
-- 未修改 `requirements.txt` 的依赖版本。
-- 已补充 README、合规说明、安全说明、贡献说明、发布检查清单、第三方声明、issue 模板、PR 模板、`.gitignore` 和 `.gitattributes`。
+- 新增本地环境诊断、脱敏报告和仅手动触发的 GitHub 更新检查。
+- 新增逐分 P 下载结果窗口、文件操作和失败项重试。
+- 保持现有下载格式、登录态、隐私与合规边界不变。
+- 发布包不内置 Chromium，扫码登录优先使用系统 Edge，其次使用 Chrome。
+- 运行完整自动化测试以及 onedir/onefile 构建和 smoke 验证。
 
 ## 只读审计发现
 
-- 当前目录尚未初始化为 Git 仓库。
+- 当前目录已初始化为 Git 仓库，并使用版本化发布流程。
 - `app/` 是当前源码目录。
 - 顶层存在 `.venv/`，不应提交。
 - 顶层存在 `build/` 和 `dist/`，属于 PyInstaller 构建产物，不应提交。
-- `dist/` 中包含打包后的 `BiliDownloader.v1.0.exe` 以及第三方运行时文件，应作为 Release 附件重新构建和发布，不应直接提交到仓库。
+- `dist/` 中的 `BiliDownloader.v1.1.exe` 以及第三方运行时文件属于本地构建产物，应作为 Release 附件重新构建和发布，不应直接提交到仓库。
 - `app/__pycache__/` 中存在 Python 字节码缓存，不应提交。
 - `tools/` 当前仅发现 `.gitkeep`，未发现 `ffmpeg.exe`。
 - `BiliDownloader.spec` 使用 `Path(SPECPATH)`，审计时未发现硬编码本机绝对路径或个人用户名路径。

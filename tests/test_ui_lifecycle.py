@@ -282,7 +282,7 @@ def test_url_change_parse_failure_and_stale_callback_cannot_download_old_video(
 
     window = ui.MainWindow(safe_mode=True)
     qtbot.addWidget(window)
-    assert window.windowTitle() == "Bili Downloader Lite V1.0"
+    assert window.windowTitle() == "Bili Downloader Lite V1.1"
     window.url_edit.setText(url_a)
     result_a = _video_result(ui, "A", url_a)
     window.on_parse_finished(url_a, result_a)
@@ -417,3 +417,39 @@ def test_main_window_close_requests_cancel_and_keeps_running_qthread_alive(
     assert thread.wait(2000)
     qtbot.waitUntil(lambda: window._allow_close, timeout=2000)
     assert thread.terminate_calls == 0
+
+
+def test_diagnostics_dialog_only_checks_updates_after_manual_action(
+    ui: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    qtbot: Any,
+) -> None:
+    dialogs = importlib.import_module("app.ui_dialogs")
+    diagnostics = importlib.import_module("app.diagnostics")
+    update_calls: list[str] = []
+    report = diagnostics.DiagnosticReport(
+        (
+            diagnostics.DiagnosticItem(
+                "程序", diagnostics.DiagnosticStatus.INFO, "V1.1，测试"
+            ),
+        )
+    )
+    monkeypatch.setattr(dialogs, "collect_diagnostics", lambda *_args, **_kwargs: report)
+    monkeypatch.setattr(
+        dialogs,
+        "check_latest_release",
+        lambda: update_calls.append("called")
+        or diagnostics.UpdateCheckResult("1.0", "1.1", "https://github.com/Qrzzzz/bili-downloader/releases/tag/v1.1", True, "发现新版"),
+    )
+
+    dialog = dialogs.DiagnosticsDialog(ui.AppConfig(download_dir=str(Path.cwd())))
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitUntil(lambda: dialog.report is report, timeout=2000)
+    assert update_calls == []
+    assert dialog.copy_button.isEnabled()
+
+    dialog.start_update_check()
+    qtbot.waitUntil(lambda: update_calls == ["called"], timeout=2000)
+    qtbot.waitUntil(dialog.open_release_button.isEnabled, timeout=2000)
+    dialog.close()

@@ -30,7 +30,7 @@ def main(safe_mode: bool = False) -> int:
 
             with sync_playwright() as playwright:
                 last_error = None
-                for channel in (None, "chrome", "msedge"):
+                for channel in ("msedge", "chrome", None):
                     browser = None
                     context = None
                     try:
