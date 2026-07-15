@@ -53,6 +53,7 @@ from .downloader import (
     DownloadBatchResult,
     DownloadController,
     FormatChoice,
+    PartDownloadResult,
     PartDownloadStatus,
     VideoInfoResult,
     VideoPart,
@@ -61,7 +62,9 @@ from .downloader import (
     parse_video_info,
 )
 from .logger import LogEmitter, redact_sensitive, setup_logging
+from .ui_dialogs import DiagnosticsDialog, DownloadResultDialog
 from .utils import (
+    ErrorClassification,
     ErrorKind,
     classify_error_details,
     ffmpeg_status_text,
@@ -124,7 +127,7 @@ class ParseWorker(QObject):
 class DownloadWorker(QObject):
     progress = Signal(dict)
     finished = Signal(object)
-    failed = Signal(str, str, str)
+    failed = Signal(object, str)
     log = Signal(str)
 
     def __init__(
@@ -164,7 +167,7 @@ class DownloadWorker(QObject):
             self.finished.emit(exc.result)
         except Exception as exc:  # noqa: BLE001
             classified = classify_error_details(exc)
-            self.failed.emit(classified.code, classified.message, redact_sensitive(exc))
+            self.failed.emit(classified, redact_sensitive(exc))
 
 
 class SessionValidationWorker(QObject):
@@ -202,6 +205,18 @@ class LoginOutcome:
     detail: str = ""
 
 
+@dataclass(frozen=True)
+class DownloadRequest:
+    source_url: str
+    video_title: str
+    parts: tuple[VideoPart, ...]
+    config: AppConfig
+    download_dir: str
+    format_selector: str
+    format_label: str
+    credential_mode: CredentialMode
+
+
 class LoginWorker(QObject):
     status = Signal(str)
     screenshot = Signal(bytes)
@@ -224,7 +239,7 @@ class LoginWorker(QObject):
             "headless": False,
         }
         errors: list[str] = []
-        for channel in (None, "chrome", "msedge"):
+        for channel in ("msedge", "chrome", None):
             try:
                 if channel:
                     return playwright.chromium.launch(channel=channel, **launch_kwargs)
@@ -246,7 +261,7 @@ class LoginWorker(QObject):
             outcome = LoginOutcome(
                 "failed",
                 "Playwright 未安装或浏览器依赖缺失。",
-                f"{redact_sensitive(exc)}\n请运行 build.ps1，或手动执行：python -m playwright install chromium",
+                f"{redact_sensitive(exc)}\n请重新安装 requirements.txt，并确认系统 Edge 或 Chrome 可以正常启动。",
             )
         else:
             browser = None
@@ -525,6 +540,12 @@ class MainWindow(QMainWindow):
         self.session_worker: SessionValidationWorker | None = None
         self.download_controller: DownloadController | None = None
         self.login_dialog: LoginDialog | None = None
+        self.diagnostics_dialog: DiagnosticsDialog | None = None
+        self.result_dialog: DownloadResultDialog | None = None
+        self.download_request: DownloadRequest | None = None
+        self._active_download_parts: tuple[VideoPart, ...] = ()
+        self._download_is_retry = False
+        self._retry_context_valid = False
         self.safe_mode = safe_mode
         self.credential_mode = CredentialMode.ANONYMOUS if safe_mode else CredentialMode.SAVED
         self.login_status_code = "none"
@@ -635,9 +656,11 @@ class MainWindow(QMainWindow):
         self.qr_login_button = QPushButton("扫码登录")
         self.logout_button = QPushButton("退出登录 / 清除登录状态")
         self.view_crash_log_button = QPushButton("查看错误日志")
+        self.diagnostics_button = QPushButton("环境诊断")
         login_buttons.addWidget(self.qr_login_button)
         login_buttons.addWidget(self.logout_button)
         login_buttons.addWidget(self.view_crash_log_button)
+        login_buttons.addWidget(self.diagnostics_button)
         compliance = QLabel(
             "不输入账号密码，不读取 Chrome/Edge/Firefox 等日常浏览器 Cookie。扫码登录只使用本程序打开的 Bilibili 官方登录页，登录态仅保存在本机应用数据目录。"
         )
@@ -685,6 +708,7 @@ class MainWindow(QMainWindow):
         self.qr_login_button.clicked.connect(self.start_qr_login)
         self.logout_button.clicked.connect(self.logout)
         self.view_crash_log_button.clicked.connect(self.open_crash_log)
+        self.diagnostics_button.clicked.connect(self.open_diagnostics)
         self.select_all_button.clicked.connect(self.select_all_parts)
         self.select_first_button.clicked.connect(self.select_first_part)
         self.log_emitter.message.connect(self._append_log)
@@ -777,6 +801,18 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "错误日志位置", f"无法自动打开日志。\n\n路径：{path}\n\n错误：{redact_sensitive(exc)}")
 
     @Slot()
+    def open_diagnostics(self) -> None:
+        if self.diagnostics_dialog is not None:
+            self.diagnostics_dialog.show()
+            self.diagnostics_dialog.raise_()
+            self.diagnostics_dialog.activateWindow()
+            return
+        dialog = DiagnosticsDialog(AppConfig(**asdict(self.config)), self)
+        dialog.destroyed.connect(lambda: setattr(self, "diagnostics_dialog", None))
+        self.diagnostics_dialog = dialog
+        dialog.show()
+
+    @Slot()
     def start_qr_login(self) -> None:
         if self.login_dialog is not None:
             self.login_dialog.raise_()
@@ -864,6 +900,9 @@ class MainWindow(QMainWindow):
         self.cover_label.clear()
         self.cover_label.setText("封面")
         self.download_button.setEnabled(False)
+        self._retry_context_valid = False
+        if self.result_dialog is not None:
+            self.result_dialog.invalidate_retry()
         if self.url_edit.text().strip() and not self._closing:
             self.status_label.setText("链接已更改，请重新解析")
 
@@ -1040,21 +1079,44 @@ class MainWindow(QMainWindow):
         selector = str(self.format_combo.currentData() or "bestvideo+bestaudio/best")
         self._append_log(f"下载格式选择器：{selector}")
 
+        request = DownloadRequest(
+            source_url=str(self._parsed_url),
+            video_title=self.current_info.title,
+            parts=tuple(parts),
+            config=AppConfig(**asdict(self.config)),
+            download_dir=download_dir,
+            format_selector=selector,
+            format_label=self.format_combo.currentText() or "自动选择",
+            credential_mode=self.credential_mode,
+        )
+        self.download_request = request
+        self._retry_context_valid = True
+        self._download_is_retry = False
+        if self.result_dialog is not None:
+            self.result_dialog.close()
+        self._begin_download(request.parts)
+
+    def _begin_download(self, parts: tuple[VideoPart, ...]) -> None:
+        request = self.download_request
+        if request is None or self.download_thread is not None or not parts:
+            return
+
         self.download_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.parse_button.setEnabled(False)
         self.progress_bar.setValue(0)
         self.status_label.setText("准备下载...")
+        self._active_download_parts = parts
 
         self.download_controller = DownloadController()
         thread = QThread(self)
         worker = DownloadWorker(
-            parts,
-            AppConfig(**asdict(self.config)),
-            download_dir,
-            selector,
+            list(parts),
+            AppConfig(**asdict(request.config)),
+            request.download_dir,
+            request.format_selector,
             self.download_controller,
-            self.credential_mode,
+            request.credential_mode,
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -1076,6 +1138,9 @@ class MainWindow(QMainWindow):
         self.download_thread = None
         self.download_worker = None
         self.download_controller = None
+        self._active_download_parts = ()
+        if self.result_dialog is not None:
+            self.result_dialog.set_busy(False)
         if not self._closing:
             self.cancel_button.setEnabled(False)
             self.parse_button.setEnabled(True)
@@ -1131,15 +1196,19 @@ class MainWindow(QMainWindow):
         self.cancel_button.setEnabled(False)
         self.parse_button.setEnabled(True)
         if not isinstance(result, DownloadBatchResult):
-            saved = list(result)
-            self.progress_bar.setValue(100)
-            summary = f"下载完成，保存了 {len(saved)} 个文件。"
-            details = "\n".join(saved)
-            self.status_label.setText(summary)
-            self._append_log(summary)
-            if not self._closing:
-                QMessageBox.information(self, "下载完成", f"{summary}\n\n{details}")
-            return
+            legacy_files = tuple(dict.fromkeys(result))
+            result = DownloadBatchResult(
+                PartDownloadResult(
+                    part,
+                    PartDownloadStatus.COMPLETED,
+                    legacy_files if index == 0 else (),
+                )
+                for index, part in enumerate(self._active_download_parts)
+            )
+
+        self._handle_download_result(result)
+
+    def _handle_download_result(self, result: DownloadBatchResult) -> None:
 
         completed = result.completed
         failed = result.failed
@@ -1160,35 +1229,77 @@ class MainWindow(QMainWindow):
             self.set_login_status("下载遇到登录相关错误，正在向服务端复核", "local_pending")
             self.start_session_validation()
 
-        saved_preview = "\n".join(result.saved_files[:10])
-        if len(result.saved_files) > 10:
-            saved_preview += f"\n……另有 {len(result.saved_files) - 10} 个文件"
-        dialog_text = summary + (f"\n\n已保存文件：\n{saved_preview}" if saved_preview else "")
         if self._closing:
             return
-        if failed:
-            QMessageBox.warning(self, "下载任务部分失败", dialog_text)
-        else:
-            QMessageBox.information(self, "下载任务结束", dialog_text)
 
-    @Slot(str, str, str)
-    def on_download_failed(self, error_code: str, friendly: str, detail: str) -> None:
+        request = self.download_request
+        if self._download_is_retry and self.result_dialog is not None:
+            self.result_dialog.merge_retry_result(result)
+            self.result_dialog.set_busy(False)
+        else:
+            if self.result_dialog is not None:
+                self.result_dialog.close()
+            dialog = DownloadResultDialog(
+                result,
+                video_title=request.video_title if request else "下载任务",
+                format_label=request.format_label if request else "自动选择",
+                parent=self,
+            )
+            if not self._retry_context_valid:
+                dialog.invalidate_retry()
+            dialog.retry_requested.connect(self.retry_failed_parts)
+            dialog.destroyed.connect(lambda _obj=None, target=dialog: self._clear_result_dialog(target))
+            self.result_dialog = dialog
+            dialog.show()
+        self._download_is_retry = False
+
+    def _clear_result_dialog(self, dialog: DownloadResultDialog) -> None:
+        if self.result_dialog is dialog:
+            self.result_dialog = None
+
+    @Slot(object)
+    def retry_failed_parts(self, parts: tuple[VideoPart, ...]) -> None:
+        request = self.download_request
+        if (
+            not self._retry_context_valid
+            or request is None
+            or not self._input_matches(request.source_url)
+            or self.download_thread is not None
+        ):
+            if self.result_dialog is not None:
+                self.result_dialog.invalidate_retry()
+            return
+        self._download_is_retry = True
+        self._begin_download(tuple(parts))
+
+    @Slot(object, str)
+    def on_download_failed(self, classified: ErrorClassification, detail: str) -> None:
         self.download_button.setEnabled(self._can_download_current())
         self.cancel_button.setEnabled(False)
         self.parse_button.setEnabled(True)
-        self.status_label.setText(friendly)
-        self._append_log(f"下载失败：{friendly}")
+        self.status_label.setText(classified.message)
+        self._append_log(f"下载失败：{classified.message}")
         self._append_log(detail)
-        if error_code == ErrorKind.LOGIN_INVALID.value:
+        if classified.kind is ErrorKind.LOGIN_INVALID:
             self.set_login_status("下载遇到登录相关错误，正在向服务端复核", "local_pending")
             self.start_session_validation()
-        if not self._closing:
-            QMessageBox.warning(self, "下载失败", f"{friendly}\n\n详细信息：{detail}")
+        result = DownloadBatchResult(
+            PartDownloadResult(
+                part,
+                PartDownloadStatus.FAILED,
+                error=classified,
+                detail=detail,
+            )
+            for part in self._active_download_parts
+        )
+        self._handle_download_result(result)
 
     def _active_threads(self) -> list[QThread]:
         candidates = [self.parse_thread, self.session_thread, self.download_thread]
         if self.login_dialog is not None:
             candidates.append(self.login_dialog.thread)
+        if self.diagnostics_dialog is not None:
+            candidates.extend(self.diagnostics_dialog.active_threads())
         active: list[QThread] = []
         for thread in candidates:
             if thread is None or thread in active:
@@ -1207,6 +1318,8 @@ class MainWindow(QMainWindow):
             self.session_worker.request_cancel()
         if self.login_dialog is not None:
             self.login_dialog.request_shutdown()
+        if self.diagnostics_dialog is not None:
+            self.diagnostics_dialog.request_shutdown()
         if self.download_controller:
             self.download_controller.cancel()
         for thread in self._active_threads():
@@ -1242,6 +1355,7 @@ class MainWindow(QMainWindow):
         self.cancel_button.setEnabled(False)
         self.qr_login_button.setEnabled(False)
         self.logout_button.setEnabled(False)
+        self.diagnostics_button.setEnabled(False)
         self.status_label.setText("正在安全关闭，请稍候...")
         self._request_shutdown()
 

@@ -27,6 +27,7 @@
 - [ ] 已在干净环境验证从源码运行。
 - [ ] 已验证 Windows exe 打包流程。
 - [ ] 已确认发布包不包含本机日志、登录态、浏览器 profile 或下载文件。
+- [ ] 已确认发布包不包含 `ms-playwright` 或内置 Chromium，并已用系统 Edge/Chrome 完成登录浏览器 smoke。
 - [ ] 已记录构建命令、Python 版本和依赖版本。
 - [ ] 已准备杀毒误报说明。
 - [ ] 已生成并公布 GitHub Release 附件校验值，例如 SHA256。
@@ -39,5 +40,5 @@ git status --short
 git diff --check
 git ls-files --others --ignored --exclude-standard
 rg -n -i "SESSDATA|bili_jct|DedeUserID|storage_state|cookies\\.txt|token|password" -g "!dist/**" -g "!build/**" -g "!.venv/**"
-Get-FileHash .\dist\BiliDownloader\BiliDownloader.v1.0.exe -Algorithm SHA256
+Get-FileHash .\dist\BiliDownloader\BiliDownloader.v1.1.exe -Algorithm SHA256
 ```
