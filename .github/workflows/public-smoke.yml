@@ -49,11 +49,31 @@ jobs:
           if (Test-Path -LiteralPath $output) { Get-Content -LiteralPath $output -Encoding utf8 }
           if ($smokeExit -ne 0) { throw "public parse smoke failed with exit code $smokeExit" }
 
+      - name: Generate and poll one anonymous QR challenge
+        if: always()
+        shell: powershell
+        timeout-minutes: 2
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP "public-qr-smoke.json"
+          python tools/public_qr_smoke.py --output $output
+          $smokeExit = $LASTEXITCODE
+          if (Test-Path -LiteralPath $output) { Get-Content -LiteralPath $output -Encoding utf8 }
+          if ($smokeExit -ne 0) { throw "public QR smoke failed with exit code $smokeExit" }
+
       - name: Upload smoke result
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: anonymous-public-parse-${{ github.run_id }}
           path: ${{ runner.temp }}/public-parse-smoke.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload QR smoke result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: anonymous-public-qr-${{ github.run_id }}
+          path: ${{ runner.temp }}/public-qr-smoke.json
           if-no-files-found: error
           retention-days: 14

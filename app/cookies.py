@@ -21,10 +21,28 @@ import requests
 
 from .config import APP_DIR_NAME, AppConfig, app_data_dir, session_dir
 from .logger import redact_sensitive
-from .utils import resource_root
-
-
 LOGIN_COOKIE_NAMES = {"SESSDATA", "DedeUserID"}
+ALLOWED_COOKIE_NAMES = {
+    "SESSDATA",
+    "DedeUserID",
+    "DedeUserID__ckMd5",
+    "bili_jct",
+    "sid",
+    "buvid3",
+    "buvid4",
+    "b_nut",
+    "ac_time_value",
+}
+ALLOWED_COOKIE_FIELDS = {
+    "name",
+    "value",
+    "domain",
+    "path",
+    "secure",
+    "httpOnly",
+    "expires",
+    "sameSite",
+}
 BILIBILI_COOKIE_DOMAINS = ("bilibili.com", "biliapi.net")
 SESSION_SCHEMA_VERSION = 1
 SESSION_DIR_NAME = "session"
@@ -82,16 +100,8 @@ def storage_state_path() -> Path:
     return canonical_session_path()
 
 
-def storage_state_tmp_path() -> Path:
-    return session_dir() / "storage_state.tmp.json"
-
-
 def cookies_txt_path() -> Path:
     return session_dir() / "cookies.txt"
-
-
-def cookies_tmp_path() -> Path:
-    return session_dir() / "cookies.tmp.txt"
 
 
 def legacy_browser_profile_dir() -> Path:
@@ -134,14 +144,6 @@ def _legacy_credential_files() -> list[Path]:
     return result
 
 
-def ensure_playwright_runtime() -> None:
-    bundled = resource_root() / "ms-playwright"
-    if bundled.exists():
-        # Official Lite builds do not ship this directory. Keep support for a
-        # source checkout or custom build that explicitly supplies it.
-        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
-
-
 def normalize_cookie_domain(domain: str) -> str:
     if domain.startswith("#HttpOnly_"):
         domain = domain[len("#HttpOnly_") :]
@@ -154,25 +156,44 @@ def is_bilibili_cookie_domain(domain: str) -> bool:
 
 
 def _canonical_cookie(cookie: dict[str, Any]) -> dict[str, Any] | None:
-    domain = str(cookie.get("domain") or "").strip().lower()
-    name = str(cookie.get("name") or "").strip()
-    value = str(cookie.get("value") or "")
-    if not domain or not name or not value or not is_bilibili_cookie_domain(domain):
+    raw_domain = cookie.get("domain")
+    if not isinstance(raw_domain, str):
+        raise SessionSaveError("Cookie domain 类型无效")
+    domain = raw_domain.strip().lower()
+    if not domain or not is_bilibili_cookie_domain(domain):
+        return None
+    raw_name = cookie.get("name")
+    raw_value = cookie.get("value")
+    if not isinstance(raw_name, str) or not isinstance(raw_value, str):
+        raise SessionSaveError("Cookie name/value 类型无效")
+    name = raw_name.strip()
+    value = raw_value
+    if not name or not value:
+        return None
+    if name not in ALLOWED_COOKIE_NAMES:
         return None
     if any(token in item for item in (domain, name, value) for token in ("\t", "\r", "\n")):
         raise SessionSaveError("Cookie 字段包含非法制表符或换行")
 
-    path = str(cookie.get("path") or "/").strip() or "/"
+    raw_path = cookie.get("path", "/")
+    if not isinstance(raw_path, str):
+        raise SessionSaveError("Cookie path 类型无效")
+    path = raw_path.strip() or "/"
     if any(token in path for token in ("\t", "\r", "\n")):
         raise SessionSaveError("Cookie path 包含非法制表符或换行")
+
+    secure = cookie.get("secure", False)
+    http_only = cookie.get("httpOnly", False)
+    if not isinstance(secure, bool) or not isinstance(http_only, bool):
+        raise SessionSaveError("Cookie secure/httpOnly 类型无效")
 
     result: dict[str, Any] = {
         "name": name,
         "value": value,
         "domain": domain,
         "path": path,
-        "secure": bool(cookie.get("secure")),
-        "httpOnly": bool(cookie.get("httpOnly")),
+        "secure": secure,
+        "httpOnly": http_only,
     }
     expires = cookie.get("expires")
     if isinstance(expires, (int, float)) and not isinstance(expires, bool):
@@ -187,7 +208,7 @@ def filter_bilibili_cookies(cookies: Iterable[dict[str, Any]]) -> list[dict[str,
     deduplicated: dict[tuple[str, str, str], dict[str, Any]] = {}
     for cookie in cookies:
         if not isinstance(cookie, dict):
-            continue
+            raise SessionSaveError("Cookie 列表包含非对象项")
         selected = _canonical_cookie(cookie)
         if selected is None:
             continue
@@ -442,27 +463,8 @@ def load_session_snapshot() -> SessionSnapshot | None:
         return _load_snapshot_locked()
 
 
-def save_context_storage_state_atomic(context: Any) -> Path:
-    """Persist only canonical Bilibili cookies, protected for the current Windows user."""
-    try:
-        state = context.storage_state()
-        if not isinstance(state, dict):
-            raise SessionSaveError("Playwright 未返回有效的 storage_state")
-        cookies = state.get("cookies")
-        if not isinstance(cookies, list):
-            raise SessionSaveError("Playwright storage_state 缺少 cookies 数组")
-        with _session_transaction():
-            _commit_cookies_locked(cookies)
-        return canonical_session_path()
-    except SessionSaveError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        logging.getLogger("bili_downloader").error("保存扫码登录态失败：%s", redact_sensitive(exc))
-        raise SessionSaveError(redact_sensitive(exc)) from exc
-
-
-def save_playwright_cookies_as_netscape(cookies: Iterable[dict[str, Any]]) -> Path:
-    """Compatibility wrapper: commit cookies to the protected canonical store."""
+def _store_cookies_for_tests(cookies: Iterable[dict[str, Any]]) -> Path:
+    """Private test seam for constructing a v1 canonical session without network."""
     with _session_transaction():
         _commit_cookies_locked(cookies)
     return canonical_session_path()
@@ -533,10 +535,61 @@ def _read_legacy_cookies(path: Path) -> list[dict[str, Any]]:
     return state["cookies"]
 
 
+def _legacy_profile_dirs() -> list[Path]:
+    return [
+        root / name
+        for root in _legacy_session_dirs()
+        for name in ("playwright-profile", "login-cache")
+    ]
+
+
+def _cleanup_legacy_profile_residue_locked() -> tuple[str, ...]:
+    failures: list[str] = []
+    for path in _legacy_profile_dirs():
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            elif path.exists():
+                path.unlink()
+        except OSError as exc:
+            failures.append(f"{path}: {redact_sensitive(exc)}")
+    return tuple(failures)
+
+
+def _cleanup_legacy_plaintext_locked() -> tuple[str, ...]:
+    failures: list[str] = []
+    for path in _legacy_credential_files():
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            failures.append(f"{path}: {redact_sensitive(exc)}")
+    return tuple(failures)
+
+
+def cleanup_legacy_login_residue() -> tuple[str, ...]:
+    """Remove only obsolete login browser/profile caches; never touch canonical state."""
+    with _session_transaction():
+        failures = _cleanup_legacy_profile_residue_locked()
+    if failures:
+        logging.getLogger("bili_downloader").warning(
+            "legacy 登录缓存清理失败：%s", "; ".join(failures)
+        )
+    return failures
+
+
 def migrate_legacy_session() -> bool:
     """Commit legacy state first; only then remove legacy plaintext files."""
     with _session_transaction():
         if canonical_session_path().exists():
+            # A decryptable v1.2 canonical session is already the commit point.
+            # Do not remove legacy plaintext when the canonical file is corrupt.
+            _load_snapshot_locked()
+            failures = list(_cleanup_legacy_plaintext_locked())
+            failures.extend(_cleanup_legacy_profile_residue_locked())
+            if failures:
+                logging.getLogger("bili_downloader").warning(
+                    "canonical 登录态有效，但旧 profile 清理失败：%s", "; ".join(failures)
+                )
             return True
         source = next((path for path in _legacy_credential_files() if path.exists()), None)
         if source is None:
@@ -544,14 +597,8 @@ def migrate_legacy_session() -> bool:
         cookies = _read_legacy_cookies(source)
         _commit_cookies_locked(cookies)
         # Successful decrypt verification above is the migration commit point.
-        failures: list[str] = []
-        for path in _legacy_credential_files():
-            if not path.exists():
-                continue
-            try:
-                path.unlink()
-            except OSError as exc:
-                failures.append(f"{path}: {redact_sensitive(exc)}")
+        failures = list(_cleanup_legacy_plaintext_locked())
+        failures.extend(_cleanup_legacy_profile_residue_locked())
         if failures:
             logging.getLogger("bili_downloader").warning("legacy 登录态迁移成功，但旧明文清理失败：%s", "; ".join(failures))
         return True
@@ -581,32 +628,71 @@ def describe_login_status() -> LoginStatus:
         return LoginStatus("invalid", "本地登录凭据已损坏或失效")
 
 
-def _remote_validate(snapshot: SessionSnapshot) -> LoginStatus:
-    cookie_map = {cookie["name"]: cookie["value"] for cookie in snapshot.cookies}
+def _remote_validate_cookies(
+    cookies: Iterable[dict[str, Any]],
+    generation: str | None = None,
+) -> LoginStatus:
+    cookie_map = {cookie["name"]: cookie["value"] for cookie in cookies}
     try:
         response = requests.get(
             NAV_API_URL,
             cookies=cookie_map,
             headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/"},
-            timeout=(5, 10),
+            timeout=(2.5, 4.0),
         )
         if response.status_code == 401:
-            return LoginStatus("invalid", "登录凭据已失效，请重新扫码登录", snapshot.generation)
+            return LoginStatus("invalid", "登录凭据已失效，请重新扫码登录", generation)
+        if response.status_code == 412:
+            return LoginStatus(
+                "platform_412",
+                "Bilibili 返回 HTTP 412，属于外部平台限制，本地凭据未更改",
+                generation,
+            )
         response.raise_for_status()
         payload = response.json()
     except (requests.Timeout, requests.ConnectionError):
-        return LoginStatus("offline", "当前离线或网络超时，无法验证本地登录凭据", snapshot.generation)
-    except (requests.RequestException, ValueError):
-        return LoginStatus("offline", "服务端暂时不可用，本地登录凭据未被更改", snapshot.generation)
+        return LoginStatus("offline", "当前离线或网络超时，无法验证本地登录凭据", generation)
+    # requests.JSONDecodeError also derives from RequestException.  Parse
+    # failures are protocol failures and must never be softened into offline.
+    except ValueError:
+        return LoginStatus("protocol_error", "服务端验证响应异常，本地登录凭据未被更改", generation)
+    except requests.RequestException:
+        return LoginStatus("offline", "服务端暂时不可用，本地登录凭据未被更改", generation)
 
-    if not isinstance(payload, dict):
-        return LoginStatus("offline", "服务端返回异常，本地登录凭据未被更改", snapshot.generation)
+    if not isinstance(payload, dict) or not isinstance(payload.get("code"), int) or isinstance(payload.get("code"), bool):
+        return LoginStatus("protocol_error", "服务端验证响应异常，本地登录凭据未被更改", generation)
     data = payload.get("data")
     if payload.get("code") == 0 and isinstance(data, dict) and data.get("isLogin") is True:
-        return LoginStatus("verified", "登录凭据已通过服务端验证", snapshot.generation)
+        return LoginStatus("verified", "登录凭据已通过服务端验证", generation)
     if payload.get("code") == -101 or (isinstance(data, dict) and data.get("isLogin") is False):
-        return LoginStatus("invalid", "登录凭据已失效，请重新扫码登录", snapshot.generation)
-    return LoginStatus("offline", "服务端暂时无法确认登录状态，本地凭据未被更改", snapshot.generation)
+        return LoginStatus("invalid", "登录凭据已失效，请重新扫码登录", generation)
+    return LoginStatus("protocol_error", "服务端暂时无法确认登录状态，本地凭据未被更改", generation)
+
+
+def validate_and_commit_candidate_cookies(
+    cookies: Iterable[dict[str, Any]],
+    *,
+    cancelled: Callable[[], bool] = lambda: False,
+) -> LoginStatus:
+    """Validate a filtered candidate remotely before atomically replacing canonical state."""
+    if cancelled():
+        return LoginStatus("cancelled", "扫码登录已取消")
+    try:
+        selected = _validate_cookie_set(cookies)
+    except SessionSaveError:
+        return LoginStatus("invalid", "扫码响应未提供完整、允许的 Bilibili 登录 Cookie")
+
+    validation = _remote_validate_cookies(selected)
+    if validation.code != "verified":
+        return validation
+    if cancelled():
+        return LoginStatus("cancelled", "扫码登录已取消")
+
+    with _session_transaction():
+        if cancelled():
+            return LoginStatus("cancelled", "扫码登录已取消")
+        snapshot = _commit_cookies_locked(selected)
+    return LoginStatus("verified", "登录凭据已验证并安全保存", snapshot.generation)
 
 
 def validate_saved_session() -> LoginStatus:
@@ -624,7 +710,7 @@ def validate_saved_session() -> LoginStatus:
 
     if not cookies_indicate_logged_in(snapshot.cookies):
         return LoginStatus("invalid", "登录凭据已过期，请重新扫码登录", snapshot.generation)
-    result = _remote_validate(snapshot)
+    result = _remote_validate_cookies(snapshot.cookies, snapshot.generation)
     try:
         current = load_session_snapshot()
     except SessionSaveError:

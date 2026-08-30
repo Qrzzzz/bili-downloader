@@ -8,11 +8,11 @@
 
 ## PySide6 / Qt for Python
 
-项目 v1.2 锁定 PySide6 6.11.2 构建桌面界面。PySide6 与 Qt 相关组件的许可证义务取决于具体版本、使用方式和分发方式。发布前请维护者确认所用版本的许可证、动态链接要求、notice 要求以及是否需要提供对应许可证文本。
+项目 v1.3 锁定 PySide6 6.11.2 构建桌面界面。PySide6 与 Qt 相关组件的许可证义务取决于具体版本、使用方式和分发方式。发布前请维护者确认所用版本的许可证、动态链接要求、notice 要求以及是否需要提供对应许可证文本。
 
 ## yt-dlp
 
-项目使用 yt-dlp 解析和下载用户有权访问的视频内容。v1.2 锁定 PyPI wheel `yt-dlp==2026.8.19`；其 wheel SHA-256 记录在 `requirements.txt`。yt-dlp 的许可证和第三方 notice 以上游项目和安装包元数据为准。
+项目使用 yt-dlp 解析和下载用户有权访问的视频内容。v1.3 锁定 PyPI wheel `yt-dlp==2026.8.19`；其 wheel SHA-256 记录在 `requirements.txt`。yt-dlp 的许可证和第三方 notice 以上游项目和安装包元数据为准。
 
 ## FFmpeg
 
@@ -27,13 +27,15 @@ FFmpeg 用于合并音视频。
 - 是否需要提供源码、构建参数、许可证文本和修改说明。
 - 是否允许与当前发布方式一起分发。
 
-## Playwright
+## Segno
 
-项目 v1.2 锁定 Playwright 1.62.0 维持既有扫码登录流程。发布包包含 Playwright 驱动所需文件，但不安装、不内置 Chromium；程序只尝试系统 Edge/Chrome。Playwright Python 包、driver 和 Node.js 运行文件可能分别带有自己的许可证和第三方 notice。
+项目 v1.3 锁定 `segno==1.6.6` 在应用内本地生成二维码 PNG。Segno 是纯 Python 包，在 Python 3.13 上无传递依赖；已核对 wheel 包含 BSD 3-Clause 许可文本 `licenses/LICENSE`。候选发布资料应保留其版权、条件与免责文本。
+
+v1.3 的运行时、构建锁和发布包不包含浏览器自动化包、driver/Node 或浏览器 runtime。历史 CHANGELOG 和旧凭据/profile 迁移清理仍可保留相关历史名称。
 
 ## PyInstaller
 
-项目 v1.2 锁定 PyInstaller 6.22.2 打包 Windows exe。发布前请确认 PyInstaller bootloader、运行时文件和生成产物的许可证通知要求。
+项目 v1.3 锁定 PyInstaller 6.22.2 打包 Windows exe。发布前请确认 PyInstaller bootloader、运行时文件和生成产物的许可证通知要求。
 
 ## 其他 Python 依赖
 

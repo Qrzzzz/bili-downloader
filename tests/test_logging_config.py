@@ -57,6 +57,27 @@ def test_full_traceback_cookie_and_url_redaction(session_modules: SimpleNamespac
     assert "?<redacted>" in rendered and "#<redacted>" in rendered
 
 
+def test_qr_protocol_secrets_and_callback_urls_are_redacted(session_modules: SimpleNamespace) -> None:
+    logger_module = session_modules.logger
+    key = "synthetic-qr-key-7c8d"
+    refresh = "synthetic-refresh-token-2a91"
+    session = "synthetic-success-session-1a22"
+    raw = (
+        f'qrcode_key={key} refresh_token="{refresh}" '
+        f'{{"qrcode_key":"{key}","refresh_token":"{refresh}"}} '
+        "https://passport.bilibili.com/x/passport-login/web/qrcode/poll?"
+        f"qrcode_key={key} "
+        f"https://passport.biligame.com/crossDomain?SESSDATA={session}&gourl=https%3A%2F%2Fwww.bilibili.com"
+    )
+
+    rendered = logger_module.redact_sensitive(raw)
+
+    assert key not in rendered
+    assert refresh not in rendered
+    assert session not in rendered
+    assert rendered.count("?<redacted>") >= 2
+
+
 def test_logging_handlers_are_deduplicated_and_bounded(
     session_modules: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,

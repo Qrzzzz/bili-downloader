@@ -3,10 +3,8 @@ from __future__ import annotations
 import importlib
 import logging
 import os
-import sys
 import threading
 import time
-import types
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -77,7 +75,7 @@ def test_login_dialog_repeated_terminal_paths_wait_for_thread_finished(
 
     class FakeLoginWorker(QObject):
         status = Signal(str)
-        screenshot = Signal(bytes)
+        qr_image = Signal(bytes)
         completed = Signal(object)
 
         def __init__(self) -> None:
@@ -107,7 +105,7 @@ def test_login_dialog_repeated_terminal_paths_wait_for_thread_finished(
                 time.sleep(0.01)
                 outcome = ui.LoginOutcome("timeout", "timed out", "synthetic timeout")
 
-            # Model Playwright cleanup happening before the terminal outcome.
+            # Model protocol-session cleanup happening before the terminal outcome.
             self.events.append("resources_closed")
             self.terminal_outcome = outcome
             self.completed.emit(outcome)
@@ -164,89 +162,101 @@ def test_login_dialog_repeated_terminal_paths_wait_for_thread_finished(
             assert dialog.login_succeeded is False
 
 
-def test_login_worker_closes_playwright_objects_before_terminal_signal(
+def test_login_worker_closes_native_qr_session_before_terminal_signal(
     ui: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The real LoginWorker closes context/browser inside sync_playwright."""
-
     events: list[str] = []
 
-    class FakePlaywrightError(Exception):
-        pass
+    class FakeClient:
+        def generate(self) -> Any:
+            events.append("challenge.generated")
+            return SimpleNamespace(qr_url="https://account.bilibili.com/synthetic")
 
-    class FakePage:
-        def goto(self, *_args: Any, **_kwargs: Any) -> None:
-            events.append("page.goto")
+        def poll(self, _challenge: Any) -> Any:
+            events.append("challenge.polled")
+            return SimpleNamespace(status=ui.QrStatus.SUCCESS)
 
-        def bring_to_front(self) -> None:
-            events.append("page.front")
-
-    class FakeContext:
-        def new_page(self) -> FakePage:
-            return FakePage()
-
-        def cookies(self, _urls: list[str]) -> list[dict[str, str]]:
-            events.append("context.cookies")
-            return [{"name": "synthetic", "value": "not-a-real-cookie"}]
+        def candidate_cookies(self) -> list[dict[str, str]]:
+            events.append("cookies.candidate")
+            return [{"name": "synthetic"}]
 
         def close(self) -> None:
-            events.append("context.close")
+            events.append("session.close")
 
-    class FakeBrowser:
-        def __init__(self) -> None:
-            self.context = FakeContext()
+    monkeypatch.setattr(ui, "render_qr_png", lambda _url: b"synthetic-png")
 
-        def new_context(self, **_kwargs: Any) -> FakeContext:
-            events.append("browser.new_context")
-            return self.context
+    def validate(_cookies: object, *, cancelled: Any) -> Any:
+        assert not cancelled()
+        events.append("candidate.validated-and-committed")
+        return SimpleNamespace(code="verified", text="verified")
 
-        def close(self) -> None:
-            events.append("browser.close")
+    monkeypatch.setattr(ui, "validate_and_commit_candidate_cookies", validate)
 
-    class FakeChromium:
-        def launch(self, **_kwargs: Any) -> FakeBrowser:
-            events.append("browser.launch")
-            return FakeBrowser()
-
-    class FakePlaywright:
-        chromium = FakeChromium()
-
-    class FakeManager:
-        def __enter__(self) -> FakePlaywright:
-            events.append("playwright.enter")
-            return FakePlaywright()
-
-        def __exit__(self, *_args: Any) -> None:
-            events.append("playwright.exit")
-
-    playwright_package = types.ModuleType("playwright")
-    playwright_package.__path__ = []  # type: ignore[attr-defined]
-    sync_api = types.ModuleType("playwright.sync_api")
-    sync_api.Error = FakePlaywrightError  # type: ignore[attr-defined]
-    sync_api.sync_playwright = lambda: FakeManager()  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "playwright", playwright_package)
-    monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api)
-    monkeypatch.setattr(ui, "ensure_playwright_runtime", lambda: None)
-    monkeypatch.setattr(ui, "cookies_indicate_logged_in", lambda _cookies: True)
-    monkeypatch.setattr(
-        ui,
-        "save_context_storage_state_atomic",
-        lambda _context: events.append("state.saved"),
-    )
-
-    worker = ui.LoginWorker()
+    worker = ui.LoginWorker(client_factory=FakeClient, total_timeout=1, poll_interval=0)
     worker.completed.connect(lambda outcome: events.append(f"completed:{outcome.code}"))
     worker.run()
 
     assert worker.terminal_outcome is not None
     assert worker.terminal_outcome.code == "success"
-    assert events.count("context.close") == 1
-    assert events.count("browser.close") == 1
-    assert _index(events, "state.saved") < _index(events, "context.close")
-    assert _index(events, "context.close") < _index(events, "browser.close")
-    assert _index(events, "browser.close") < _index(events, "playwright.exit")
-    assert _index(events, "playwright.exit") < _index(events, "completed:success")
+    assert events.count("session.close") == 1
+    assert _index(events, "candidate.validated-and-committed") < _index(events, "session.close")
+    assert _index(events, "session.close") < _index(events, "completed:success")
+
+
+def test_login_worker_refresh_discards_old_session_and_old_success(
+    ui: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_poll_entered = threading.Event()
+    release_first_poll = threading.Event()
+    events: list[str] = []
+    clients: list[Any] = []
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.index = len(clients) + 1
+            clients.append(self)
+
+        def generate(self) -> Any:
+            events.append(f"generate:{self.index}")
+            return SimpleNamespace(qr_url="https://account.bilibili.com/synthetic")
+
+        def poll(self, _challenge: Any) -> Any:
+            events.append(f"poll:{self.index}")
+            if self.index == 1:
+                first_poll_entered.set()
+                assert release_first_poll.wait(2)
+            return SimpleNamespace(status=ui.QrStatus.SUCCESS)
+
+        def candidate_cookies(self) -> list[dict[str, int]]:
+            return [{"client": self.index}]
+
+        def close(self) -> None:
+            events.append(f"close:{self.index}")
+
+    committed: list[int] = []
+
+    def validate(candidate: list[dict[str, int]], *, cancelled: Any) -> Any:
+        assert not cancelled()
+        committed.append(candidate[0]["client"])
+        return SimpleNamespace(code="verified", text="verified")
+
+    monkeypatch.setattr(ui, "render_qr_png", lambda _url: b"synthetic-png")
+    monkeypatch.setattr(ui, "validate_and_commit_candidate_cookies", validate)
+    worker = ui.LoginWorker(client_factory=FakeClient, total_timeout=2, poll_interval=0)
+    thread = threading.Thread(target=worker.run)
+    thread.start()
+    assert first_poll_entered.wait(1)
+    worker.request_refresh()
+    release_first_poll.set()
+    thread.join(2)
+
+    assert not thread.is_alive()
+    assert worker.terminal_outcome is not None and worker.terminal_outcome.code == "success"
+    assert committed == [2]
+    assert _index(events, "close:1") < _index(events, "generate:2")
+    assert events.count("close:1") == 1 and events.count("close:2") == 1
 
 
 def _video_result(ui: Any, label: str, source_url: str) -> Any:
@@ -282,7 +292,7 @@ def test_url_change_parse_failure_and_stale_callback_cannot_download_old_video(
 
     window = ui.MainWindow(safe_mode=True)
     qtbot.addWidget(window)
-    assert window.windowTitle() == "Bili Downloader Lite V1.2"
+    assert window.windowTitle() == "Bili Downloader Lite V1.3"
     window.url_edit.setText(url_a)
     result_a = _video_result(ui, "A", url_a)
     window.on_parse_finished(url_a, result_a)
@@ -430,7 +440,7 @@ def test_diagnostics_dialog_only_checks_updates_after_manual_action(
     report = diagnostics.DiagnosticReport(
         (
             diagnostics.DiagnosticItem(
-                "程序", diagnostics.DiagnosticStatus.INFO, "V1.2，测试"
+                "程序", diagnostics.DiagnosticStatus.INFO, "V1.3，测试"
             ),
         )
     )
@@ -439,7 +449,7 @@ def test_diagnostics_dialog_only_checks_updates_after_manual_action(
         dialogs,
         "check_latest_release",
         lambda: update_calls.append("called")
-        or diagnostics.UpdateCheckResult("1.1", "1.2", "https://github.com/Qrzzzz/bili-downloader/releases/tag/v1.2", True, "发现新版"),
+        or diagnostics.UpdateCheckResult("1.2", "1.3", "https://github.com/Qrzzzz/bili-downloader/releases/tag/v1.3", True, "发现新版"),
     )
 
     dialog = dialogs.DiagnosticsDialog(ui.AppConfig(download_dir=str(Path.cwd())))

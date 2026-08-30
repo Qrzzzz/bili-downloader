@@ -9,6 +9,7 @@
 - `DedeUserID`
 - `storage_state.json`
 - `cookies.txt`
+- `qrcode_key`、`refresh_token` 或完整扫码轮询/成功回调 URL
 - 浏览器 profile
 - 可识别账号身份的日志或截图
 
@@ -20,6 +21,7 @@
 - 项目不提供云端服务。
 - 项目不收集遥测数据。
 - 项目不上传 Cookie、视频链接、下载记录、账号信息或日志。
+- 应用内二维码登录不读取日常浏览器 Cookie；只有服务端验证有效的候选 Cookie 才能原子提交到 DPAPI 保护的 canonical session。
 
 ## 处理原则
 

@@ -10,12 +10,18 @@ from PyInstaller.archive.readers import CArchiveReader
 
 
 BANNED_MEMBER_PATTERNS = (
+    re.compile(r"(^|[\\/])playwright(?:[\\/.]|$)", re.IGNORECASE),
     re.compile(r"(^|[\\/])ms-playwright([\\/]|$)", re.IGNORECASE),
     re.compile(r"(^|[\\/])\.local-browsers([\\/]|$)", re.IGNORECASE),
-    re.compile(r"(^|[\\/])(chrome|chromium|msedge)\.exe$", re.IGNORECASE),
+    re.compile(r"(^|[\\/])chromium(?:-[^\\/]+)?([\\/]|$)", re.IGNORECASE),
+    re.compile(r"(^|[\\/])(chrome|chromium|msedge|node)(?:\.exe)?$", re.IGNORECASE),
+    re.compile(r"(^|[\\/])chrome_elf\.dll$", re.IGNORECASE),
+    re.compile(r"(^|[\\/])(snapshot_blob|v8_context_snapshot)\.bin$", re.IGNORECASE),
+    re.compile(r"(^|[\\/])electron(?:[\\/.]|$)", re.IGNORECASE),
+    re.compile(r"(^|[\\/])resources[\\/]electron\.asar$", re.IGNORECASE),
     re.compile(r"(^|[\\/])ff(?:mpeg|probe)\.exe$", re.IGNORECASE),
     re.compile(r"(^|[\\/])icu(?:uc|in|dt\d*)\.dll$", re.IGNORECASE),
-    re.compile(r"(^|[\\/])(storage_state(?:\.tmp)?\.json|cookies(?:\.tmp)?\.txt)$", re.IGNORECASE),
+    re.compile(r"(^|[\\/])(storage_state(?:\.tmp)?\.json|cookies(?:\.tmp)?\.txt|session\.dat)$", re.IGNORECASE),
     re.compile(r"(^|[\\/])(browser-profile|playwright-profile|user_data|sessions?)([\\/]|$)", re.IGNORECASE),
     re.compile(r"(^|[\\/])(app|crash)\.log$", re.IGNORECASE),
 )
@@ -45,10 +51,22 @@ def audit(
 
     archive = CArchiveReader(str(executable))
     members = sorted(str(name) for name in archive.toc)
+    audited_names: list[tuple[str, str]] = [(member, member) for member in members]
+    python_module_count = 0
+    for member in members:
+        if not member.lower().endswith(".pyz"):
+            continue
+        try:
+            embedded = archive.open_embedded_archive(member)
+        except (KeyError, TypeError, ValueError):
+            continue
+        modules = sorted(str(name) for name in embedded.toc)
+        python_module_count += len(modules)
+        audited_names.extend((f"{member}!{module}", module) for module in modules)
     banned = sorted(
-        member
-        for member in members
-        if any(pattern.search(member) for pattern in BANNED_MEMBER_PATTERNS)
+        display_name
+        for display_name, inspected_name in audited_names
+        if any(pattern.search(inspected_name) for pattern in BANNED_MEMBER_PATTERNS)
     )
     if banned:
         raise ValueError(f"Release archive contains prohibited members: {banned}")
@@ -72,6 +90,7 @@ def audit(
         "size_bytes": executable.stat().st_size,
         "sha256": _sha256(executable),
         "archive_member_count": len(members),
+        "python_module_count": python_module_count,
         "prohibited_member_count": 0,
         "build_version": build_info.get("version"),
         "build_commit": build_info.get("git_commit"),

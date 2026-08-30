@@ -1,66 +1,43 @@
 # Maintainer Notes
 
-本文件记录仓库发布与维护注意事项。
+## v1.3 候选发布边界
 
-## v1.2 发布边界
+- 版本严格为源码 `1.3`、标签 `v1.3`、成品 `BiliDownloader.v1.3.exe`、Release 标题 `Bili Downloader Lite v1.3`；不允许多一级版本。
+- 已公开 `v1.1` 与 `v1.2` 是不可改写历史，不得移动、删除或重置标签。v1.3 必须从已验收 v1.2 提交 `03f1e9c602f71a20b47367284e72362998b2381d` 发展。
+- `quality.yml` 只运行确定性检查，不访问 Bilibili 实时网络。`public-smoke.yml` 仅定时/手动运行匿名解析和二维码首次等待态检查；HTTP 412 必须失败留证。
+- `release.yml` 只由精确 `v1.3` 触发，并绑定 tag/source/commit/PE/asset/digest/attestation。不得从分支 push 触发发布。
+- 构建固定 Windows x64 + Python 3.13；`build.ps1` 每次重建 `build\.venv`，只从哈希锁安装 wheel。
+- 不设 EXE 体积阈值。删除浏览器自动化依赖后的自然缩小是预期结果，禁止填充无用内容。
 
-- 版本只允许两级：源码 `1.2`、标签 `v1.2`、成品 `BiliDownloader.v1.2.exe`、Release 标题 `Bili Downloader Lite v1.2`。
-- 公开 `v1.1` 标签仍指向 `dbfc8a044a3ef5e6b83f6ea22a65c59e9279b592`，而包含 v1.1 功能的主分支合并提交是 `908f91dc7f8662a7b9205c381a53f4d91c2d26ec`。这是历史事实；不得移动、删除或重写 `v1.1`，由新的 `v1.2` 一致性链替代。
-- `quality.yml` 只运行确定性检查，不访问匿名公共 Bilibili 网络，也不依赖系统浏览器启动结果。
-- `public-smoke.yml` 仅定时或手动运行；HTTP 412 / `environment_blocked_412` 是失败，但该工作流不是 PR 必需检查。
-- `release.yml` 只由精确 `v1.2` 标签触发，并在发布前后完成 tag/source/commit/PE/asset/digest/attestation 校验。
-- 构建不得复用 `.venv`；`build.ps1` 每次重建 `build\.venv`，按 Python 3.13/Windows x64 哈希锁只安装 wheel。
-- 不设置 EXE 体积阈值。只记录实际大小并审计 Chromium、FFmpeg、凭据、日志、session/profile 等不应捆绑内容。
+## 原生二维码登录契约
 
-## v1.1 历史更新范围
+- 网络协议只在 `app/auth_qr.py` 中适配：有限超时、明确 User-Agent、严格 schema/状态枚举、HTTPS 官方主机与成功回调来源校验。未知码、缺字段、类型错误或非允许来源一律 fail closed；不消费的回调查询参数不属于凭据或提交输入。
+- 状态 `86101` 为等待扫码，`86090` 为已扫码待确认，`86038` 为过期，`0` 为成功。刷新必须关闭旧 `requests.Session`、废弃旧 key，并丢弃已在途中的旧轮询结果。
+- Segno 只用于本地 PNG 生成，quiet zone 不小于 4 modules。不得引入 Pillow、WebView 或任何浏览器 fallback。
+- `qrcode_key`、完整轮询/成功回调 URL、`refresh_token`、Cookie 和响应原文均不得记录、展示或持久化。成功回调 URL 只验证为允许的官方 HTTPS 来源，查询部分作为不透明敏感值立即丢弃；不导航、不解析，也不用于补取 Cookie。
+- HTTP 412 如实归类为外部平台限制，不实现风控、会员、地区、付费或 DRM 绕过。
 
-- 新增本地环境诊断、脱敏报告和仅手动触发的 GitHub 更新检查。
-- 新增逐分 P 下载结果窗口、文件操作和失败项重试。
-- 保持现有下载格式、登录态、隐私与合规边界不变。
-- 发布包不内置 Chromium，扫码登录优先使用系统 Edge，其次使用 Chrome。
-- 运行完整自动化测试以及 onedir/onefile 构建和 smoke 验证。
+## 登录态事务与兼容
 
-## 只读审计发现
+- 候选 Cookie 只保留 Bilibili 域、允许 Cookie 名称和 canonical 字段，并必须包含未过期 `SESSDATA` + `DedeUserID`。
+- 先在锁外请求 NAV API 验证候选凭据；只有服务端确认有效且未被取消/刷新，才在跨线程/跨进程锁内用 DPAPI 原子替换 `session.dat`。
+- 任何失败都不得删除或覆盖旧 canonical session。v1.2 schema 必须保持可读；旧 `storage_state.json` / `cookies.txt` 只在 canonical 提交并回读成功后删除。
+- `playwright-profile` 和 `login-cache` 只是历史残留清理名称，不是运行时依赖。临时 Netscape lease 必须在锁内创建、使用后删除；匿名模式不得读取凭据。
 
-- 当前目录已初始化为 Git 仓库，并使用版本化发布流程。
-- `app/` 是当前源码目录。
-- 顶层存在 `.venv/`，不应提交。
-- 顶层存在 `build/` 和 `dist/`，属于 PyInstaller 构建产物，不应提交。
-- `dist/` 中的 `BiliDownloader.v1.1.exe` 以及第三方运行时文件属于历史本地构建产物，不应直接提交或复用于 v1.2。
-- `app/__pycache__/` 中存在 Python 字节码缓存，不应提交。
-- `tools/` 当前仅发现 `.gitkeep`，未发现 `ffmpeg.exe`。
-- `BiliDownloader.spec` 使用 `Path(SPECPATH)`，审计时未发现硬编码本机绝对路径或个人用户名路径。
+## 归档与仓库禁入项
 
-## 不应提交的内容
+源码、锁、构建环境、PyInstaller CArchive 和内嵌 PYZ 都要复核以下内容为零：
 
-- 登录态、Cookie、`storage_state.json`、`cookies.txt`
-- `session/`、`sessions/`、浏览器 profile、Playwright 用户数据目录
-- `logs/`、`crash.log`、`app.log`
-- 真实下载记录、测试视频、下载输出目录
-- `.venv/`、`build/`、`dist/`、`__pycache__/`
-- Playwright 下载的 Chromium 缓存
-- `ffmpeg.exe`、`ffprobe.exe`，除非维护者明确决定按许可证要求分发
-- 本机绝对路径、个人用户名路径、账号信息、token
-- 用户配置文件，例如本地 `config.json` 或 `settings.json`
+- Playwright Python 包、driver/Node、`ms-playwright`、Chromium/Chrome/Edge runtime、Electron executable/runtime。
+- 浏览器 profile、session/凭据、`storage_state.json`、`cookies.txt`、`session.dat`、日志。
+- `ffmpeg.exe`、`ffprobe.exe`、下载文件、测试视频、`.venv/`、`build/`、`dist/`、`__pycache__/`。
+- 本机绝对路径、用户名、账号信息、token 和用户配置。
 
-## 发布前人工确认
+历史 CHANGELOG 事实、迁移测试和旧残留清理字符串不应被文本搜索误判为运行时打包内容。
 
-- 确认 `LICENSE` 中的版权主体和年份是否需要补全。
-- 确认 MIT License 是否适用于本项目全部原创代码。
-- 确认第三方依赖许可证和 notice，尤其是 PySide6 / Qt、yt-dlp、Playwright、PyInstaller、FFmpeg。
-- 如果发布包包含 FFmpeg，确认 FFmpeg 构建来源、许可证组合、源码提供义务和 notice 要求。
-- 补充安全问题私密联系方式，或启用 GitHub Security Advisories。
-- 补充真实截图，避免截图包含账号信息、Cookie、私密视频链接或本机路径。
-- 在干净环境重新构建 Release 包，不要复用当前 `dist/`。
-- 为 Release 附件生成 SHA256 校验值。
-- 检查杀毒误报说明和用户下载来源说明。
+## 发布前人工 Gate
 
-## 以后可考虑的改进
-
-以下只是维护建议，本次未改源码：
-
-- 为关键解析、下载、登录态处理路径补充最小测试。
-- 增加发布脚本的许可证/notice 收集步骤。
-- 增加预发布 secret scan 和大文件检查。
-- 后续版本继续保持单一源码版本来源以及 tag/PE/commit/Release 的强绑定。
-- 在 UI 中持续保持合规提示，避免误导用户理解工具能力边界。
+- 使用真实 Bilibili App 扫描应用内二维码，验证已扫码待确认、成功、过期/刷新、取消/关闭、连续重开和应用退出。
+- 扫码后复核登录解析/下载、退出登录和旧 v1.2 凭据直接可读。该 Gate 需用户参与，自动测试不得伪造通过。
+- 核对第三方许可证/notice，尤其是 PySide6/Qt、yt-dlp、Segno、PyInstaller 和由用户自行提供的 FFmpeg。
+- 记录 EXE 实际 bytes/MiB、SHA-256 与 Authenticode 状态；本机无签名证书不阻断候选构建，但必须如实报告。
