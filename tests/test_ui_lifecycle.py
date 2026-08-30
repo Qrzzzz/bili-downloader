@@ -274,6 +274,39 @@ def _video_result(ui: Any, label: str, source_url: str) -> Any:
     )
 
 
+def test_thumbnail_failure_does_not_turn_successful_parse_into_failure(
+    ui: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_paths: Any,
+) -> None:
+    source_url = "https://www.bilibili.com/video/BV1Synthetic99"
+    result = _video_result(ui, "Synthetic", source_url)
+    result.thumbnail_url = "https://i0.hdslb.com/cover.jpg"
+    monkeypatch.setattr(ui, "parse_video_info", lambda *_args, **_kwargs: result)
+    monkeypatch.setattr(
+        ui,
+        "fetch_thumbnail",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("synthetic thumbnail timeout")),
+    )
+    worker = ui.ParseWorker(
+        source_url,
+        ui.AppConfig(download_dir=str(isolated_paths.root / "downloads")),
+        ui.CredentialMode.ANONYMOUS,
+    )
+    finished: list[tuple[str, object]] = []
+    failed: list[tuple[object, ...]] = []
+    logs: list[str] = []
+    worker.finished.connect(lambda url, value: finished.append((url, value)))
+    worker.failed.connect(lambda *args: failed.append(args))
+    worker.log.connect(logs.append)
+
+    worker.run()
+
+    assert finished == [(source_url, result)]
+    assert failed == []
+    assert any("封面加载失败" in message for message in logs)
+
+
 def test_url_change_parse_failure_and_stale_callback_cannot_download_old_video(
     ui: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -292,7 +325,7 @@ def test_url_change_parse_failure_and_stale_callback_cannot_download_old_video(
 
     window = ui.MainWindow(safe_mode=True)
     qtbot.addWidget(window)
-    assert window.windowTitle() == "Bili Downloader Lite V1.3"
+    assert window.windowTitle() == "Bili Downloader Lite V1.4"
     window.url_edit.setText(url_a)
     result_a = _video_result(ui, "A", url_a)
     window.on_parse_finished(url_a, result_a)
@@ -440,7 +473,7 @@ def test_diagnostics_dialog_only_checks_updates_after_manual_action(
     report = diagnostics.DiagnosticReport(
         (
             diagnostics.DiagnosticItem(
-                "程序", diagnostics.DiagnosticStatus.INFO, "V1.3，测试"
+                "程序", diagnostics.DiagnosticStatus.INFO, "V1.4，测试"
             ),
         )
     )
@@ -449,7 +482,7 @@ def test_diagnostics_dialog_only_checks_updates_after_manual_action(
         dialogs,
         "check_latest_release",
         lambda: update_calls.append("called")
-        or diagnostics.UpdateCheckResult("1.2", "1.3", "https://github.com/Qrzzzz/bili-downloader/releases/tag/v1.3", True, "发现新版"),
+        or diagnostics.UpdateCheckResult("1.3", "1.4", "https://github.com/Qrzzzz/bili-downloader/releases/tag/v1.4", True, "发现新版"),
     )
 
     dialog = dialogs.DiagnosticsDialog(ui.AppConfig(download_dir=str(Path.cwd())))

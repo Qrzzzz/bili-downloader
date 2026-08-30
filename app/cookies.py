@@ -5,9 +5,9 @@ import ctypes
 import json
 import logging
 import os
+import re
 import shutil
 import stat
-import tempfile
 import threading
 import time
 import uuid
@@ -50,6 +50,17 @@ SESSION_FILE_NAME = "session.dat"
 SESSION_LOCK_NAME = "session-store.lock"
 NAV_API_URL = "https://api.bilibili.com/x/web-interface/nav"
 DPAPI_ENTROPY = b"BiliDownloader/session/v1"
+STALE_LEASE_AGE_SECONDS = 24 * 60 * 60
+STALE_ATOMIC_TEMP_AGE_SECONDS = 24 * 60 * 60
+STALE_QUARANTINE_AGE_SECONDS = 7 * 24 * 60 * 60
+LEASE_OWNER_FILE = ".bili-downloader-lease.json"
+LEASE_NAME_RE = re.compile(r"^lease-([0-9a-f]{32})$")
+ATOMIC_TEMP_RE = re.compile(r"^\.session\.dat\.\d+\.[0-9a-f]{32}\.tmp$")
+QUARANTINE_NAME_RES = (
+    re.compile(r"^session_corrupted_\d{8}_\d+$", re.IGNORECASE),
+    re.compile(r"^session-quarantine-[0-9A-Za-z][0-9A-Za-z._-]{0,63}$", re.IGNORECASE),
+    re.compile(r"^credential-backup(?:-[0-9A-Za-z][0-9A-Za-z._-]{0,63})?$", re.IGNORECASE),
+)
 
 
 class SessionSaveError(RuntimeError):
@@ -142,6 +153,43 @@ def _legacy_credential_files() -> list[Path]:
             if path != canonical_session_path():
                 result.append(path)
     return result
+
+
+def _owned_path_label(path: Path) -> str:
+    roots: list[tuple[Path, str]] = [(app_data_dir(), "<local-app-data>/BiliDownloader")]
+    legacy_root = _legacy_app_root()
+    if legacy_root is not None:
+        roots.append((legacy_root, "<roaming-app-data>/BiliDownloader"))
+    for root, label in roots:
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            continue
+        return f"{label}/{relative.as_posix()}"
+    return f"<app-owned>/{path.name}"
+
+
+def _cleanup_failure(path: Path, exc: object) -> str:
+    return f"{_owned_path_label(path)}: {redact_sensitive(type(exc).__name__)}"
+
+
+def _remove_owned_path(path: Path) -> None:
+    if path.is_symlink() or not path.is_dir():
+        path.unlink(missing_ok=True)
+    else:
+        shutil.rmtree(path)
+
+
+def _old_enough(path: Path, age_seconds: float, *, now: float | None = None) -> bool:
+    try:
+        modified = path.stat(follow_symlinks=False).st_mtime
+    except OSError:
+        return False
+    return (time.time() if now is None else now) - modified >= age_seconds
+
+
+def _is_owned_quarantine_name(name: str) -> bool:
+    return any(pattern.fullmatch(name) is not None for pattern in QUARANTINE_NAME_RES)
 
 
 def normalize_cookie_domain(domain: str) -> str:
@@ -547,12 +595,10 @@ def _cleanup_legacy_profile_residue_locked() -> tuple[str, ...]:
     failures: list[str] = []
     for path in _legacy_profile_dirs():
         try:
-            if path.is_dir():
-                shutil.rmtree(path)
-            elif path.exists():
-                path.unlink()
+            if path.exists() or path.is_symlink():
+                _remove_owned_path(path)
         except OSError as exc:
-            failures.append(f"{path}: {redact_sensitive(exc)}")
+            failures.append(_cleanup_failure(path, exc))
     return tuple(failures)
 
 
@@ -562,14 +608,138 @@ def _cleanup_legacy_plaintext_locked() -> tuple[str, ...]:
         try:
             path.unlink(missing_ok=True)
         except OSError as exc:
-            failures.append(f"{path}: {redact_sensitive(exc)}")
+            failures.append(_cleanup_failure(path, exc))
+    return tuple(failures)
+
+
+def _cleanup_stale_atomic_temps_locked(*, now: float | None = None) -> tuple[str, ...]:
+    failures: list[str] = []
+    root = session_dir()
+    try:
+        candidates = list(root.iterdir())
+    except OSError as exc:
+        return (_cleanup_failure(root, exc),)
+    for path in candidates:
+        if ATOMIC_TEMP_RE.fullmatch(path.name) is None or path.is_symlink():
+            continue
+        if not _old_enough(path, STALE_ATOMIC_TEMP_AGE_SECONDS, now=now):
+            continue
+        try:
+            if path.is_file():
+                path.unlink()
+        except OSError as exc:
+            failures.append(_cleanup_failure(path, exc))
+    return tuple(failures)
+
+
+def _lease_marker_is_owned(path: Path, lease_id: str) -> bool:
+    marker = path / LEASE_OWNER_FILE
+    if not marker.is_file() or marker.is_symlink():
+        # v1.3 leases predate the owner marker. Accept only their exact, minimal
+        # layout; any unexpected child keeps the directory untouched.
+        try:
+            children = list(path.iterdir())
+        except OSError:
+            return False
+        return bool(children) and all(
+            child.name == "cookies.txt" and child.is_file() and not child.is_symlink()
+            for child in children
+        )
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return False
+    return (
+        isinstance(payload, dict)
+        and payload.get("schema_version") == 1
+        and payload.get("lease_id") == lease_id
+        and isinstance(payload.get("pid"), int)
+        and not isinstance(payload.get("pid"), bool)
+    )
+
+
+def _cleanup_stale_lease_residue_locked(*, now: float | None = None) -> tuple[str, ...]:
+    failures: list[str] = []
+    leases = session_dir() / "leases"
+    try:
+        candidates = list(leases.iterdir())
+    except FileNotFoundError:
+        return ()
+    except OSError as exc:
+        return (_cleanup_failure(leases, exc),)
+    for path in candidates:
+        match = LEASE_NAME_RE.fullmatch(path.name)
+        if match is None or path.is_symlink() or not path.is_dir():
+            continue
+        if not _old_enough(path, STALE_LEASE_AGE_SECONDS, now=now):
+            continue
+        if not _lease_marker_is_owned(path, match.group(1)):
+            continue
+        try:
+            shutil.rmtree(path)
+        except OSError as exc:
+            failures.append(_cleanup_failure(path, exc))
+    try:
+        if leases.exists() and not any(leases.iterdir()):
+            leases.rmdir()
+    except OSError:
+        pass
+    return tuple(failures)
+
+
+def _cleanup_stale_quarantines_locked(*, now: float | None = None) -> tuple[str, ...]:
+    failures: list[str] = []
+    roots = [app_data_dir()]
+    legacy_root = _legacy_app_root()
+    if legacy_root is not None and legacy_root not in roots:
+        roots.append(legacy_root)
+    for root in roots:
+        try:
+            candidates = list(root.iterdir()) if root.exists() else []
+        except OSError as exc:
+            failures.append(_cleanup_failure(root, exc))
+            continue
+        for path in candidates:
+            if not _is_owned_quarantine_name(path.name) or path.is_symlink():
+                continue
+            if not _old_enough(path, STALE_QUARANTINE_AGE_SECONDS, now=now):
+                continue
+            try:
+                _remove_owned_path(path)
+            except OSError as exc:
+                failures.append(_cleanup_failure(path, exc))
+    return tuple(failures)
+
+
+def _cleanup_after_valid_canonical_locked() -> tuple[str, ...]:
+    failures = list(_cleanup_legacy_plaintext_locked())
+    failures.extend(_cleanup_legacy_profile_residue_locked())
+    failures.extend(_cleanup_stale_atomic_temps_locked())
+    failures.extend(_cleanup_stale_lease_residue_locked())
+    failures.extend(_cleanup_stale_quarantines_locked())
     return tuple(failures)
 
 
 def cleanup_legacy_login_residue() -> tuple[str, ...]:
-    """Remove only obsolete login browser/profile caches; never touch canonical state."""
-    with _session_transaction():
-        failures = _cleanup_legacy_profile_residue_locked()
+    """Clean app-owned residue without ever risking canonical state."""
+
+    try:
+        with _session_transaction():
+            if canonical_session_path().exists():
+                try:
+                    _load_snapshot_locked()
+                except SessionSaveError as exc:
+                    failures = (
+                        f"{_owned_path_label(canonical_session_path())}: {redact_sensitive(type(exc).__name__)}",
+                    )
+                else:
+                    failures = _cleanup_after_valid_canonical_locked()
+            else:
+                # Profiles are not credential sources. Plaintext, leases and
+                # quarantine data remain untouched until a canonical commit exists.
+                failures = _cleanup_legacy_profile_residue_locked()
+    except SessionBusyError:
+        failures = ("登录态正由另一个实例使用，已跳过旧残留清理",)
     if failures:
         logging.getLogger("bili_downloader").warning(
             "legacy 登录缓存清理失败：%s", "; ".join(failures)
@@ -584,8 +754,7 @@ def migrate_legacy_session() -> bool:
             # A decryptable v1.2 canonical session is already the commit point.
             # Do not remove legacy plaintext when the canonical file is corrupt.
             _load_snapshot_locked()
-            failures = list(_cleanup_legacy_plaintext_locked())
-            failures.extend(_cleanup_legacy_profile_residue_locked())
+            failures = list(_cleanup_after_valid_canonical_locked())
             if failures:
                 logging.getLogger("bili_downloader").warning(
                     "canonical 登录态有效，但旧 profile 清理失败：%s", "; ".join(failures)
@@ -597,8 +766,7 @@ def migrate_legacy_session() -> bool:
         cookies = _read_legacy_cookies(source)
         _commit_cookies_locked(cookies)
         # Successful decrypt verification above is the migration commit point.
-        failures = list(_cleanup_legacy_plaintext_locked())
-        failures.extend(_cleanup_legacy_profile_residue_locked())
+        failures = list(_cleanup_after_valid_canonical_locked())
         if failures:
             logging.getLogger("bili_downloader").warning("legacy 登录态迁移成功，但旧明文清理失败：%s", "; ".join(failures))
         return True
@@ -735,15 +903,36 @@ def cookiefile_lease(mode: CredentialMode | str = CredentialMode.SAVED) -> Itera
         if not cookies_indicate_logged_in(snapshot.cookies):
             raise SessionSaveError("登录态已失效或过期，请重新扫码登录")
         leases = session_dir() / "leases"
-        if leases.exists():
-            # The session lock guarantees no live lease belongs to another task.
-            # Anything left here is from an interrupted process and must not persist.
-            shutil.rmtree(leases)
+        stale_failures = _cleanup_stale_lease_residue_locked()
+        if stale_failures:
+            logging.getLogger("bili_downloader").warning(
+                "清理过期 Cookie lease 失败：%s", "; ".join(stale_failures)
+            )
         leases.mkdir(parents=True, exist_ok=True)
-        lease_dir = Path(tempfile.mkdtemp(prefix="lease-", dir=leases))
+        lease_id = uuid.uuid4().hex
+        lease_dir = leases / f"lease-{lease_id}"
+        lease_dir.mkdir(mode=0o700)
         cookiefile = lease_dir / "cookies.txt"
         try:
-            export_cookies_to_netscape(snapshot.cookies, cookiefile)
+            try:
+                (lease_dir / LEASE_OWNER_FILE).write_text(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "lease_id": lease_id,
+                            "pid": os.getpid(),
+                            "created_at": time.time(),
+                        },
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                    + "\n",
+                    encoding="ascii",
+                )
+                export_cookies_to_netscape(snapshot.cookies, cookiefile)
+            except OSError as exc:
+                raise SessionSaveError(f"无法创建临时 Cookie lease：{type(exc).__name__}") from exc
             yield cookiefile
         finally:
             try:
@@ -751,7 +940,9 @@ def cookiefile_lease(mode: CredentialMode | str = CredentialMode.SAVED) -> Itera
                 if leases.exists() and not any(leases.iterdir()):
                     leases.rmdir()
             except OSError:
-                logging.getLogger("bili_downloader").warning("清理临时 Cookie lease 失败：%s", lease_dir)
+                logging.getLogger("bili_downloader").warning(
+                    "清理临时 Cookie lease 失败：%s", _owned_path_label(lease_dir)
+                )
 
 
 def cookie_options(
@@ -800,10 +991,10 @@ def _credential_targets() -> tuple[list[Path], list[str]]:
                 targets.extend(
                     child
                     for child in root.iterdir()
-                    if child.name.lower().startswith(("session_corrupted_", "session-quarantine", "credential-backup"))
+                    if _is_owned_quarantine_name(child.name)
                 )
         except OSError as exc:
-            failures.append(f"无法枚举登录态目录 {root}: {redact_sensitive(exc)}")
+            failures.append(f"无法枚举登录态目录 {_owned_path_label(root)}: {redact_sensitive(type(exc).__name__)}")
     return list(dict.fromkeys(targets)), failures
 
 
@@ -822,7 +1013,7 @@ def clear_login_state() -> ClearLoginResult:
                         target.unlink()
                     deleted.append(str(target))
                 except Exception as exc:  # noqa: BLE001
-                    failures.append(f"{target}: {redact_sensitive(exc)}")
+                    failures.append(_cleanup_failure(target, exc))
     except SessionBusyError as exc:
         failures.append(str(exc))
 
@@ -830,8 +1021,8 @@ def clear_login_state() -> ClearLoginResult:
     for target in targets:
         try:
             if target.exists():
-                remaining_items.append(str(target))
+                remaining_items.append(_owned_path_label(target))
         except OSError as exc:
-            failures.append(f"无法复查登录态路径 {target}: {redact_sensitive(exc)}")
+            failures.append(f"无法复查登录态路径 {_owned_path_label(target)}: {redact_sensitive(type(exc).__name__)}")
     remaining = tuple(remaining_items)
     return ClearLoginResult(not failures and not remaining, tuple(deleted), tuple(failures), remaining)
