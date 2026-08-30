@@ -8,16 +8,6 @@ from types import SimpleNamespace
 import pytest
 
 
-class FakeContext:
-    def __init__(self, state: dict[str, object]) -> None:
-        self.state = copy.deepcopy(state)
-        self.calls = 0
-
-    def storage_state(self) -> dict[str, object]:
-        self.calls += 1
-        return copy.deepcopy(self.state)
-
-
 class FakeResponse:
     def __init__(self, payload: object, status_code: int = 200) -> None:
         self.payload = payload
@@ -28,28 +18,9 @@ class FakeResponse:
             raise RuntimeError(f"HTTP {self.status_code}")
 
     def json(self) -> object:
+        if isinstance(self.payload, Exception):
+            raise self.payload
         return copy.deepcopy(self.payload)
-
-
-def _context(credentials: dict[str, object]) -> FakeContext:
-    return FakeContext(
-        {
-            "cookies": credentials["cookies"],
-            "origins": [
-                {
-                    "origin": "https://passport.bilibili.com",
-                    "localStorage": [
-                        {"name": "third_party_payload", "value": credentials["origin_secret"]}
-                    ],
-                },
-                {
-                    "origin": "https://example.com",
-                    "localStorage": [{"name": "token", "value": credentials["third_party_secret"]}],
-                },
-            ],
-        }
-    )
-
 
 def _replace_cookie_values(cookies: object, suffix: str) -> list[dict[str, object]]:
     result = copy.deepcopy(cookies)
@@ -78,8 +49,7 @@ def test_local_pending_then_server_verified(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cookies = session_modules.cookies
-    context = _context(synthetic_credentials)
-    saved_path = cookies.save_context_storage_state_atomic(context)
+    saved_path = cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
     pending = cookies.describe_login_status()
     captured: dict[str, object] = {}
 
@@ -91,7 +61,6 @@ def test_local_pending_then_server_verified(
     monkeypatch.setattr(cookies.requests, "get", verified)
     status = cookies.validate_saved_session()
 
-    assert context.calls == 1
     assert pending.code == "local_pending" and pending.generation
     assert status.code == "verified" and status.generation == pending.generation
     assert captured["url"] == cookies.NAV_API_URL
@@ -105,7 +74,7 @@ def test_offline_and_revoked_states_preserve_canonical_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cookies = session_modules.cookies
-    cookies.save_context_storage_state_atomic(_context(synthetic_credentials))
+    cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
     path = cookies.canonical_session_path()
     before = path.read_bytes()
 
@@ -132,7 +101,7 @@ def test_expired_credentials_are_normal_invalid_state_not_corruption(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cookies = session_modules.cookies
-    cookies.save_context_storage_state_atomic(_context(synthetic_credentials))
+    cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
     path = cookies.canonical_session_path()
     before = path.read_bytes()
     monkeypatch.setattr(cookies.time, "time", lambda: 4_200_000_000)
@@ -166,8 +135,7 @@ def test_canonical_store_filters_third_party_state_and_encrypts_at_rest(
     isolated_paths: object,
 ) -> None:
     cookies = session_modules.cookies
-    context = _context(synthetic_credentials)
-    path = cookies.save_context_storage_state_atomic(context)
+    path = cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
     raw = path.read_bytes()
     snapshot = cookies.load_session_snapshot()
     assert snapshot is not None
@@ -193,13 +161,139 @@ def test_canonical_store_filters_third_party_state_and_encrypts_at_rest(
     assert all("unexpected" not in cookie for cookie in snapshot.cookies)
 
 
+def test_candidate_is_filtered_verified_before_commit_and_then_atomically_saved(
+    session_modules: SimpleNamespace,
+    synthetic_credentials: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cookies = session_modules.cookies
+    candidate = copy.deepcopy(synthetic_credentials["cookies"])
+    assert isinstance(candidate, list)
+    candidate.append(
+        {
+            "name": "unapproved_cookie",
+            "value": "must-not-be-sent-or-saved",
+            "domain": ".bilibili.com",
+            "path": "/",
+            "secure": True,
+        }
+    )
+    observed: dict[str, object] = {}
+
+    def verified(url: str, **kwargs: object) -> FakeResponse:
+        assert url == cookies.NAV_API_URL
+        assert not cookies.canonical_session_path().exists()
+        observed.update(kwargs)
+        return FakeResponse({"code": 0, "data": {"isLogin": True}})
+
+    monkeypatch.setattr(cookies.requests, "get", verified)
+    status = cookies.validate_and_commit_candidate_cookies(candidate)
+
+    assert status.code == "verified" and status.generation
+    assert cookies.canonical_session_path().exists()
+    assert "unapproved_cookie" not in observed["cookies"]  # type: ignore[operator]
+    snapshot = cookies.load_session_snapshot()
+    assert snapshot is not None
+    assert {item["name"] for item in snapshot.cookies} == {"SESSDATA", "DedeUserID", "bili_jct"}
+    assert all(set(item) <= cookies.ALLOWED_COOKIE_FIELDS for item in snapshot.cookies)
+
+
+@pytest.mark.parametrize(
+    ("remote", "expected_code"),
+    [
+        (lambda *_args, **_kwargs: FakeResponse({"code": -101, "data": {"isLogin": False}}), "invalid"),
+        (lambda *_args, **_kwargs: FakeResponse({"code": 0, "data": {}}, 412), "platform_412"),
+        (lambda *_args, **_kwargs: FakeResponse({"code": 0, "data": {"isLogin": "yes"}}), "protocol_error"),
+        (lambda *_args, **_kwargs: FakeResponse(ValueError("invalid json")), "protocol_error"),
+    ],
+)
+def test_candidate_validation_failures_preserve_existing_valid_session(
+    session_modules: SimpleNamespace,
+    synthetic_credentials: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+    remote: object,
+    expected_code: str,
+) -> None:
+    cookies = session_modules.cookies
+    cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
+    path = cookies.canonical_session_path()
+    before = path.read_bytes()
+    replacement = _replace_cookie_values(synthetic_credentials["cookies"], "candidate")
+    monkeypatch.setattr(cookies.requests, "get", remote)
+
+    status = cookies.validate_and_commit_candidate_cookies(replacement)
+
+    assert status.code == expected_code
+    assert path.read_bytes() == before
+
+
+def test_candidate_offline_and_cancel_after_validation_preserve_existing_session(
+    session_modules: SimpleNamespace,
+    synthetic_credentials: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cookies = session_modules.cookies
+    cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
+    path = cookies.canonical_session_path()
+    before = path.read_bytes()
+    replacement = _replace_cookie_values(synthetic_credentials["cookies"], "candidate")
+
+    monkeypatch.setattr(
+        cookies.requests,
+        "get",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(cookies.requests.Timeout("offline")),
+    )
+    assert cookies.validate_and_commit_candidate_cookies(replacement).code == "offline"
+    assert path.read_bytes() == before
+
+    state = {"cancelled": False}
+
+    def verified_then_cancel(*_args: object, **_kwargs: object) -> FakeResponse:
+        state["cancelled"] = True
+        return FakeResponse({"code": 0, "data": {"isLogin": True}})
+
+    monkeypatch.setattr(cookies.requests, "get", verified_then_cancel)
+    status = cookies.validate_and_commit_candidate_cookies(
+        replacement,
+        cancelled=lambda: state["cancelled"],
+    )
+    assert status.code == "cancelled"
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "bad_candidate",
+    [
+        [{"domain": ".bilibili.com", "name": "SESSDATA", "value": 123}],
+        ["not-a-cookie"],
+        [
+            {"domain": ".bilibili.com", "name": "SESSDATA", "value": "secret"},
+            {"domain": ".bilibili.com", "name": "DedeUserID", "value": "user", "secure": "yes"},
+        ],
+    ],
+)
+def test_candidate_cookie_field_type_errors_fail_closed(
+    session_modules: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    bad_candidate: object,
+) -> None:
+    cookies = session_modules.cookies
+    monkeypatch.setattr(
+        cookies.requests,
+        "get",
+        lambda *_args, **_kwargs: pytest.fail("invalid candidates must not reach NAV"),
+    )
+    assert cookies.validate_and_commit_candidate_cookies(bad_candidate).code == "invalid"
+    assert not cookies.canonical_session_path().exists()
+
+
 def test_atomic_replace_failure_retains_previous_generation(
     session_modules: SimpleNamespace,
     synthetic_credentials: dict[str, object],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cookies = session_modules.cookies
-    cookies.save_context_storage_state_atomic(_context(synthetic_credentials))
+    cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
     path = cookies.canonical_session_path()
     previous_bytes = path.read_bytes()
     previous_generation = cookies.load_session_snapshot().generation
@@ -208,7 +302,7 @@ def test_atomic_replace_failure_retains_previous_generation(
     with monkeypatch.context() as scoped:
         scoped.setattr(cookies.os, "replace", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("fault")))
         with pytest.raises(cookies.SessionSaveError, match="原子保存"):
-            cookies.save_context_storage_state_atomic(FakeContext({"cookies": replacement, "origins": []}))
+            cookies._store_cookies_for_tests(replacement)
 
     assert path.read_bytes() == previous_bytes
     assert cookies.load_session_snapshot().generation == previous_generation
@@ -221,12 +315,12 @@ def test_stale_remote_result_cannot_overwrite_new_generation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cookies = session_modules.cookies
-    cookies.save_context_storage_state_atomic(_context(synthetic_credentials))
+    cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
     old_generation = cookies.load_session_snapshot().generation
     replacement = _replace_cookie_values(synthetic_credentials["cookies"], "new-generation")
 
     def update_during_validation(*_args: object, **_kwargs: object) -> FakeResponse:
-        cookies.save_playwright_cookies_as_netscape(replacement)
+        cookies._store_cookies_for_tests(replacement)
         return FakeResponse({"code": 0, "data": {"isLogin": True}})
 
     monkeypatch.setattr(cookies.requests, "get", update_during_validation)
@@ -243,7 +337,7 @@ def test_anonymous_cookie_lease_never_reads_or_materializes_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cookies = session_modules.cookies
-    cookies.save_context_storage_state_atomic(_context(synthetic_credentials))
+    cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
     leases = cookies.session_dir() / "leases"
 
     with monkeypatch.context() as scoped:
@@ -269,13 +363,65 @@ def test_anonymous_cookie_lease_never_reads_or_materializes_credentials(
     assert not leases.exists()
 
 
+@pytest.mark.parametrize("legacy_name", ["storage_state.json", "cookies.txt"])
+def test_v1_2_legacy_migration_commits_before_plaintext_and_profile_cleanup(
+    session_modules: SimpleNamespace,
+    synthetic_credentials: dict[str, object],
+    isolated_paths: object,
+    legacy_name: str,
+) -> None:
+    cookies = session_modules.cookies
+    legacy = isolated_paths.roaming / "BiliDownloader" / "session"  # type: ignore[attr-defined]
+    legacy.mkdir(parents=True)
+    source = legacy / legacy_name
+    if legacy_name == "storage_state.json":
+        source.write_text(
+            json.dumps({"cookies": synthetic_credentials["cookies"], "origins": []}),
+            encoding="utf-8",
+        )
+    else:
+        cookies.export_cookies_to_netscape(synthetic_credentials["cookies"], source)
+    profile = legacy / "playwright-profile"
+    cache = legacy / "login-cache"
+    profile.mkdir()
+    cache.mkdir()
+    (profile / "residue.bin").write_text(str(synthetic_credentials["session_secret"]), encoding="utf-8")
+    (cache / "residue.bin").write_text(str(synthetic_credentials["session_secret"]), encoding="utf-8")
+
+    assert cookies.migrate_legacy_session()
+
+    snapshot = cookies.load_session_snapshot()
+    assert snapshot is not None
+    assert {item["name"] for item in snapshot.cookies} == {"SESSDATA", "DedeUserID", "bili_jct"}
+    assert not source.exists()
+    assert not profile.exists()
+    assert not cache.exists()
+
+
+def test_v1_2_canonical_schema_remains_readable_and_cleans_obsolete_profile(
+    session_modules: SimpleNamespace,
+    synthetic_credentials: dict[str, object],
+) -> None:
+    cookies = session_modules.cookies
+    path = cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
+    before = path.read_bytes()
+    profile = cookies.legacy_browser_profile_dir()
+    profile.mkdir(parents=True)
+    (profile / "residue.bin").write_bytes(b"synthetic legacy profile")
+
+    assert cookies.migrate_legacy_session()
+    assert path.read_bytes() == before
+    assert cookies.load_session_snapshot() is not None
+    assert not profile.exists()
+
+
 def test_logout_removes_current_legacy_and_quarantine_credentials(
     session_modules: SimpleNamespace,
     synthetic_credentials: dict[str, object],
     isolated_paths: object,
 ) -> None:
     cookies = session_modules.cookies
-    cookies.save_context_storage_state_atomic(_context(synthetic_credentials))
+    cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
     residue = str(synthetic_credentials["session_secret"])
     roots = [
         isolated_paths.local / "BiliDownloader",  # type: ignore[attr-defined]

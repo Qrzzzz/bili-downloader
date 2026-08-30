@@ -30,7 +30,6 @@ if not version_file.is_file() or not build_metadata.is_file():
 hiddenimports = []
 hiddenimports += collect_submodules("yt_dlp")
 hiddenimports += collect_submodules("websockets")
-hiddenimports += collect_submodules("playwright")
 hiddenimports += [
     "PySide6.QtCore",
     "PySide6.QtGui",
@@ -40,10 +39,9 @@ hiddenimports += [
 
 datas = []
 datas += collect_data_files("certifi")
-datas += collect_data_files("playwright")
 datas += copy_metadata("yt-dlp")
 datas += copy_metadata("certifi")
-datas += copy_metadata("playwright")
+datas += copy_metadata("segno")
 datas.append((str(build_metadata), "."))
 
 icon_file = root / "assets" / "icon.ico"

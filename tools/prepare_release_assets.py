@@ -15,7 +15,7 @@ def _sha256(path: Path) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Create the v1.2 SHA256SUMS release asset.")
+    parser = argparse.ArgumentParser(description="Create the version-bound SHA256SUMS release asset.")
     parser.add_argument("--version", required=True)
     parser.add_argument("--directory", type=Path, default=Path("dist"))
     args = parser.parse_args()

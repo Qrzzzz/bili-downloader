@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.3] - 2026-08-30
+
+### 扫码登录
+
+- 将扫码登录改为应用内原生流程：通过独立 `requests.Session` 调用 Bilibili 官方网页扫码接口，使用 Segno 在本地生成带 quiet zone 的 QR PNG。
+- 为等待扫码、已扫码待确认、过期/刷新、成功、取消、超时、网络失败、HTTP 412 和协议异常增加明确状态与 fail-closed 契约。
+- 刷新二维码时废弃旧 key/会话并丢弃在途旧轮询结果；关闭、连续取消/刷新、成功后立即重开和应用退出保持协作式线程收敛。
+- `qrcode_key`、完整轮询/成功回调 URL、`refresh_token`、Cookie 和响应原文纳入日志脱敏边界。
+- 成功回调 URL 只校验为允许的 Bilibili 官方 HTTPS 来源，查询部分作为不透明敏感值立即丢弃；平台扩展参数不再误伤登录，Cookie 仍只取自受控 Session 并通过 NAV 事务验证。
+
+### 登录态事务与兼容
+
+- 将浏览器上下文绑定保存入口替换为通用候选 Cookie API：先限定域/名称/字段并通过 NAV API 服务端验证，然后在跨线程/跨进程锁内用 DPAPI 原子替换 canonical session。
+- 取消、超时、412、离线、协议异常、验证失败或保存失败均保留原有凭据。
+- 保持 v1.2 DPAPI schema 可读，并继续安全迁移旧 `storage_state.json` / `cookies.txt`、清理旧 profile/cache 残留。临时 Netscape lease 与匿名模式契约不变。
+
+### 依赖、诊断与发布链
+
+- 从运行时、完整哈希锁、PyInstaller spec、package smoke 和发布包中移除 Playwright 及其 driver/Node/专用传递依赖，不保留浏览器 fallback。
+- 环境诊断改为不联网的本地二维码组件/登录态说明；update checker 严格只接受可选 `v` / `V` 加两级数字版本。
+- 定时/手动公共网络 smoke 增加匿名二维码生成与首次等待态证据，不进入 PR/main 确定性门禁。
+- 归档审计扩展到内嵌 PYZ，拒绝 Playwright、driver/Node、Chromium、Electron、profile、FFmpeg、凭据和日志；继续只测量体积而不设阈值。
+
 ## [1.2] - 2026-08-30
 
 ### 修复
