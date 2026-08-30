@@ -1,0 +1,118 @@
+name: Release v1.2
+
+on:
+  push:
+    tags:
+      - v1.2
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      PYTHONUTF8: "1"
+      QT_QPA_PLATFORM: offscreen
+      RELEASE_VERSION: "1.2"
+      RELEASE_TAG: v1.2
+      RELEASE_TITLE: Bili Downloader Lite v1.2
+      RELEASE_ASSET: BiliDownloader.v1.2.exe
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-sbom.txt
+
+      - name: Bind tag, source version, and build commit
+        shell: powershell
+        run: |
+          python tools/verify_dependency_lock.py
+          if ($LASTEXITCODE -ne 0) { throw "dependency lock verification failed with exit code $LASTEXITCODE" }
+          python tools/verify_release_identity.py --expected-version $env:RELEASE_VERSION --expected-tag $env:RELEASE_TAG --expected-commit $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw "release identity verification failed with exit code $LASTEXITCODE" }
+
+      - name: Build exact release executable from a clean environment
+        shell: powershell
+        timeout-minutes: 20
+        run: .\build.ps1 -Clean -OneFile -RequireClean -ExpectedCommit $env:GITHUB_SHA -ExpectedTag $env:RELEASE_TAG
+
+      - name: Verify package behavior and PE metadata
+        shell: powershell
+        timeout-minutes: 4
+        run: |
+          $artifact = Join-Path "dist" $env:RELEASE_ASSET
+          .\tools\package_smoke.ps1 -Executable $artifact -SkipBrowserSmoke
+          .\tools\verify_pe_metadata.ps1 -Executable $artifact -ExpectedVersion $env:RELEASE_VERSION -ExpectedCommit $env:GITHUB_SHA
+
+      - name: Measure and audit bundled contents
+        shell: powershell
+        run: |
+          $artifact = Join-Path "dist" $env:RELEASE_ASSET
+          .\build\.venv\Scripts\python.exe tools\audit_release_artifact.py --executable $artifact --expected-version $env:RELEASE_VERSION --expected-commit $env:GITHUB_SHA --require-clean --output build\artifact-audit.json
+          if ($LASTEXITCODE -ne 0) { throw "artifact audit failed with exit code $LASTEXITCODE" }
+
+      - name: Generate CycloneDX SBOM and SHA256SUMS
+        shell: powershell
+        run: |
+          $sbomRoot = Join-Path $env:RUNNER_TEMP "bili-sbom-venv"
+          python -m venv $sbomRoot
+          $sbomPython = Join-Path $sbomRoot "Scripts\python.exe"
+          & $sbomPython -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-sbom.txt
+          if ($LASTEXITCODE -ne 0) { throw "SBOM tool installation failed with exit code $LASTEXITCODE" }
+          $sbom = Join-Path "dist" "BiliDownloader.v$env:RELEASE_VERSION.sbom.json"
+          & $sbomPython -m cyclonedx_py requirements requirements.txt --mc-type application --output-reproducible --output-format JSON --output-file $sbom
+          if ($LASTEXITCODE -ne 0) { throw "SBOM generation failed with exit code $LASTEXITCODE" }
+          python tools/prepare_release_assets.py --version $env:RELEASE_VERSION --directory dist
+          if ($LASTEXITCODE -ne 0) { throw "checksum generation failed with exit code $LASTEXITCODE" }
+
+      - name: Attest all release assets
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/BiliDownloader.v1.2.exe
+            dist/BiliDownloader.v1.2.sbom.json
+            dist/SHA256SUMS
+
+      - name: Verify attestations before publication
+        shell: powershell
+        run: |
+          gh attestation verify "dist/$env:RELEASE_ASSET" --repo $env:GITHUB_REPOSITORY --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref $env:GITHUB_REF --source-digest $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw "EXE attestation verification failed with exit code $LASTEXITCODE" }
+          gh attestation verify "dist/BiliDownloader.v$env:RELEASE_VERSION.sbom.json" --repo $env:GITHUB_REPOSITORY --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref $env:GITHUB_REF --source-digest $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw "SBOM attestation verification failed with exit code $LASTEXITCODE" }
+          gh attestation verify "dist/SHA256SUMS" --repo $env:GITHUB_REPOSITORY --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref $env:GITHUB_REF --source-digest $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw "checksum attestation verification failed with exit code $LASTEXITCODE" }
+
+      - name: Publish GitHub Release
+        shell: powershell
+        run: |
+          gh release create $env:RELEASE_TAG "dist/$env:RELEASE_ASSET" "dist/BiliDownloader.v$env:RELEASE_VERSION.sbom.json" "dist/SHA256SUMS" --verify-tag --title $env:RELEASE_TITLE --notes-file "docs/releases/v1.2.md" --latest
+          if ($LASTEXITCODE -ne 0) { throw "GitHub Release creation failed with exit code $LASTEXITCODE" }
+
+      - name: Verify published Release, assets, digests, and attestations
+        shell: powershell
+        run: |
+          python tools/verify_github_release.py --repository $env:GITHUB_REPOSITORY --tag $env:RELEASE_TAG --expected-version $env:RELEASE_VERSION --expected-commit $env:GITHUB_SHA --expected-title $env:RELEASE_TITLE --asset-directory dist
+          if ($LASTEXITCODE -ne 0) { throw "published Release verification failed with exit code $LASTEXITCODE" }

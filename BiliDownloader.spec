@@ -14,9 +14,10 @@ version_match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', version_sou
 if version_match is None:
     raise RuntimeError("Unable to read application version from app/__init__.py")
 artifact_name = os.environ.get("BILI_ARTIFACT_BASENAME", f"BiliDownloader.v{version_match.group(1)}")
-if not re.fullmatch(r"BiliDownloader\.v\d+\.\d+(?:\.\d+){0,2}", artifact_name):
+if not re.fullmatch(r"BiliDownloader\.v\d+\.\d+", artifact_name):
     raise RuntimeError(f"Invalid versioned artifact name: {artifact_name!r}")
 onefile = os.environ.get("BILI_BUILD_ONEFILE") == "1"
+console = os.environ.get("BILI_BUILD_CONSOLE") == "1"
 version_file = Path(
     os.environ.get("BILI_VERSION_FILE", root / "build" / "metadata" / "BiliDownloader.version")
 )
@@ -49,10 +50,6 @@ icon_file = root / "assets" / "icon.ico"
 if icon_file.exists():
     datas.append((str(icon_file), "assets"))
 
-ffmpeg_file = root / "tools" / "ffmpeg.exe"
-if ffmpeg_file.exists():
-    datas.append((str(ffmpeg_file), "tools"))
-
 a = Analysis(
     ["app/main.py"],
     pathex=[str(root)],
@@ -78,7 +75,7 @@ exe_options = dict(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,
+    console=console,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

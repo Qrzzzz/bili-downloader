@@ -8,11 +8,11 @@
 
 ## PySide6 / Qt for Python
 
-项目使用 PySide6 构建桌面界面。PySide6 与 Qt 相关组件的许可证义务取决于具体版本、使用方式和分发方式。发布前请维护者确认所用版本的许可证、动态链接要求、notice 要求以及是否需要提供对应许可证文本。
+项目 v1.2 锁定 PySide6 6.11.2 构建桌面界面。PySide6 与 Qt 相关组件的许可证义务取决于具体版本、使用方式和分发方式。发布前请维护者确认所用版本的许可证、动态链接要求、notice 要求以及是否需要提供对应许可证文本。
 
 ## yt-dlp
 
-项目使用 yt-dlp 解析和下载用户有权访问的视频内容。yt-dlp 的许可证和第三方 notice 以其上游项目和当前安装包元数据为准。发布前请维护者确认发布包中包含的 yt-dlp 版本及许可证文件。
+项目使用 yt-dlp 解析和下载用户有权访问的视频内容。v1.2 锁定 PyPI wheel `yt-dlp==2026.8.19`；其 wheel SHA-256 记录在 `requirements.txt`。yt-dlp 的许可证和第三方 notice 以上游项目和安装包元数据为准。
 
 ## FFmpeg
 
@@ -29,15 +29,15 @@ FFmpeg 用于合并音视频。
 
 ## Playwright
 
-项目使用 Playwright 进行扫码登录流程中的浏览器自动化。Playwright Python 包、Playwright driver、Node.js 运行文件以及下载的浏览器二进制可能分别带有自己的许可证和第三方 notice。发布包含 Playwright Chromium 的包前，请维护者确认对应 notice 文件已随包提供。
+项目 v1.2 锁定 Playwright 1.62.0 维持既有扫码登录流程。发布包包含 Playwright 驱动所需文件，但不安装、不内置 Chromium；程序只尝试系统 Edge/Chrome。Playwright Python 包、driver 和 Node.js 运行文件可能分别带有自己的许可证和第三方 notice。
 
 ## PyInstaller
 
-项目使用 PyInstaller 打包 Windows exe。发布前请确认 PyInstaller bootloader、运行时文件和生成产物的许可证通知要求。
+项目 v1.2 锁定 PyInstaller 6.22.2 打包 Windows exe。发布前请确认 PyInstaller bootloader、运行时文件和生成产物的许可证通知要求。
 
 ## 其他 Python 依赖
 
-`requirements.txt` 中还包含 requests、certifi、websockets 等依赖。发布前请维护者根据实际锁定版本收集并核对许可证信息。
+`requirements.txt` 锁定 requests 2.34.2、certifi 2026.7.22、websockets 17.1 及完整传递依赖。Release 同时发布由锁文件生成的 CycloneDX SBOM；维护者仍应核对实际许可证义务。
 
 ## 维护者发布前确认
 

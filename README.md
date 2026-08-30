@@ -2,7 +2,7 @@
 
 一个 Windows 桌面程序，用于在用户提供 Bilibili 视频链接后解析并下载用户有权访问的视频内容。
 
-当前稳定版本：**1.1**。
+当前稳定版本：**1.2**。
 
 本项目的目标是提供一个本地运行的桌面工具，帮助用户在合法、授权、个人备份或学习场景下处理自己有权访问的视频内容。项目不支持绕过会员、付费、DRM、地区限制、风控或任何访问权限限制，也不鼓励或允许侵犯版权。
 
@@ -23,25 +23,25 @@
 
 面向普通用户，推荐下载维护者在 GitHub Releases 中发布的 Windows 版本。
 
-发布包应至少包含：
+v1.2 发布包固定包含三个资产：
 
-- `BiliDownloader.v1.1.exe`
-- 必要的运行时文件
-- 发布说明
-- 校验值，例如 SHA256
+- `BiliDownloader.v1.2.exe`
+- `BiliDownloader.v1.2.sbom.json`
+- `SHA256SUMS`
 
 请只从项目维护者声明的官方发布页下载程序，不要运行来源不明的二进制文件。
 
 ## 从源码运行
 
-推荐使用 Python 3.11 或 3.12。较新的 Python 版本是否可用，取决于 PySide6、Playwright、PyInstaller 等依赖是否提供对应 wheel。
+v1.2 的已验证源码与构建环境为 Windows x64 + Python 3.13。`requirements.txt` 锁定完整传递依赖及 SHA-256，并禁止安装源码包：
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install --require-hashes --only-binary=:all: -r requirements.txt
 .\.venv\Scripts\python.exe -m app.main
 ```
+
+`requirements.in`、`requirements-dev.in` 和 `requirements-sbom.in` 记录直接依赖；对应的 `.txt` 文件是面向 Python 3.13/Windows x64 的哈希锁。维护者只有在明确更新依赖并重新完成解析、测试和打包验证时才应重建锁文件。
 
 扫码登录优先使用 Windows 自带的 Microsoft Edge，其次使用系统 Chrome。发布包不内置 Chromium，也不会在构建时下载浏览器。
 
@@ -57,10 +57,10 @@ python -m venv .venv
 .\build.ps1
 ```
 
-默认输出位置：
+默认 onedir 输出位置：
 
 ```text
-dist\BiliDownloader\BiliDownloader.v1.1.exe
+dist\BiliDownloader\BiliDownloader.v1.2.exe
 ```
 
 清理后重新打包：
@@ -69,13 +69,13 @@ dist\BiliDownloader\BiliDownloader.v1.1.exe
 .\build.ps1 -Clean
 ```
 
-可选 onefile 打包：
+正式发布使用 onefile 打包：
 
 ```powershell
-.\build.ps1 -OneFile
+.\build.ps1 -Clean -OneFile
 ```
 
-onefile 启动通常更慢，且外部浏览器与 FFmpeg 等依赖更难排查。面向公开发布时，建议维护者先验证 onedir 包。
+`build.ps1` 每次都会删除并重建 `build\.venv`，只从哈希锁安装 wheel，不复用仓库中的旧虚拟环境。onefile 启动通常更慢，且外部浏览器与 FFmpeg 等依赖更难排查；发布前仍应完成 package smoke 和归档内容审计。
 
 发布前请阅读 [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)，确认没有把本地登录态、日志、下载文件、浏览器 profile、构建缓存或未确认许可证义务的二进制文件放入仓库或发布包。
 
@@ -106,12 +106,7 @@ https://passport.bilibili.com/login
 
 ## FFmpeg 说明
 
-FFmpeg 用于合并音视频流。你可以选择以下方式之一：
-
-- 自行安装 FFmpeg，并将其加入系统 `PATH`。
-- 在维护者确认许可证义务后，将 `ffmpeg.exe` 放入 `tools\ffmpeg.exe` 并参与本地打包。
-
-当前仓库不应默认提交 `ffmpeg.exe` 或 `ffprobe.exe`。如果维护者决定随发布包分发 FFmpeg，必须在发布前确认 FFmpeg 构建来源、许可证类型以及对应的 LGPL/GPL 合规义务，并在 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 中更新说明。
+FFmpeg 用于合并音视频流。v1.2 不捆绑 FFmpeg；用户需要自行安装 FFmpeg 并将其加入系统 `PATH`。仓库与 Release 均不得包含 `ffmpeg.exe` 或 `ffprobe.exe`。
 
 ## 常见问题
 
@@ -129,10 +124,10 @@ FFmpeg 用于合并音视频流。你可以选择以下方式之一：
 - 视频需要账号权限、会员权限、付费权限、地区权限，或受到平台限制。
 - yt-dlp 的 Bilibili 提取器需要更新。
 
-从源码运行时可尝试更新 yt-dlp：
+维护者如需更新 yt-dlp，应修改 `requirements.in` 后重新生成全部哈希锁并执行完整验证，不要在发布环境中临时升级单个依赖：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install --upgrade yt-dlp
+uv pip compile requirements.in --python-version 3.13 --python-platform x86_64-pc-windows-msvc --generate-hashes --no-build --output-file requirements.txt
 ```
 
 ### 高分辨率不可用怎么办？
@@ -141,13 +136,7 @@ FFmpeg 用于合并音视频流。你可以选择以下方式之一：
 
 ### FFmpeg 缺失怎么办？
 
-安装 FFmpeg 并加入 `PATH`，或在维护者确认许可证后将 `ffmpeg.exe` 放到：
-
-```text
-tools\ffmpeg.exe
-```
-
-然后重新运行或重新打包。
+安装 FFmpeg 并加入系统 `PATH`，然后重新运行程序。
 
 ### 杀毒软件提示怎么办？
 
