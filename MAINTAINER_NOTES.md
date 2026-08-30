@@ -11,10 +11,10 @@
 
 ## 原生二维码登录契约
 
-- 网络协议只在 `app/auth_qr.py` 中适配：有限超时、明确 User-Agent、严格 schema/状态枚举、HTTPS 官方主机与回调字段白名单。未知码、缺字段、类型错误或非允许来源一律 fail closed。
+- 网络协议只在 `app/auth_qr.py` 中适配：有限超时、明确 User-Agent、严格 schema/状态枚举、HTTPS 官方主机与成功回调来源校验。未知码、缺字段、类型错误或非允许来源一律 fail closed；不消费的回调查询参数不属于凭据或提交输入。
 - 状态 `86101` 为等待扫码，`86090` 为已扫码待确认，`86038` 为过期，`0` 为成功。刷新必须关闭旧 `requests.Session`、废弃旧 key，并丢弃已在途中的旧轮询结果。
 - Segno 只用于本地 PNG 生成，quiet zone 不小于 4 modules。不得引入 Pillow、WebView 或任何浏览器 fallback。
-- `qrcode_key`、完整轮询/成功回调 URL、`refresh_token`、Cookie 和响应原文均不得记录、展示或持久化。成功回调 URL 只验证来源/字段，不导航也不用于补取 Cookie。
+- `qrcode_key`、完整轮询/成功回调 URL、`refresh_token`、Cookie 和响应原文均不得记录、展示或持久化。成功回调 URL 只验证为允许的官方 HTTPS 来源，查询部分作为不透明敏感值立即丢弃；不导航、不解析，也不用于补取 Cookie。
 - HTTP 412 如实归类为外部平台限制，不实现风控、会员、地区、付费或 DRM 绕过。
 
 ## 登录态事务与兼容

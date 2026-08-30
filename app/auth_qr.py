@@ -4,7 +4,7 @@ import io
 import threading
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Iterable
+from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
 import requests
@@ -27,27 +27,6 @@ SUCCESS_CALLBACK_HOSTS = frozenset(
         "account.bilibili.com",
         "passport.bilibili.com",
         "passport.biligame.com",
-        "www.bilibili.com",
-    }
-)
-SUCCESS_CALLBACK_QUERY_FIELDS = frozenset(
-    {
-        "DedeUserID",
-        "DedeUserID__ckMd5",
-        "Expires",
-        "SESSDATA",
-        "bili_jct",
-        "buvid3",
-        "buvid4",
-        "first_domain",
-        "gourl",
-        "sid",
-    }
-)
-SUCCESS_GOURL_HOSTS = frozenset(
-    {
-        "account.bilibili.com",
-        "passport.bilibili.com",
         "www.bilibili.com",
     }
 )
@@ -124,35 +103,17 @@ def _validate_https_url(
     return value
 
 
-def _validate_success_callback(value: object) -> None:
-    url = _validate_https_url(
+def _validate_and_discard_success_callback(value: object) -> None:
+    """Verify only the trusted origin; never consume the credential-bearing query."""
+    _validate_https_url(
         value,
         allowed_hosts=SUCCESS_CALLBACK_HOSTS,
         label="成功回调 URL",
     )
-    parsed = urlsplit(url)
-    try:
-        query = parse_qsl(parsed.query, keep_blank_values=True, max_num_fields=32)
-    except ValueError as exc:
-        raise QrProtocolError("成功回调 URL 查询字段异常") from exc
-    field_names = {name for name, _value in query}
-    if not field_names.issubset(SUCCESS_CALLBACK_QUERY_FIELDS):
-        raise QrProtocolError("成功回调 URL 包含未允许字段")
-    field_values: dict[str, list[str]] = {}
-    for name, field_value in query:
-        field_values.setdefault(name, []).append(field_value)
-    if any(len(values) != 1 for values in field_values.values()):
-        raise QrProtocolError("成功回调 URL 包含重复字段")
-    first_domain = field_values.get("first_domain")
-    if first_domain is not None and first_domain != [".bilibili.com"]:
-        raise QrProtocolError("成功回调 URL 的 first_domain 异常")
-    gourl = field_values.get("gourl")
-    if gourl is not None:
-        _validate_https_url(
-            gourl[0],
-            allowed_hosts=SUCCESS_GOURL_HOSTS,
-            label="成功回调 gourl",
-        )
+    # The callback query is an opaque, credential-bearing platform value.  It
+    # is never navigated, persisted, logged, or used to construct cookies.
+    # Authentication candidates come exclusively from the controlled Session
+    # cookie jar and must still pass the independent cookie/NAV transaction.
 
 
 def _validate_envelope(payload: object) -> dict[str, Any]:
@@ -306,7 +267,7 @@ class QrLoginClient:
         if status is None:
             raise QrProtocolError("扫码轮询返回未知状态")
         if status is QrStatus.SUCCESS:
-            _validate_success_callback(callback_url)
+            _validate_and_discard_success_callback(callback_url)
         elif callback_url or refresh_token:
             raise QrProtocolError("非成功轮询状态携带了未预期的敏感字段")
         return QrPollResult(status)
@@ -340,8 +301,3 @@ def status_is_terminal(status: QrStatus) -> bool:
         QrStatus.NETWORK_FAILURE,
         QrStatus.PROTOCOL_ERROR,
     }
-
-
-def allowed_callback_fields() -> Iterable[str]:
-    """Expose the non-secret allowlist for contract tests and audits."""
-    return tuple(sorted(SUCCESS_CALLBACK_QUERY_FIELDS))
