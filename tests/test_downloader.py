@@ -16,11 +16,23 @@ import pytest
 class FakeResponse:
     url: str
     status_code: int = 200
+    headers: dict[str, str] = field(default_factory=dict)
+    chunks: tuple[bytes, ...] = ()
+    stream_error: Exception | None = None
     closed: bool = False
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
-            raise RuntimeError(f"HTTP {self.status_code}")
+            import requests
+
+            raise requests.HTTPError(f"HTTP {self.status_code}")
+
+    def iter_content(self, chunk_size: int = 1) -> object:
+        _ = chunk_size
+        for chunk in self.chunks:
+            yield chunk
+        if self.stream_error is not None:
+            raise self.stream_error
 
     def close(self) -> None:
         self.closed = True
@@ -170,8 +182,12 @@ def test_b23_redirect_preserves_target_page_and_drops_tracking_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     response = FakeResponse(
-        "https://www.bilibili.com/video/BV1Synthetic99"
-        "?spm_id_from=333.999&p=3&utm_source=unit-test#comments"
+        "https://b23.tv/synthetic",
+        status_code=302,
+        headers={
+            "Location": "https://www.bilibili.com/video/BV1Synthetic99"
+            "?spm_id_from=333.999&p=3&utm_source=unit-test#comments"
+        },
     )
     captured: dict[str, Any] = {}
 
@@ -187,8 +203,9 @@ def test_b23_redirect_preserves_target_page_and_drops_tracking_query(
     assert resolved.canonical_url == "https://www.bilibili.com/video/BV1Synthetic99?p=3"
     assert resolved.requested_page == 3
     assert resolved.bvid == "BV1Synthetic99"
-    assert captured["allow_redirects"] is True
-    assert captured["timeout"] == 15
+    assert captured["url"] == "https://b23.tv/synthetic?share_source=test"
+    assert captured["allow_redirects"] is False
+    assert captured["timeout"] == downloader.B23_TIMEOUT
     assert response.closed is True
 
 
@@ -196,13 +213,288 @@ def test_b23_external_redirect_is_rejected(
     downloader: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    response = FakeResponse("https://attacker.invalid/video/BV1Synthetic99?p=3")
+    response = FakeResponse(
+        "https://b23.tv/synthetic",
+        status_code=302,
+        headers={"Location": "https://attacker.invalid/video/BV1Synthetic99?p=3"},
+    )
     monkeypatch.setattr(downloader.requests, "get", lambda *_args, **_kwargs: response)
 
     with pytest.raises(ValueError):
         downloader.resolve_bilibili_url("https://b23.tv/synthetic")
 
     assert response.closed is True
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_b23_accepts_only_explicit_redirect_statuses(
+    downloader: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+) -> None:
+    response = FakeResponse(
+        "https://b23.tv/synthetic",
+        status_code=status,
+        headers={"Location": "https://www.bilibili.com/video/BV1Synthetic99?p=2"},
+    )
+    monkeypatch.setattr(downloader.requests, "get", lambda *_args, **_kwargs: response)
+
+    resolved = downloader.resolve_bilibili_url("https://b23.tv/synthetic")
+
+    assert resolved.canonical_url == "https://www.bilibili.com/video/BV1Synthetic99?p=2"
+    assert response.closed
+
+
+def test_b23_relative_redirects_are_validated_hop_by_hop(
+    downloader: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = iter(
+        [
+            FakeResponse("https://b23.tv/first", 302, {"Location": "/second"}),
+            FakeResponse(
+                "https://b23.tv/second",
+                302,
+                {"Location": "https://www.bilibili.com/video/av170001?p=4"},
+            ),
+        ]
+    )
+    requested: list[str] = []
+
+    def redirect(url: str, **kwargs: object) -> FakeResponse:
+        assert kwargs["allow_redirects"] is False
+        requested.append(url)
+        return next(responses)
+
+    monkeypatch.setattr(downloader.requests, "get", redirect)
+
+    resolved = downloader.resolve_bilibili_url("https://b23.tv/first")
+
+    assert requested == ["https://b23.tv/first", "https://b23.tv/second"]
+    assert resolved.canonical_url == "https://www.bilibili.com/video/av170001?p=4"
+
+
+def test_b23_rejects_loops_and_redirect_limit(
+    downloader: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop = FakeResponse("https://b23.tv/loop", 302, {"Location": "/loop"})
+    monkeypatch.setattr(downloader.requests, "get", lambda *_args, **_kwargs: loop)
+    with pytest.raises(ValueError, match="循环"):
+        downloader.resolve_bilibili_url("https://b23.tv/loop")
+
+    calls = 0
+
+    def endless(url: str, **_kwargs: object) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        return FakeResponse(url, 302, {"Location": f"/hop-{calls}"})
+
+    monkeypatch.setattr(downloader.requests, "get", endless)
+    with pytest.raises(ValueError, match="次数过多"):
+        downloader.resolve_bilibili_url("https://b23.tv/start")
+    assert calls == downloader.B23_MAX_REDIRECTS
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "http://www.bilibili.com/video/BV1Synthetic99",
+        "https://127.0.0.1/video/BV1Synthetic99",
+        "https://[::1]/video/BV1Synthetic99",
+        "https://localhost/video/BV1Synthetic99",
+        "https://user:secret@www.bilibili.com/video/BV1Synthetic99",
+        "https://www.bilibili.com:444/video/BV1Synthetic99",
+        "https://attacker.invalid/video/BV1Synthetic99",
+        "https://[malformed/video/BV1Synthetic99",
+    ],
+)
+def test_b23_rejects_unsafe_redirect_targets(
+    downloader: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+) -> None:
+    response = FakeResponse("https://b23.tv/synthetic", 302, {"Location": target})
+    monkeypatch.setattr(downloader.requests, "get", lambda *_args, **_kwargs: response)
+
+    with pytest.raises(ValueError):
+        downloader.resolve_bilibili_url("https://b23.tv/synthetic")
+    assert response.closed
+
+
+@pytest.mark.parametrize(
+    ("value", "canonical", "page"),
+    [
+        ("BV1Synthetic99", "https://www.bilibili.com/video/BV1Synthetic99", 1),
+        ("av170001", "https://www.bilibili.com/video/av170001", 1),
+        (
+            "https://www.bilibili.com/video/BV1Synthetic99?p=6&utm_source=test#comments",
+            "https://www.bilibili.com/video/BV1Synthetic99?p=6",
+            6,
+        ),
+    ],
+)
+def test_input_and_canonical_video_url_share_the_strict_boundary(
+    downloader: Any,
+    value: str,
+    canonical: str,
+    page: int,
+) -> None:
+    normalized = downloader.canonicalize_video_url(
+        value if value.startswith("https://") else f"https://www.bilibili.com/video/{value}"
+    )
+    assert normalized.canonical_url == canonical
+    assert normalized.requested_page == page
+
+
+def test_internal_api_video_reference_is_revalidated_before_use(downloader: Any) -> None:
+    assert downloader._canonical_part_url({"bvid": "BV1Synthetic99"}, 3) == (
+        "https://www.bilibili.com/video/BV1Synthetic99?p=3"
+    )
+    assert downloader._canonical_part_url({"aid": 170001}, 1) == "https://www.bilibili.com/video/av170001"
+    assert downloader._canonical_part_url({"bvid": "BV1Synthetic99/../../private"}, 1) == ""
+    assert downloader._canonical_part_url({"aid": "170001?token=secret"}, 1) == ""
+
+
+def test_b23_errors_do_not_echo_sensitive_query(
+    downloader: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import requests
+
+    secret = "synthetic-secret-query"
+    monkeypatch.setattr(
+        downloader.requests,
+        "get",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(requests.Timeout(f"https://b23.tv/x?token={secret}")),
+    )
+    with pytest.raises(ValueError) as caught:
+        downloader.resolve_bilibili_url(f"https://b23.tv/x?token={secret}")
+    assert secret not in str(caught.value)
+
+
+def test_thumbnail_streaming_accepts_small_image_and_closes_response(
+    downloader: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = FakeResponse(
+        "https://i0.hdslb.com/bfs/archive/cover.jpg",
+        headers={"Content-Type": "image/jpeg", "Content-Length": "6"},
+        chunks=(b"abc", b"def"),
+    )
+    captured: dict[str, object] = {}
+
+    def get(url: str, **kwargs: object) -> FakeResponse:
+        captured.update(kwargs)
+        return response
+
+    monkeypatch.setattr(downloader.requests, "get", get)
+
+    assert downloader.fetch_thumbnail(response.url) == b"abcdef"
+    assert captured["stream"] is True
+    assert captured["allow_redirects"] is False
+    assert captured["timeout"] == downloader.THUMBNAIL_TIMEOUT
+    assert response.closed
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Content-Type": "text/html", "Content-Length": "4"},
+        {"Content-Type": "image/jpeg", "Content-Length": "not-an-integer"},
+        {"Content-Type": "image/jpeg", "Content-Length": str(6 * 1024 * 1024)},
+    ],
+)
+def test_thumbnail_rejects_type_and_declared_size_before_reading(
+    downloader: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    headers: dict[str, str],
+) -> None:
+    response = FakeResponse("https://i0.hdslb.com/cover", headers=headers, chunks=(b"data",))
+    monkeypatch.setattr(downloader.requests, "get", lambda *_args, **_kwargs: response)
+    with pytest.raises(ValueError):
+        downloader.fetch_thumbnail(response.url)
+    assert response.closed
+
+
+def test_thumbnail_enforces_actual_byte_limit_without_trusting_length(
+    downloader: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(downloader, "THUMBNAIL_MAX_BYTES", 5)
+    for headers in ({"Content-Type": "image/png"}, {"Content-Type": "image/png", "Content-Length": "1"}):
+        response = FakeResponse("https://i0.hdslb.com/cover", headers=headers, chunks=(b"123", b"456"))
+        monkeypatch.setattr(downloader.requests, "get", lambda *_args, _response=response, **_kwargs: _response)
+        with pytest.raises(ValueError, match="大小限制"):
+            downloader.fetch_thumbnail(response.url)
+        assert response.closed
+
+
+def test_thumbnail_redirect_timeout_and_midstream_failure_are_non_secret(
+    downloader: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import requests
+
+    external = FakeResponse(
+        "https://i0.hdslb.com/cover",
+        302,
+        {"Location": "https://127.0.0.1/private.jpg"},
+    )
+    monkeypatch.setattr(downloader.requests, "get", lambda *_args, **_kwargs: external)
+    with pytest.raises(ValueError):
+        downloader.fetch_thumbnail(external.url)
+    assert external.closed
+
+    secret = "synthetic-cover-secret"
+    monkeypatch.setattr(
+        downloader.requests,
+        "get",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(requests.Timeout(f"?token={secret}")),
+    )
+    with pytest.raises(ValueError) as timeout_error:
+        downloader.fetch_thumbnail("https://i0.hdslb.com/cover")
+    assert secret not in str(timeout_error.value)
+
+    interrupted = FakeResponse(
+        "https://i0.hdslb.com/cover",
+        headers={"Content-Type": "image/webp"},
+        chunks=(b"first",),
+        stream_error=requests.ConnectionError(f"?token={secret}"),
+    )
+    monkeypatch.setattr(downloader.requests, "get", lambda *_args, **_kwargs: interrupted)
+    with pytest.raises(ValueError) as stream_error:
+        downloader.fetch_thumbnail(interrupted.url)
+    assert secret not in str(stream_error.value)
+    assert interrupted.closed
+
+
+def test_thumbnail_follows_only_validated_cdn_redirects(
+    downloader: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = FakeResponse(
+        "https://i0.hdslb.com/cover",
+        302,
+        {"Location": "https://archive.biliimg.com/cover.webp"},
+    )
+    final = FakeResponse(
+        "https://archive.biliimg.com/cover.webp",
+        headers={"Content-Type": "image/webp"},
+        chunks=(b"small-image",),
+    )
+    responses = iter((first, final))
+    requested: list[str] = []
+
+    def get(url: str, **_kwargs: object) -> FakeResponse:
+        requested.append(url)
+        return next(responses)
+
+    monkeypatch.setattr(downloader.requests, "get", get)
+
+    assert downloader.fetch_thumbnail(first.url) == b"small-image"
+    assert requested == [first.url, final.url]
+    assert first.closed and final.closed
 
 
 def test_format_labels_distinguish_8k_and_2880p(downloader: Any) -> None:
