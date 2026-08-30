@@ -12,7 +12,7 @@ All notable changes to this project will be documented in this file.
 - 为等待扫码、已扫码待确认、过期/刷新、成功、取消、超时、网络失败、HTTP 412 和协议异常增加明确状态与 fail-closed 契约。
 - 刷新二维码时废弃旧 key/会话并丢弃在途旧轮询结果；关闭、连续取消/刷新、成功后立即重开和应用退出保持协作式线程收敛。
 - `qrcode_key`、完整轮询/成功回调 URL、`refresh_token`、Cookie 和响应原文纳入日志脱敏边界。
-- 兼容当前成功回调中的 `first_domain=.bilibili.com` 控制字段，并继续严格校验其固定值及 `gourl` 官方来源。
+- 成功回调 URL 只校验为允许的 Bilibili 官方 HTTPS 来源，查询部分作为不透明敏感值立即丢弃；平台扩展参数不再误伤登录，Cookie 仍只取自受控 Session 并通过 NAV 事务验证。
 
 ### 登录态事务与兼容
 

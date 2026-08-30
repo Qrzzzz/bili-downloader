@@ -16,7 +16,7 @@ SUCCESS_URL = (
     "https://passport.biligame.com/x/passport-login/web/crossDomain?"
     "DedeUserID=synthetic-user&SESSDATA=synthetic-session&bili_jct=synthetic-csrf&"
     "Expires=4102444800&gourl=https%3A%2F%2Fwww.bilibili.com%2F&"
-    "first_domain=.bilibili.com"
+    "first_domain=.bilibili.com&future_platform_field=opaque-value"
 )
 
 
@@ -136,31 +136,17 @@ def test_generate_schema_types_and_origin_fail_closed(payload: object) -> None:
         poll_payload(86101, timestamp="bad"),
         poll_payload(86101, refresh_token="unexpected-secret"),
         poll_payload(0, url="https://attacker.example/callback?SESSDATA=secret"),
-        poll_payload(0, url="https://passport.biligame.com/crossDomain?unknown=secret"),
         poll_payload(
             0,
-            url=(
-                "https://passport.biligame.com/crossDomain?SESSDATA=synthetic&"
-                "first_domain=.attacker.example"
-            ),
+            url="https://attacker@passport.biligame.com/crossDomain?SESSDATA=secret",
         ),
         poll_payload(
             0,
-            url=(
-                "https://passport.biligame.com/crossDomain?SESSDATA=synthetic&"
-                "gourl=https%3A%2F%2Fattacker.example%2F"
-            ),
-        ),
-        poll_payload(
-            0,
-            url=(
-                "https://passport.biligame.com/crossDomain?SESSDATA=synthetic&"
-                "first_domain=.bilibili.com&first_domain=.bilibili.com"
-            ),
+            url="https://passport.biligame.com:444/crossDomain?SESSDATA=secret",
         ),
     ],
 )
-def test_poll_unknown_status_schema_and_callback_fail_closed(payload: object) -> None:
+def test_poll_unknown_status_schema_and_callback_origin_fail_closed(payload: object) -> None:
     client, _session = _client([FakeResponse(generate_payload()), FakeResponse(payload)])
     challenge = client.generate()
     with pytest.raises(auth_qr.QrProtocolError):
@@ -229,7 +215,22 @@ def test_qr_png_is_square_sharp_and_has_sufficient_quiet_zone() -> None:
     assert len(png) < 200_000
 
 
-def test_allowed_callback_query_fields_are_public_names_only() -> None:
-    fields = set(auth_qr.allowed_callback_fields())
-    assert {"SESSDATA", "bili_jct", "DedeUserID", "gourl", "first_domain"} <= fields
-    assert "refresh_token" not in fields
+def test_official_success_callback_query_is_opaque_and_never_used_for_cookies() -> None:
+    callback = (
+        "https://passport.biligame.com/x/passport-login/web/crossDomain?"
+        "unknown_future_field=callback-secret&SESSDATA=callback-session&"
+        "gourl=https%3A%2F%2Fattacker.example%2F"
+    )
+
+    def install_session_cookie(session: FakeSession) -> FakeResponse:
+        session.cookies.set("SESSDATA", "jar-session", domain=".bilibili.com", path="/")
+        session.cookies.set("DedeUserID", "jar-user", domain=".bilibili.com", path="/")
+        return FakeResponse(poll_payload(0, url=callback))
+
+    client, _session = _client([FakeResponse(generate_payload()), install_session_cookie])
+    challenge = client.generate()
+
+    assert client.poll(challenge).status is auth_qr.QrStatus.SUCCESS
+    candidates = client.candidate_cookies()
+    assert {item["value"] for item in candidates} == {"jar-session", "jar-user"}
+    assert all("callback-secret" not in item["value"] for item in candidates)
