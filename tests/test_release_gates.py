@@ -10,24 +10,24 @@ from types import SimpleNamespace
 import pytest
 
 
-def test_release_version_is_1_2_and_windows_compatible() -> None:
+def test_release_version_is_1_3_and_windows_compatible() -> None:
     app = importlib.import_module("app")
     version_tool = importlib.import_module("tools.write_version_info")
 
     assert app.__app_name__ == "Bili Downloader Lite"
-    assert app.__version__ == "1.2"
-    assert version_tool._numeric_version(app.__version__) == (1, 2, 0, 0)
+    assert app.__version__ == "1.3"
+    assert version_tool._numeric_version(app.__version__) == (1, 3, 0, 0)
     resource = version_tool._version_resource(
         app.__version__,
-        (1, 2, 0, 0),
+        (1, 3, 0, 0),
         "a" * 40,
         False,
         "2026-07-12T00:00:00Z",
     )
     assert "StringStruct('ProductName', 'Bili Downloader Lite')" in resource
-    assert "StringStruct('OriginalFilename', 'BiliDownloader.v1.2.exe')" in resource
-    assert "StringStruct('FileVersion', '1.2')" in resource
-    assert "StringStruct('ProductVersion', '1.2')" in resource
+    assert "StringStruct('OriginalFilename', 'BiliDownloader.v1.3.exe')" in resource
+    assert "StringStruct('FileVersion', '1.3')" in resource
+    assert "StringStruct('ProductVersion', '1.3')" in resource
 
 
 @pytest.mark.parametrize("version", ["1", "1.2.0", "v1.2", "1.2rc1", "1.2.3.4"])
@@ -38,13 +38,23 @@ def test_release_version_rejects_non_two_level_forms(version: str) -> None:
         version_tool._numeric_version(version)
 
 
-def test_lite_build_does_not_bundle_playwright_chromium() -> None:
+def test_native_qr_build_has_no_browser_runtime_or_smoke_entrypoint() -> None:
     root = Path(__file__).resolve().parents[1]
     build_script = (root / "build.ps1").read_text(encoding="utf-8")
     spec = (root / "BiliDownloader.spec").read_text(encoding="utf-8")
+    runtime_input = (root / "requirements.in").read_text(encoding="utf-8").lower()
+    runtime_lock = (root / "requirements.txt").read_text(encoding="utf-8").lower()
+    main = (root / "app" / "main.py").read_text(encoding="utf-8").lower()
+    package_smoke = (root / "tools" / "package_smoke.ps1").read_text(encoding="utf-8").lower()
 
-    assert "playwright install chromium" not in build_script
-    assert "ms-playwright" not in spec
+    assert "playwright" not in spec.lower()
+    assert "playwright" not in runtime_input
+    assert "playwright" not in runtime_lock
+    assert "greenlet==" not in runtime_lock
+    assert "pyee==" not in runtime_lock
+    assert "--playwright-smoke-output" not in main
+    assert "playwright" not in package_smoke
+    assert not (root / "tools" / "playwright_smoke.py").exists()
     assert "BILI_BROWSER_ROOT" not in spec
     assert "ffmpeg_file" not in spec
     assert "System32" in build_script
@@ -55,6 +65,10 @@ def test_lite_build_does_not_bundle_playwright_chromium() -> None:
     "member",
     [
         "ms-playwright\\chromium-123\\chrome.exe",
+        "playwright._impl._connection",
+        "playwright\\driver\\node.exe",
+        "electron.exe",
+        "resources\\electron.asar",
         "tools\\ffmpeg.exe",
         "profile\\storage_state.json",
         "logs\\app.log",
@@ -87,18 +101,20 @@ def test_workflows_pin_actions_and_keep_public_network_out_of_quality() -> None:
 
     quality = workflows["quality.yml"]
     assert "public_parse_smoke.py" not in quality
-    assert "playwright_smoke.py" not in quality
+    assert "public_qr_smoke.py" not in quality
+    assert "playwright" not in quality.lower()
 
     public_smoke = workflows["public-smoke.yml"]
     assert "schedule:" in public_smoke
     assert "workflow_dispatch:" in public_smoke
     assert "pull_request:" not in public_smoke
     assert "environment_blocked_412" not in public_smoke
+    assert "public_qr_smoke.py" in public_smoke
 
     release = workflows["release.yml"]
-    assert "tags:\n      - v1.2" in release
-    assert "RELEASE_TITLE: Bili Downloader Lite v1.2" in release
-    assert "BiliDownloader.v1.2.exe" in release
+    assert "tags:\n      - v1.3" in release
+    assert "RELEASE_TITLE: Bili Downloader Lite v1.3" in release
+    assert "BiliDownloader.v1.3.exe" in release
     assert "attestations: write" in release
     assert "id-token: write" in release
 
@@ -160,3 +176,56 @@ def test_public_parse_smoke_fails_structured_412_environment_block(
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["outcome"] == "environment_blocked_412"
     assert payload["parse_result"]["error_code"] == "platform_412"
+
+
+def test_public_qr_smoke_records_waiting_without_protocol_secrets(
+    isolated_paths: object,
+    monkeypatch,
+) -> None:
+    smoke = importlib.reload(importlib.import_module("tools.public_qr_smoke"))
+    auth = importlib.import_module("app.auth_qr")
+    output = isolated_paths.root / "public-qr-smoke.json"  # type: ignore[attr-defined]
+
+    class FakeClient:
+        def generate(self):
+            return SimpleNamespace(qr_url="secret-url", qrcode_key="secret-key")
+
+        def poll(self, _challenge):
+            return SimpleNamespace(status=auth.QrStatus.WAITING_SCAN)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(smoke, "QrLoginClient", FakeClient)
+    monkeypatch.setattr(sys, "argv", ["public_qr_smoke.py", "--output", str(output)])
+
+    assert smoke.main() == 0
+    raw = output.read_text(encoding="utf-8")
+    payload = json.loads(raw)
+    assert payload["outcome"] == "passed"
+    assert payload["first_status"] == "waiting_scan"
+    assert "secret-url" not in raw and "secret-key" not in raw
+
+
+def test_public_qr_smoke_fails_and_records_platform_412(
+    isolated_paths: object,
+    monkeypatch,
+) -> None:
+    smoke = importlib.reload(importlib.import_module("tools.public_qr_smoke"))
+    auth = importlib.import_module("app.auth_qr")
+    output = isolated_paths.root / "public-qr-412.json"  # type: ignore[attr-defined]
+
+    class FakeClient:
+        def generate(self):
+            raise auth.QrNetworkError("synthetic platform block", code="platform_412")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(smoke, "QrLoginClient", FakeClient)
+    monkeypatch.setattr(sys, "argv", ["public_qr_smoke.py", "--output", str(output)])
+
+    assert smoke.main() == 1
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["ok"] is False
+    assert payload["outcome"] == "environment_blocked_412"

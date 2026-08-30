@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import sys
-import types
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -28,7 +26,7 @@ class FakeResponse:
 
 @pytest.mark.parametrize(
     ("tag", "available"),
-    [("v1.1", True), ("1.1", True), ("v1.0", False), ("v1.0.1", True)],
+    [("v1.1", True), ("1.1", True), ("V1.0", False), ("v1.0", False)],
 )
 def test_manual_update_check_accepts_two_part_versions(tag: str, available: bool) -> None:
     calls: list[dict[str, Any]] = []
@@ -45,8 +43,27 @@ def test_manual_update_check_accepts_two_part_versions(tag: str, available: bool
     result = diagnostics.check_latest_release("1.0", get=fake_get)
 
     assert result.update_available is available
-    assert result.latest_version == tag.removeprefix("v")
+    assert result.latest_version == tag.removeprefix("v").removeprefix("V")
     assert calls[0]["timeout"] == 10
+
+
+@pytest.mark.parametrize(
+    "tag",
+    ["1.3.0", "v1.3.0", "1.3.0.0", " 1.3", "1.3 ", "x1.3", "1.3beta"],
+)
+def test_manual_update_check_rejects_non_two_part_versions(tag: str) -> None:
+    result = diagnostics.check_latest_release(
+        "1.2",
+        get=lambda *_args, **_kwargs: FakeResponse(
+            {
+                "tag_name": tag,
+                "html_url": "https://github.com/Qrzzzz/bili-downloader/releases/tag/invalid",
+            }
+        ),
+    )
+    assert result.update_available is False
+    assert result.latest_version is None
+    assert result.release_url is None
 
 
 @pytest.mark.parametrize(
@@ -83,44 +100,18 @@ def test_report_redacts_credentials_and_home_path(monkeypatch: pytest.MonkeyPatc
     assert "<redacted>" in text
 
 
-def test_playwright_probe_uses_browser_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    launches: list[str | None] = []
+def test_qr_component_probe_is_local_and_does_not_call_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        diagnostics.requests,
+        "get",
+        lambda *_args, **_kwargs: pytest.fail("diagnostics must stay offline"),
+    )
 
-    class Browser:
-        def close(self) -> None:
-            pass
-
-    class Chromium:
-        def launch(self, **kwargs: Any) -> Browser:
-            channel = kwargs.get("channel")
-            launches.append(channel)
-            if channel == "msedge":
-                raise RuntimeError("system Edge unavailable")
-            return Browser()
-
-    class Playwright:
-        chromium = Chromium()
-
-    class Manager:
-        def __enter__(self) -> Playwright:
-            return Playwright()
-
-        def __exit__(self, *_args: Any) -> None:
-            pass
-
-    package = types.ModuleType("playwright")
-    package.__path__ = []  # type: ignore[attr-defined]
-    sync_api = types.ModuleType("playwright.sync_api")
-    sync_api.sync_playwright = lambda: Manager()  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "playwright", package)
-    monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api)
-    monkeypatch.setattr(diagnostics, "ensure_playwright_runtime", lambda: None)
-
-    item = diagnostics._playwright_item(lambda: False)
+    item = diagnostics._qr_login_item(lambda: False)
 
     assert item.status is diagnostics.DiagnosticStatus.OK
-    assert item.summary == "系统 Chrome 可启动"
-    assert launches == ["msedge", "chrome"]
+    assert item.name == "扫码登录组件"
+    assert "本地生成" in item.summary
 
 
 def test_collect_diagnostics_does_not_remote_validate_login(
@@ -139,9 +130,9 @@ def test_collect_diagnostics_does_not_remote_validate_login(
     )
     monkeypatch.setattr(
         diagnostics,
-        "_playwright_item",
+        "_qr_login_item",
         lambda _cancelled: diagnostics.DiagnosticItem(
-            "登录浏览器", diagnostics.DiagnosticStatus.OK, "测试浏览器可启动"
+            "扫码登录组件", diagnostics.DiagnosticStatus.OK, "本地二维码可生成"
         ),
     )
     monkeypatch.setattr(diagnostics, "app_data_dir", lambda: tmp_path / "appdata")
@@ -154,5 +145,5 @@ def test_collect_diagnostics_does_not_remote_validate_login(
     report = diagnostics.collect_diagnostics(AppConfig(download_dir=str(tmp_path / "downloads")))
 
     names = {item.name for item in report.items}
-    assert {"程序", "Windows", "Python", "yt-dlp", "FFmpeg", "登录浏览器", "应用数据目录", "下载目录", "登录状态"} <= names
+    assert {"程序", "Windows", "Python", "yt-dlp", "FFmpeg", "扫码登录组件", "应用数据目录", "下载目录", "登录状态"} <= names
     assert (tmp_path / "downloads").is_dir()

@@ -16,66 +16,7 @@ def main(safe_mode: bool = False) -> int:
     parser.add_argument("--self-test", action="store_true", help="打开主界面后自动退出，用于构建验证")
     parser.add_argument("--parse-test", metavar="URL", help=argparse.SUPPRESS)
     parser.add_argument("--parse-output", metavar="PATH", help=argparse.SUPPRESS)
-    parser.add_argument("--playwright-smoke-output", metavar="PATH", help=argparse.SUPPRESS)
     args = parser.parse_args()
-
-    if args.playwright_smoke_output:
-        from app.cookies import ensure_playwright_runtime
-        from app.logger import redact_sensitive
-
-        ensure_playwright_runtime()
-        result = {"ok": False, "browser": None, "page_url": None, "error": None}
-        try:
-            from playwright.sync_api import sync_playwright
-
-            with sync_playwright() as playwright:
-                last_error = None
-                for channel in ("msedge", "chrome", None):
-                    browser = None
-                    context = None
-                    try:
-                        kwargs = {"headless": True}
-                        if channel:
-                            kwargs["channel"] = channel
-                        browser = playwright.chromium.launch(**kwargs)
-                        context = browser.new_context()
-                        page = context.new_page()
-                        page.goto("about:blank", wait_until="load", timeout=10000)
-                        if page.url != "about:blank":
-                            raise RuntimeError(f"Unexpected Playwright page URL: {page.url}")
-                        result = {
-                            "ok": True,
-                            "browser": "playwright-chromium" if channel is None else channel,
-                            "page_url": page.url,
-                            "error": None,
-                        }
-                    except Exception as exc:  # noqa: BLE001
-                        last_error = redact_sensitive(exc)
-                    finally:
-                        if context is not None:
-                            try:
-                                context.close()
-                            except Exception as exc:  # noqa: BLE001
-                                last_error = f"context.close failed: {redact_sensitive(exc)}"
-                                result["ok"] = False
-                        if browser is not None:
-                            try:
-                                browser.close()
-                            except Exception as exc:  # noqa: BLE001
-                                last_error = f"browser.close failed: {redact_sensitive(exc)}"
-                                result["ok"] = False
-                    if result["ok"]:
-                        break
-                else:
-                    result["error"] = last_error
-        except Exception as exc:  # noqa: BLE001
-            result["error"] = redact_sensitive(exc)
-
-        Path(args.playwright_smoke_output).write_text(
-            json.dumps(result, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        return 0 if result["ok"] else 1
 
     if args.parse_test:
         from app.config import AppConfig

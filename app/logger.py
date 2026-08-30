@@ -18,13 +18,16 @@ REDACTED = "<redacted>"
 
 SENSITIVE_COOKIE_NAMES = (
     r"SESSDATA|bili_jct|DedeUserID(?:__ckMd5)?|sid|buvid3|buvid4|b_nut|"
-    r"ac_time_value|access_key|refresh_token"
+    r"ac_time_value|access_key|refresh_token|qrcode_key"
 )
 SENSITIVE_COOKIE_RE = re.compile(
     rf"(?i)\b({SENSITIVE_COOKIE_NAMES})\b(\s*[:=\t]\s*)([^;\s,\t]+)"
 )
 SENSITIVE_COOKIE_QUOTED_RE = re.compile(
     rf"(?i)\b({SENSITIVE_COOKIE_NAMES})\b(\s*[:=\t]\s*)([\"'])(.*?)(\3)"
+)
+SENSITIVE_DIRECT_JSON_RE = re.compile(
+    rf"(?is)([\"'](?:{SENSITIVE_COOKIE_NAMES})[\"']\s*:\s*[\"'])(.*?)([\"'])"
 )
 SENSITIVE_COOKIE_JSON_RE = re.compile(
     rf"(?is)([\"']name[\"']\s*:\s*[\"'](?:{SENSITIVE_COOKIE_NAMES})[\"']"
@@ -72,6 +75,7 @@ def _redact_url(match: re.Match[str]) -> str:
 def redact_sensitive(message: object) -> str:
     text = str(message)
     text = COOKIE_HEADER_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{REDACTED}", text)
+    text = SENSITIVE_DIRECT_JSON_RE.sub(lambda m: f"{m.group(1)}{REDACTED}{m.group(3)}", text)
     text = SENSITIVE_COOKIE_JSON_RE.sub(lambda m: f"{m.group(1)}{REDACTED}{m.group(3)}", text)
     text = SENSITIVE_COOKIE_JSON_REVERSED.sub(lambda m: f"{m.group(1)}{REDACTED}{m.group(3)}", text)
     text = SENSITIVE_COOKIE_QUOTED_RE.sub(
