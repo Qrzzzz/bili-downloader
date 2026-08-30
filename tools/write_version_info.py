@@ -9,10 +9,10 @@ from pathlib import Path
 
 
 def _numeric_version(version: str) -> tuple[int, int, int, int]:
-    match = re.match(r"^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:\.(\d+))?", version)
+    match = re.fullmatch(r"(\d+)\.(\d+)", version)
     if not match:
-        raise ValueError(f"Version must start with one to four numeric components: {version!r}")
-    parts = [int(value or 0) for value in match.groups()]
+        raise ValueError(f"Version must contain exactly two numeric components: {version!r}")
+    parts = [int(value) for value in match.groups()] + [0, 0]
     if any(value > 65535 for value in parts):
         raise ValueError("Windows version components must be between 0 and 65535")
     return tuple(parts)  # type: ignore[return-value]
@@ -39,8 +39,6 @@ def _version_resource(
     dirty: bool,
     built_at: str,
 ) -> str:
-    short_commit = commit[:12]
-    trace_version = f"{version}+g{short_commit}{'.dirty' if dirty else ''}"
     comments = f"Git commit {commit}; dirty={str(dirty).lower()}; built_at={built_at}"
     original_filename = f"BiliDownloader.v{version}.exe"
     return f"""# UTF-8
@@ -67,7 +65,7 @@ VSVersionInfo(
           StringStruct('LegalCopyright', 'MIT License'),
           StringStruct('OriginalFilename', {original_filename!r}),
           StringStruct('ProductName', 'Bili Downloader Lite'),
-          StringStruct('ProductVersion', {trace_version!r}),
+          StringStruct('ProductVersion', {version!r}),
           StringStruct('Comments', {comments!r})
         ]
       )
@@ -92,7 +90,7 @@ def main() -> int:
 
     numeric = _numeric_version(args.version)
     built_at = _build_timestamp().isoformat().replace("+00:00", "Z")
-    build_id = f"{args.version}+g{args.commit[:12]}{'.dirty' if args.dirty else ''}"
+    build_id = f"{args.version}@{args.commit.lower()}{'.dirty' if args.dirty else ''}"
     metadata = {
         "application": "Bili Downloader Lite",
         "version": args.version,
