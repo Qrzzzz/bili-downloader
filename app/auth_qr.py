@@ -39,8 +39,16 @@ SUCCESS_CALLBACK_QUERY_FIELDS = frozenset(
         "bili_jct",
         "buvid3",
         "buvid4",
+        "first_domain",
         "gourl",
         "sid",
+    }
+)
+SUCCESS_GOURL_HOSTS = frozenset(
+    {
+        "account.bilibili.com",
+        "passport.bilibili.com",
+        "www.bilibili.com",
     }
 )
 
@@ -130,6 +138,21 @@ def _validate_success_callback(value: object) -> None:
     field_names = {name for name, _value in query}
     if not field_names.issubset(SUCCESS_CALLBACK_QUERY_FIELDS):
         raise QrProtocolError("成功回调 URL 包含未允许字段")
+    field_values: dict[str, list[str]] = {}
+    for name, field_value in query:
+        field_values.setdefault(name, []).append(field_value)
+    if any(len(values) != 1 for values in field_values.values()):
+        raise QrProtocolError("成功回调 URL 包含重复字段")
+    first_domain = field_values.get("first_domain")
+    if first_domain is not None and first_domain != [".bilibili.com"]:
+        raise QrProtocolError("成功回调 URL 的 first_domain 异常")
+    gourl = field_values.get("gourl")
+    if gourl is not None:
+        _validate_https_url(
+            gourl[0],
+            allowed_hosts=SUCCESS_GOURL_HOSTS,
+            label="成功回调 gourl",
+        )
 
 
 def _validate_envelope(payload: object) -> dict[str, Any]:
