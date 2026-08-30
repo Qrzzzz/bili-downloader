@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Executable,
-    [ValidateRange(5, 300)][int]$TimeoutSeconds = 60
+    [ValidateRange(5, 300)][int]$TimeoutSeconds = 60,
+    [switch]$SkipBrowserSmoke
 )
 
 Set-StrictMode -Version Latest
@@ -88,18 +89,20 @@ try {
 
     Invoke-SmokeProcess -Label "Packaged --self-test" -ArgumentList @("--self-test")
 
-    $playwrightOutput = Join-Path $smokeRoot "packaged-playwright.json"
-    $quotedOutput = '"' + $playwrightOutput.Replace('"', '\"') + '"'
-    Invoke-SmokeProcess -Label "Packaged Playwright smoke" -ArgumentList @("--playwright-smoke-output", $quotedOutput)
-    if (-not (Test-Path -LiteralPath $playwrightOutput -PathType Leaf)) {
-        throw "Packaged Playwright smoke did not write its result file."
-    }
-    $playwrightResult = Get-Content -LiteralPath $playwrightOutput -Encoding utf8 -Raw | ConvertFrom-Json
-    if (-not ($playwrightResult.PSObject.Properties.Name -contains "ok") -or -not [bool]$playwrightResult.ok) {
-        throw "Packaged Playwright smoke reported failure: $($playwrightResult.error)"
-    }
-    if ([string]$playwrightResult.page_url -ne "about:blank") {
-        throw "Packaged Playwright smoke did not load about:blank."
+    if (-not $SkipBrowserSmoke) {
+        $playwrightOutput = Join-Path $smokeRoot "packaged-playwright.json"
+        $quotedOutput = '"' + $playwrightOutput.Replace('"', '\"') + '"'
+        Invoke-SmokeProcess -Label "Packaged Playwright smoke" -ArgumentList @("--playwright-smoke-output", $quotedOutput)
+        if (-not (Test-Path -LiteralPath $playwrightOutput -PathType Leaf)) {
+            throw "Packaged Playwright smoke did not write its result file."
+        }
+        $playwrightResult = Get-Content -LiteralPath $playwrightOutput -Encoding utf8 -Raw | ConvertFrom-Json
+        if (-not ($playwrightResult.PSObject.Properties.Name -contains "ok") -or -not [bool]$playwrightResult.ok) {
+            throw "Packaged Playwright smoke reported failure: $($playwrightResult.error)"
+        }
+        if ([string]$playwrightResult.page_url -ne "about:blank") {
+            throw "Packaged Playwright smoke did not load about:blank."
+        }
     }
     Write-Host "Package smoke passed: $executablePath"
     Write-Host "Version: $($versionInfo.ProductVersion)"

@@ -114,7 +114,7 @@ def main() -> int:
                 outcome="environment_blocked_412",
                 diagnostic=_tail("Bilibili returned HTTP 412; recorded as an external environment dependency.\n" + diagnostic),
             )
-            exit_code = 0
+            exit_code = 1
         else:
             exit_code = 1
 

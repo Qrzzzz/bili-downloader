@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2] - 2026-08-30
+
+### 修复
+
+- 以新的 `v1.2` 源码、标签和二进制一致性链替代 v1.1 的错配状态；已公开的 `v1.1` 标签保持原位，不移动、不删除、不重写。
+- 匿名公共网络 smoke 遇到 HTTP 412 / `environment_blocked_412` 时现在明确失败，不再把环境阻断伪装为成功。
+
+### 构建与供应链
+
+- 将直接依赖和完整传递依赖锁定到经过验证的版本与 SHA-256；构建固定为 Windows x64 + Python 3.13，并且每次重建干净虚拟环境。
+- 将 yt-dlp 更新到稳定版 2026.8.19，覆盖上游 2026-07-03 的 Bilibili API 解析修复，并完成真实匿名解析验证。
+- 拆分确定性的 PR/main 质量检查与定时/手动公共网络 smoke；所有外部 Actions 固定到审核过的完整提交 SHA，并配置最小权限和并发控制。
+- 新增仅由 `v1.2` 标签触发的正式发布工作流，强制校验标签、两级源码版本、构建提交、PE 元数据和资产名称一致。
+- 正式发布生成 `BiliDownloader.v1.2.exe`、`BiliDownloader.v1.2.sbom.json` 与 `SHA256SUMS`，并为全部资产生成 GitHub artifact attestation。
+- 发布后通过 GitHub API/CLI 复核 Release 状态、标题、标签提交、资产数量、名称、大小、API digest 和 attestation。
+- 增加 onefile 归档审计；测量实际体积但不设置体积阈值，并拒绝意外捆绑 Chromium、FFmpeg、凭据、浏览器 profile 或日志。
+
+### 范围
+
+- 保持 Python、PySide6、yt-dlp、PyInstaller、Playwright 和单窗口 Lite 形态；未扩张登录实现，未安装或内置 Chromium，未读取日常浏览器 Cookie，也未捆绑 FFmpeg。
+
 ## [1.1] - 2026-07-12
 
 本版本重点改善故障自查、下载完成后的操作体验，并恢复 Lite 版本应有的轻量体积。

@@ -2,7 +2,17 @@
 
 本文件记录仓库发布与维护注意事项。
 
-## v1.1 更新范围
+## v1.2 发布边界
+
+- 版本只允许两级：源码 `1.2`、标签 `v1.2`、成品 `BiliDownloader.v1.2.exe`、Release 标题 `Bili Downloader Lite v1.2`。
+- 公开 `v1.1` 标签仍指向 `dbfc8a044a3ef5e6b83f6ea22a65c59e9279b592`，而包含 v1.1 功能的主分支合并提交是 `908f91dc7f8662a7b9205c381a53f4d91c2d26ec`。这是历史事实；不得移动、删除或重写 `v1.1`，由新的 `v1.2` 一致性链替代。
+- `quality.yml` 只运行确定性检查，不访问匿名公共 Bilibili 网络，也不依赖系统浏览器启动结果。
+- `public-smoke.yml` 仅定时或手动运行；HTTP 412 / `environment_blocked_412` 是失败，但该工作流不是 PR 必需检查。
+- `release.yml` 只由精确 `v1.2` 标签触发，并在发布前后完成 tag/source/commit/PE/asset/digest/attestation 校验。
+- 构建不得复用 `.venv`；`build.ps1` 每次重建 `build\.venv`，按 Python 3.13/Windows x64 哈希锁只安装 wheel。
+- 不设置 EXE 体积阈值。只记录实际大小并审计 Chromium、FFmpeg、凭据、日志、session/profile 等不应捆绑内容。
+
+## v1.1 历史更新范围
 
 - 新增本地环境诊断、脱敏报告和仅手动触发的 GitHub 更新检查。
 - 新增逐分 P 下载结果窗口、文件操作和失败项重试。
@@ -16,7 +26,7 @@
 - `app/` 是当前源码目录。
 - 顶层存在 `.venv/`，不应提交。
 - 顶层存在 `build/` 和 `dist/`，属于 PyInstaller 构建产物，不应提交。
-- `dist/` 中的 `BiliDownloader.v1.1.exe` 以及第三方运行时文件属于本地构建产物，应作为 Release 附件重新构建和发布，不应直接提交到仓库。
+- `dist/` 中的 `BiliDownloader.v1.1.exe` 以及第三方运行时文件属于历史本地构建产物，不应直接提交或复用于 v1.2。
 - `app/__pycache__/` 中存在 Python 字节码缓存，不应提交。
 - `tools/` 当前仅发现 `.gitkeep`，未发现 `ffmpeg.exe`。
 - `BiliDownloader.spec` 使用 `Path(SPECPATH)`，审计时未发现硬编码本机绝对路径或个人用户名路径。
@@ -52,5 +62,5 @@
 - 为关键解析、下载、登录态处理路径补充最小测试。
 - 增加发布脚本的许可证/notice 收集步骤。
 - 增加预发布 secret scan 和大文件检查。
-- 增加更明确的版本号来源，方便 bug report 和 Release 对应。
+- 后续版本继续保持单一源码版本来源以及 tag/PE/commit/Release 的强绑定。
 - 在 UI 中持续保持合规提示，避免误导用户理解工具能力边界。
