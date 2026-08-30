@@ -13,9 +13,10 @@ from app import auth_qr
 
 QR_URL = "https://account.bilibili.com/h5-app/passport/login/scan?navhide=1&qrcode_key=synthetic-secret-key"
 SUCCESS_URL = (
-    "https://passport.biligame.com/crossDomain?"
+    "https://passport.biligame.com/x/passport-login/web/crossDomain?"
     "DedeUserID=synthetic-user&SESSDATA=synthetic-session&bili_jct=synthetic-csrf&"
-    "Expires=4102444800&gourl=https%3A%2F%2Fwww.bilibili.com%2F"
+    "Expires=4102444800&gourl=https%3A%2F%2Fwww.bilibili.com%2F&"
+    "first_domain=.bilibili.com"
 )
 
 
@@ -136,6 +137,27 @@ def test_generate_schema_types_and_origin_fail_closed(payload: object) -> None:
         poll_payload(86101, refresh_token="unexpected-secret"),
         poll_payload(0, url="https://attacker.example/callback?SESSDATA=secret"),
         poll_payload(0, url="https://passport.biligame.com/crossDomain?unknown=secret"),
+        poll_payload(
+            0,
+            url=(
+                "https://passport.biligame.com/crossDomain?SESSDATA=synthetic&"
+                "first_domain=.attacker.example"
+            ),
+        ),
+        poll_payload(
+            0,
+            url=(
+                "https://passport.biligame.com/crossDomain?SESSDATA=synthetic&"
+                "gourl=https%3A%2F%2Fattacker.example%2F"
+            ),
+        ),
+        poll_payload(
+            0,
+            url=(
+                "https://passport.biligame.com/crossDomain?SESSDATA=synthetic&"
+                "first_domain=.bilibili.com&first_domain=.bilibili.com"
+            ),
+        ),
     ],
 )
 def test_poll_unknown_status_schema_and_callback_fail_closed(payload: object) -> None:
@@ -209,5 +231,5 @@ def test_qr_png_is_square_sharp_and_has_sufficient_quiet_zone() -> None:
 
 def test_allowed_callback_query_fields_are_public_names_only() -> None:
     fields = set(auth_qr.allowed_callback_fields())
-    assert {"SESSDATA", "bili_jct", "DedeUserID", "gourl"} <= fields
+    assert {"SESSDATA", "bili_jct", "DedeUserID", "gourl", "first_domain"} <= fields
     assert "refresh_token" not in fields
