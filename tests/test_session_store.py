@@ -4,6 +4,9 @@ import copy
 import json
 from pathlib import Path
 from types import SimpleNamespace
+import os
+import threading
+import time
 
 import pytest
 
@@ -415,6 +418,175 @@ def test_v1_2_canonical_schema_remains_readable_and_cleans_obsolete_profile(
     assert not profile.exists()
 
 
+def test_v1_3_valid_canonical_cleans_known_v1_1_and_v1_2_plaintext_idempotently(
+    session_modules: SimpleNamespace,
+    synthetic_credentials: dict[str, object],
+    isolated_paths: object,
+) -> None:
+    cookies = session_modules.cookies
+    canonical = cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
+    before = canonical.read_bytes()
+    legacy_files = [
+        cookies.session_dir() / "storage_state.json",
+        cookies.session_dir() / "cookies.txt",
+        isolated_paths.roaming / "BiliDownloader" / "session" / "storage_state.json",  # type: ignore[attr-defined]
+        isolated_paths.roaming / "BiliDownloader" / "session" / "cookies.txt",  # type: ignore[attr-defined]
+    ]
+    for path in legacy_files:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(synthetic_credentials["session_secret"]), encoding="utf-8")
+
+    assert cookies.cleanup_legacy_login_residue() == ()
+    assert cookies.cleanup_legacy_login_residue() == ()
+
+    assert canonical.read_bytes() == before
+    assert cookies.load_session_snapshot() is not None
+    assert all(not path.exists() for path in legacy_files)
+
+
+def test_corrupt_canonical_never_triggers_plaintext_or_residue_deletion(
+    session_modules: SimpleNamespace,
+    synthetic_credentials: dict[str, object],
+) -> None:
+    cookies = session_modules.cookies
+    canonical = cookies.canonical_session_path()
+    canonical.write_bytes(b"synthetic corrupt canonical")
+    plaintext = cookies.cookies_txt_path()
+    plaintext.write_text(str(synthetic_credentials["session_secret"]), encoding="utf-8")
+    profile = cookies.legacy_browser_profile_dir()
+    profile.mkdir()
+    (profile / "state.bin").write_bytes(b"synthetic")
+
+    first = cookies.cleanup_legacy_login_residue()
+    second = cookies.cleanup_legacy_login_residue()
+
+    assert first == second
+    assert plaintext.exists() and profile.exists()
+    assert canonical.read_bytes() == b"synthetic corrupt canonical"
+    assert all(str(synthetic_credentials["session_secret"]) not in failure for failure in first)
+    assert all("canonical" not in failure.lower() or "SessionSaveError" in failure for failure in first)
+
+
+def test_partial_plaintext_cleanup_failure_is_redacted_and_preserves_canonical(
+    session_modules: SimpleNamespace,
+    synthetic_credentials: dict[str, object],
+    isolated_paths: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cookies = session_modules.cookies
+    canonical = cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
+    before = canonical.read_bytes()
+    first = cookies.cookies_txt_path()
+    second = isolated_paths.roaming / "BiliDownloader" / "session" / "cookies.txt"  # type: ignore[attr-defined]
+    for path in (first, second):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(synthetic_credentials["session_secret"]), encoding="utf-8")
+    original_unlink = Path.unlink
+
+    def fail_one(self: Path, *args: object, **kwargs: object) -> None:
+        if self == first:
+            raise PermissionError(f"synthetic denial {synthetic_credentials['session_secret']}")
+        original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_one)
+    failures = cookies.cleanup_legacy_login_residue()
+
+    assert first.exists() and not second.exists()
+    assert canonical.read_bytes() == before
+    assert len(failures) == 1
+    assert failures[0] == "<local-app-data>/BiliDownloader/session/cookies.txt: PermissionError"
+    assert str(isolated_paths.root) not in failures[0]  # type: ignore[attr-defined]
+    assert str(synthetic_credentials["session_secret"]) not in failures[0]
+
+
+def test_stale_owned_credential_residue_uses_name_age_and_owner_checks(
+    session_modules: SimpleNamespace,
+    synthetic_credentials: dict[str, object],
+) -> None:
+    cookies = session_modules.cookies
+    cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
+    now = time.time()
+    old = now - max(
+        cookies.STALE_LEASE_AGE_SECONDS,
+        cookies.STALE_ATOMIC_TEMP_AGE_SECONDS,
+        cookies.STALE_QUARANTINE_AGE_SECONDS,
+    ) - 60
+    root = cookies.session_dir()
+    leases = root / "leases"
+    leases.mkdir()
+
+    stale_id = "a" * 32
+    stale_lease = leases / f"lease-{stale_id}"
+    stale_lease.mkdir()
+    (stale_lease / "cookies.txt").write_text("synthetic", encoding="utf-8")
+    os.utime(stale_lease, (old, old))
+
+    recent_id = "b" * 32
+    recent_lease = leases / f"lease-{recent_id}"
+    recent_lease.mkdir()
+    (recent_lease / "cookies.txt").write_text("synthetic", encoding="utf-8")
+
+    unowned_lease = leases / f"lease-{'c' * 32}"
+    unowned_lease.mkdir()
+    (unowned_lease / "unexpected.bin").write_bytes(b"synthetic")
+    os.utime(unowned_lease, (old, old))
+
+    stale_temp = root / f".session.dat.123.{'d' * 32}.tmp"
+    recent_temp = root / f".session.dat.124.{'e' * 32}.tmp"
+    lookalike_temp = root / ".session.dat.user-file.tmp"
+    for path in (stale_temp, recent_temp, lookalike_temp):
+        path.write_bytes(b"synthetic")
+    os.utime(stale_temp, (old, old))
+    os.utime(lookalike_temp, (old, old))
+
+    app_root = cookies.app_data_dir()
+    stale_quarantine = app_root / "session_corrupted_20260801_1"
+    recent_quarantine = app_root / "session_corrupted_20260830_1"
+    unrelated = app_root / "session_corrupted_user_notes"
+    for path in (stale_quarantine, recent_quarantine, unrelated):
+        path.mkdir()
+        (path / "cookies.txt").write_text("synthetic", encoding="utf-8")
+    os.utime(stale_quarantine, (old, old))
+    os.utime(unrelated, (old, old))
+
+    assert cookies.cleanup_legacy_login_residue() == ()
+
+    assert not stale_lease.exists()
+    assert recent_lease.exists() and unowned_lease.exists()
+    assert not stale_temp.exists()
+    assert recent_temp.exists() and lookalike_temp.exists()
+    assert not stale_quarantine.exists()
+    assert recent_quarantine.exists() and unrelated.exists()
+
+
+def test_live_cookie_lease_keeps_lock_and_is_not_deleted_by_competing_cleanup(
+    session_modules: SimpleNamespace,
+    synthetic_credentials: dict[str, object],
+) -> None:
+    cookies = session_modules.cookies
+    cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
+    outcome: list[str] = []
+
+    with cookies.cookiefile_lease(cookies.CredentialMode.SAVED) as cookiefile:
+        assert cookiefile is not None and cookiefile.exists()
+
+        def compete() -> None:
+            try:
+                with cookies._cross_process_lock(timeout=0.1):
+                    cookies._cleanup_stale_lease_residue_locked(now=time.time() + 10**9)
+            except cookies.SessionBusyError:
+                outcome.append("busy")
+
+        thread = threading.Thread(target=compete)
+        thread.start()
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+        assert outcome == ["busy"]
+        assert cookiefile.exists()
+
+    assert not cookiefile.exists()
+
+
 def test_logout_removes_current_legacy_and_quarantine_credentials(
     session_modules: SimpleNamespace,
     synthetic_credentials: dict[str, object],
@@ -470,7 +642,8 @@ def test_logout_reports_and_verifies_deletion_failure(
 
     assert not result.ok
     assert result.failures
-    assert str(locked) in result.remaining
+    assert result.remaining == ("<local-app-data>/BiliDownloader/session-quarantine-locked",)
+    assert all(str(isolated_paths.root) not in item for item in (*result.failures, *result.remaining))  # type: ignore[attr-defined]
     assert locked.exists()
     original_rmtree(locked)
 

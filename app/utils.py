@@ -3,7 +3,6 @@ from __future__ import annotations
 import errno
 import os
 import re
-import shutil
 import socket
 import subprocess
 import sys
@@ -11,12 +10,11 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Iterable
-from urllib.parse import urlparse
+
+from .video_urls import normalize_video_input
 
 
 WINDOWS_ILLEGAL_CHARS = r'<>:"/\|?*'
-BV_RE = re.compile(r"^(BV[0-9A-Za-z]{8,})$", re.IGNORECASE)
-AV_RE = re.compile(r"^(av\d+)$", re.IGNORECASE)
 
 
 class ErrorKind(str, Enum):
@@ -90,34 +88,16 @@ def resource_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def executable_dir() -> Path:
+    """Return the user-visible executable directory, never the onefile extraction root."""
+
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
 def normalize_bilibili_url(raw: str) -> str:
-    value = raw.strip()
-    if not value:
-        raise ValueError("请输入 Bilibili 视频链接或 BV/av 号。")
-
-    bv = BV_RE.match(value)
-    if bv:
-        return f"https://www.bilibili.com/video/{bv.group(1)}"
-
-    av = AV_RE.match(value)
-    if av:
-        return f"https://www.bilibili.com/video/{av.group(1)}"
-
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("链接格式无效。请粘贴 Bilibili 视频链接，或直接输入 BV/av 号。")
-
-    host = parsed.netloc.lower()
-    allowed = (
-        host == "b23.tv"
-        or host.endswith(".b23.tv")
-        or host == "bilibili.com"
-        or host.endswith(".bilibili.com")
-    )
-    if not allowed:
-        raise ValueError("仅支持 bilibili.com 或 b23.tv 的视频链接。")
-
-    return value
+    return normalize_video_input(raw)
 
 
 def sanitize_windows_filename(name: str, replacement: str = "_") -> str:
@@ -139,10 +119,25 @@ def sanitize_windows_filename(name: str, replacement: str = "_") -> str:
 
 def _ffmpeg_candidates(candidates: Iterable[str | os.PathLike[str]] | None) -> list[Path]:
     if candidates is None:
-        discovered: list[str | os.PathLike[str]] = [resource_root() / "tools" / "ffmpeg.exe"]
-        path_candidate = shutil.which("ffmpeg")
-        if path_candidate:
-            discovered.append(path_candidate)
+        executable_candidate = executable_dir() / "tools" / "ffmpeg.exe"
+        resource_candidate = resource_root() / "tools" / "ffmpeg.exe"
+        discovered: list[str | os.PathLike[str]] = [executable_candidate]
+        if resource_candidate != executable_candidate:
+            discovered.append(resource_candidate)
+
+        # Do not use shutil.which on Windows: it may search the current working
+        # directory before PATH. Only absolute PATH entries are eligible.
+        for raw_directory in os.environ.get("PATH", "").split(os.pathsep):
+            directory_text = raw_directory.strip().strip('"')
+            if not directory_text:
+                continue
+            try:
+                directory = Path(os.path.expandvars(directory_text)).expanduser()
+            except (OSError, TypeError, ValueError):
+                continue
+            if not directory.is_absolute():
+                continue
+            discovered.append(directory / "ffmpeg.exe")
     else:
         discovered = list(candidates)
 
@@ -227,7 +222,7 @@ def probe_ffmpeg(
 
     return FFmpegProbeResult(
         status=FFmpegProbeStatus.MISSING,
-        detail="程序目录和 PATH 中均未找到 FFmpeg。",
+        detail="EXE 相邻 tools 目录、程序资源目录和绝对 PATH 中均未找到 FFmpeg。",
     )
 
 

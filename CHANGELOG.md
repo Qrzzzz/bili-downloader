@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4] - 2026-08-30
+
+### 隐私与凭据生命周期
+
+- canonical DPAPI session 已存在时，先验证可解密和结构完整，再精确清理本程序拥有的旧 `storage_state.json` / `cookies.txt` 与历史 profile/cache；损坏 canonical 不触发旧明文删除。
+- 临时 Cookie lease 改为带 owner marker 的独立目录；过期 lease、失败原子临时文件和历史隔离目录只有在应用目录、精确命名/所有权与保守年龄条件同时满足时才会删除。匿名模式继续不读取凭据。
+- 清理失败仅报告脱敏的应用相对路径和错误类型，部分删除失败不影响 canonical session。
+
+### URL、封面与外置工具边界
+
+- onefile 明确区分 `_MEIPASS` 资源根与 EXE 目录，按 EXE 相邻 `tools\ffmpeg.exe`、资源目录同布局、绝对 PATH 的顺序探测；不从当前工作目录执行，也不下载、捆绑或安装 FFmpeg。
+- b23 禁用自动重定向，逐跳验证官方 HTTPS 主机、userinfo、端口、循环和跳数，最终只接受受支持的 bilibili.com BV/av 视频 URL；错误不回显敏感查询参数。
+- 输入、短链目标与内部 canonical 视频 URL 共用独立视频边界；登录回调仍保持自己的严格协议验证器。
+- 封面下载增加连接/读取超时、手工重定向、Content-Type/Content-Length 预检、streaming 和 5 MiB 实际字节上限。封面失败只影响展示，不覆盖成功解析。
+
+### 崩溃恢复与多实例
+
+- 用版本化、原子写入的每实例 marker 替代单个“存在即崩溃”文件，并以 Windows PID + 进程创建时间识别活跃实例、PID 重用、异常退出和系统重启残留。
+- 保持允许多开；正常退出只删除本实例拥有的 marker。旧 v1.3 marker 会安全识别和迁移。
+
+### 依赖与范围
+
+- 没有新增运行时依赖；继续保持 Python + PySide6 + yt-dlp + PyInstaller 的 Windows x64 单窗口形态。
+- 不包含下载内核重构、批量队列、历史数据库、自动更新、内置 FFmpeg、浏览器 Cookie 导入、后台服务或遥测。
+
 ## [1.3] - 2026-08-30
 
 ### 扫码登录

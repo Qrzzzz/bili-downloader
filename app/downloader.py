@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import re
@@ -10,7 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Iterable
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 from yt_dlp import YoutubeDL
@@ -19,6 +20,7 @@ from yt_dlp.utils import DownloadCancelled
 from .config import AppConfig
 from .cookies import CredentialMode, cookiefile_lease
 from .logger import LogEmitter, YtdlpQtLogger, redact_sensitive
+from .video_urls import BV_RE, ResolvedVideoUrl, canonicalize_video_url, validate_redirect_hop
 from .utils import (
     AppError,
     ErrorClassification,
@@ -62,22 +64,6 @@ class VideoInfoResult:
     raw_id: str = ""
     current_part_index: int = 1
     source_url: str = ""
-
-
-@dataclass(frozen=True)
-class ResolvedVideoUrl:
-    canonical_url: str
-    requested_page: int
-    bvid: str = ""
-    aid: str = ""
-
-    @property
-    def api_params(self) -> dict[str, str]:
-        if self.bvid:
-            return {"bvid": self.bvid}
-        if self.aid:
-            return {"aid": self.aid}
-        return {}
 
 
 class PartDownloadStatus(str, Enum):
@@ -166,9 +152,21 @@ class DownloadPlan:
 
 
 BILIBILI_VIEW_API = "https://api.bilibili.com/x/web-interface/view"
-BVID_PATH_RE = re.compile(r"^/video/(BV[0-9A-Za-z]+)(?:/|$)", re.IGNORECASE)
-AVID_PATH_RE = re.compile(r"^/video/(?:av)?(\d+)(?:/|$)", re.IGNORECASE)
 HEIGHT_SELECTOR_RE = re.compile(r"height\s*(?:<=|=)\s*(\d+)", re.IGNORECASE)
+B23_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+B23_MAX_REDIRECTS = 5
+B23_TIMEOUT = (3.05, 8.0)
+THUMBNAIL_MAX_BYTES = 5 * 1024 * 1024
+THUMBNAIL_TIMEOUT = (3.05, 8.0)
+THUMBNAIL_MAX_REDIRECTS = 3
+THUMBNAIL_CONTENT_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/bmp",
+}
+THUMBNAIL_HOST_DOMAINS = ("hdslb.com", "biliimg.com", "bilibili.com")
 
 
 def base_ydl_options(
@@ -219,71 +217,50 @@ def build_format_choices(formats: list[dict[str, Any]]) -> list[FormatChoice]:
     return choices
 
 
-def _host_matches(host: str, domain: str) -> bool:
-    return host == domain or host.endswith(f".{domain}")
-
-
-def _parse_and_validate_host(url: str, *, allow_short: bool) -> tuple[Any, str]:
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("Bilibili 链接格式无效。")
-    if parsed.username or parsed.password:
-        raise ValueError("Bilibili 链接不能包含用户信息。")
-    try:
-        port = parsed.port
-    except ValueError as exc:
-        raise ValueError("Bilibili 链接端口无效。") from exc
-    if port not in {None, 80, 443}:
-        raise ValueError("Bilibili 链接使用了不受支持的端口。")
-    host = parsed.hostname.lower().rstrip(".")
-    allowed = _host_matches(host, "bilibili.com") or (allow_short and _host_matches(host, "b23.tv"))
-    if not allowed:
-        raise ValueError("短链接重定向目标不是 Bilibili 视频页面。")
-    return parsed, host
-
-
 def resolve_bilibili_url(url: str) -> ResolvedVideoUrl:
     value = url.strip()
-    parsed, host = _parse_and_validate_host(value, allow_short=True)
-    if _host_matches(host, "b23.tv"):
-        response = requests.get(
-            value,
-            allow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=15,
-        )
+    parsed, host = validate_redirect_hop(value)
+    if host != "b23.tv":
+        return canonicalize_video_url(value)
+
+    current = value
+    seen: set[str] = set()
+    for redirect_count in range(B23_MAX_REDIRECTS):
+        parsed, _host = validate_redirect_hop(current)
+        hop_key = parsed.geturl()
+        if hop_key in seen:
+            raise ValueError("b23.tv 短链接包含重定向循环。")
+        seen.add(hop_key)
+
         try:
-            response.raise_for_status()
-            value = str(response.url)
+            response = requests.get(
+                current,
+                allow_redirects=False,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=B23_TIMEOUT,
+            )
+        except requests.RequestException:
+            raise ValueError("b23.tv 短链接请求失败。") from None
+        try:
+            status = int(response.status_code)
+            if status not in B23_REDIRECT_STATUSES:
+                raise ValueError("b23.tv 短链接未返回有效重定向。")
+            location = response.headers.get("Location")
+            if not isinstance(location, str) or not location.strip():
+                raise ValueError("b23.tv 短链接重定向位置无效。")
+            candidate = urljoin(current, location.strip())
+            validate_redirect_hop(candidate)
+            try:
+                return canonicalize_video_url(candidate)
+            except ValueError:
+                if redirect_count + 1 >= B23_MAX_REDIRECTS:
+                    raise ValueError("b23.tv 短链接重定向次数过多。") from None
+                current = candidate
         finally:
             close = getattr(response, "close", None)
             if callable(close):
                 close()
-        parsed, _ = _parse_and_validate_host(value, allow_short=False)
-
-    bvid_match = BVID_PATH_RE.search(parsed.path)
-    aid_match = AVID_PATH_RE.search(parsed.path)
-    if not bvid_match and not aid_match:
-        raise ValueError("链接不是有效的 Bilibili 视频页面。")
-
-    query = parse_qs(parsed.query, keep_blank_values=True)
-    page_values = query.get("p", [])
-    if len(page_values) > 1:
-        raise ValueError("链接包含多个 p 参数，无法确定目标分 P。")
-    try:
-        requested_page = int(page_values[0]) if page_values else 1
-    except (TypeError, ValueError) as exc:
-        raise ValueError("链接中的 p 参数必须是正整数。") from exc
-    if requested_page < 1:
-        raise ValueError("链接中的 p 参数必须是正整数。")
-
-    bvid = bvid_match.group(1) if bvid_match else ""
-    aid = aid_match.group(1) if aid_match else ""
-    identifier = bvid or f"av{aid}"
-    canonical = f"https://www.bilibili.com/video/{identifier}"
-    if requested_page != 1:
-        canonical += "?" + urlencode({"p": requested_page})
-    return ResolvedVideoUrl(canonical, requested_page, bvid=bvid, aid=aid)
+    raise ValueError("b23.tv 短链接重定向次数过多。")
 
 
 def _resolve_b23_url(url: str) -> str:
@@ -337,11 +314,18 @@ def _fetch_bilibili_view(url: str | ResolvedVideoUrl) -> dict[str, Any] | None:
 def _canonical_part_url(view: dict[str, Any], page: int) -> str:
     bvid = str(view.get("bvid") or "").strip()
     if bvid:
-        return f"https://www.bilibili.com/video/{bvid}?p={page}"
-    aid = view.get("aid")
-    if aid:
-        return f"https://www.bilibili.com/video/av{aid}?p={page}"
-    return ""
+        if BV_RE.fullmatch(bvid) is None:
+            return ""
+        candidate = f"https://www.bilibili.com/video/{bvid}?p={page}"
+    else:
+        aid = view.get("aid")
+        if isinstance(aid, bool) or not str(aid or "").isdigit():
+            return ""
+        candidate = f"https://www.bilibili.com/video/av{aid}?p={page}"
+    try:
+        return canonicalize_video_url(candidate).canonical_url
+    except ValueError:
+        return ""
 
 
 def _canonical_page_url(resolved: ResolvedVideoUrl, page: int) -> str:
@@ -466,12 +450,101 @@ def parse_video_info(
     )
 
 
+def _validate_thumbnail_url(url: str) -> None:
+    if not isinstance(url, str) or not url or any(ord(character) < 0x20 for character in url):
+        raise ValueError("封面地址格式无效。")
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        raise ValueError("封面地址必须使用 HTTPS。")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("封面地址不能包含用户信息。")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("封面地址端口无效。") from exc
+    if port not in {None, 443}:
+        raise ValueError("封面地址端口不受支持。")
+    host = parsed.hostname.lower().rstrip(".")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("封面地址不能使用 IP 地址。")
+    if not any(host == domain or host.endswith(f".{domain}") for domain in THUMBNAIL_HOST_DOMAINS):
+        raise ValueError("封面地址不是允许的 Bilibili/CDN 主机。")
+
+
 def fetch_thumbnail(url: str) -> bytes:
     if not url:
         return b""
-    response = requests.get(url, timeout=15)
-    response.raise_for_status()
-    return response.content
+    current = url
+    seen: set[str] = set()
+    for redirect_count in range(THUMBNAIL_MAX_REDIRECTS + 1):
+        _validate_thumbnail_url(current)
+        if current in seen:
+            raise ValueError("封面地址包含重定向循环。")
+        seen.add(current)
+        try:
+            response = requests.get(
+                current,
+                allow_redirects=False,
+                stream=True,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=THUMBNAIL_TIMEOUT,
+            )
+        except requests.RequestException:
+            raise ValueError("封面请求失败。") from None
+        try:
+            status = int(response.status_code)
+            if status in B23_REDIRECT_STATUSES:
+                location = response.headers.get("Location")
+                if not isinstance(location, str) or not location.strip():
+                    raise ValueError("封面重定向位置无效。")
+                if redirect_count >= THUMBNAIL_MAX_REDIRECTS:
+                    raise ValueError("封面重定向次数过多。")
+                candidate = urljoin(current, location.strip())
+                _validate_thumbnail_url(candidate)
+                current = candidate
+                continue
+            try:
+                response.raise_for_status()
+            except requests.RequestException:
+                raise ValueError("封面请求失败。") from None
+
+            content_type = str(response.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if content_type not in THUMBNAIL_CONTENT_TYPES:
+                raise ValueError("封面响应不是受支持的图片类型。")
+            raw_length = response.headers.get("Content-Length")
+            if raw_length is not None:
+                try:
+                    declared_length = int(raw_length)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("封面响应长度无效。") from exc
+                if declared_length < 0 or declared_length > THUMBNAIL_MAX_BYTES:
+                    raise ValueError("封面文件超过大小限制。")
+
+            chunks: list[bytes] = []
+            total = 0
+            try:
+                iterator = response.iter_content(chunk_size=64 * 1024)
+                for chunk in iterator:
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > THUMBNAIL_MAX_BYTES:
+                        raise ValueError("封面文件超过大小限制。")
+                    chunks.append(bytes(chunk))
+            except ValueError:
+                raise
+            except (OSError, requests.RequestException):
+                raise ValueError("封面下载中断。") from None
+            return b"".join(chunks)
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
+    raise ValueError("封面重定向次数过多。")
 
 
 class DownloadController:
