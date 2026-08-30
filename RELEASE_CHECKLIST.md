@@ -15,7 +15,7 @@
 - [ ] 候选 Cookie 域/名称/字段白名单、先验证后提交、失败保留旧凭据和 DPAPI 原子替换测试通过。
 - [ ] v1.2 canonical schema 可读，旧 `storage_state.json` / `cookies.txt` 安全迁移，旧 `playwright-profile` / `login-cache` 只做兼容清理。
 - [ ] 临时 Netscape lease 权限/生命周期/清理与匿名模式不读凭据的契约通过。
-- [ ] canonical 有效时旧明文会被精确清理；损坏 canonical、部分删除失败、并发 lease、原子临时文件和隔离残留的保守清理测试通过。
+- [ ] canonical 有效时旧明文会被精确清理；损坏 canonical、部分删除失败、双进程 lease 重叠、活动 lease 防清理/防退出、原子临时文件和隔离残留的保守清理测试通过。
 - [ ] onefile/onedir/源码/绝对 PATH 的 FFmpeg 顺序、Unicode/空格路径和损坏候选测试通过，归档仍不含 FFmpeg。
 - [ ] b23 逐跳状态、相对跳转、循环/超限、协议降级、外域、私网/IP、端口和 userinfo 测试通过；单元测试不访问实时网络。
 - [ ] 封面类型、声明/实际大小、chunked、重定向、超时、中断与正常小图测试通过，失败不破坏解析结果。

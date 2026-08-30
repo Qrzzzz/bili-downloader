@@ -559,7 +559,7 @@ def test_stale_owned_credential_residue_uses_name_age_and_owner_checks(
     assert recent_quarantine.exists() and unrelated.exists()
 
 
-def test_live_cookie_lease_keeps_lock_and_is_not_deleted_by_competing_cleanup(
+def test_live_cookie_lease_releases_store_lock_and_is_not_deleted_by_competing_cleanup(
     session_modules: SimpleNamespace,
     synthetic_credentials: dict[str, object],
 ) -> None:
@@ -573,6 +573,7 @@ def test_live_cookie_lease_keeps_lock_and_is_not_deleted_by_competing_cleanup(
         def compete() -> None:
             try:
                 with cookies._cross_process_lock(timeout=0.1):
+                    outcome.append("acquired")
                     cookies._cleanup_stale_lease_residue_locked(now=time.time() + 10**9)
             except cookies.SessionBusyError:
                 outcome.append("busy")
@@ -581,10 +582,74 @@ def test_live_cookie_lease_keeps_lock_and_is_not_deleted_by_competing_cleanup(
         thread.start()
         thread.join(timeout=2)
         assert not thread.is_alive()
-        assert outcome == ["busy"]
+        assert outcome == ["acquired"]
         assert cookiefile.exists()
 
     assert not cookiefile.exists()
+
+
+def test_saved_cookie_leases_can_overlap_without_sharing_plaintext_files(
+    session_modules: SimpleNamespace,
+    synthetic_credentials: dict[str, object],
+) -> None:
+    cookies = session_modules.cookies
+    cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
+    second_entered = threading.Event()
+    release_second = threading.Event()
+    second_paths: list[Path] = []
+    errors: list[BaseException] = []
+
+    with cookies.cookiefile_lease(cookies.CredentialMode.SAVED) as first:
+        assert first is not None and first.exists()
+
+        def overlap() -> None:
+            try:
+                with cookies.cookiefile_lease(cookies.CredentialMode.SAVED) as second:
+                    assert second is not None and second.exists()
+                    second_paths.append(second)
+                    second_entered.set()
+                    release_second.wait(2)
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+                second_entered.set()
+
+        thread = threading.Thread(target=overlap)
+        thread.start()
+        try:
+            assert second_entered.wait(1)
+            assert not errors
+            assert second_paths and second_paths[0] != first
+            assert first.exists() and second_paths[0].exists()
+        finally:
+            release_second.set()
+            thread.join(timeout=2)
+        assert not thread.is_alive()
+        assert not errors
+        assert not second_paths[0].exists()
+
+    assert not first.exists()
+
+
+def test_logout_refuses_to_delete_another_active_cookie_lease(
+    session_modules: SimpleNamespace,
+    synthetic_credentials: dict[str, object],
+) -> None:
+    cookies = session_modules.cookies
+    cookies._store_cookies_for_tests(synthetic_credentials["cookies"])
+    canonical = cookies.canonical_session_path()
+
+    with cookies.cookiefile_lease(cookies.CredentialMode.SAVED) as cookiefile:
+        assert cookiefile is not None and cookiefile.exists()
+        result = cookies.clear_login_state()
+
+        assert not result.ok
+        assert result.failures == ("登录态正由另一个实例的活动任务使用，请先等待该任务结束",)
+        assert canonical.exists()
+        assert cookiefile.exists()
+
+    result = cookies.clear_login_state()
+    assert result.ok
+    assert not canonical.exists()
 
 
 def test_logout_removes_current_legacy_and_quarantine_credentials(

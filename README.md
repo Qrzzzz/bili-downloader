@@ -57,7 +57,7 @@ python -m venv .venv
 
 取消、过期、超时、离线、HTTP 412、协议异常或保存失败都不会删除或覆盖原有登录态。HTTP 412 会被如实报告为外部平台限制，程序不尝试绕过。
 
-v1.2/v1.3 的 DPAPI canonical session schema 保持可读。程序先确认 canonical 数据可解密且结构有效，再精确删除本程序拥有的旧 `storage_state.json` / `cookies.txt`、`playwright-profile` / `login-cache`；损坏 canonical 不触发旧明文删除。过期 lease、失败原子临时文件和历史隔离残留仅在精确命名、应用目录所有权和保守年龄条件同时满足时清理。
+v1.2/v1.3 的 DPAPI canonical session schema 保持可读。程序先确认 canonical 数据可解密且结构有效，再精确删除本程序拥有的旧 `storage_state.json` / `cookies.txt`、`playwright-profile` / `login-cache`；损坏 canonical 不触发旧明文删除。过期 lease、失败原子临时文件和历史隔离残留仅在精确命名、应用目录所有权和保守年龄条件同时满足时清理。每个活动 lease 另有独立跨进程锁，因此多个实例可以同时读取各自的临时文件，清理与退出登录则会保守避开仍在使用的 lease。
 
 ## 诊断、更新与公共网络 smoke
 
