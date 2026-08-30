@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator
+from typing import Any, BinaryIO, Callable, Iterable, Iterator
 
 import requests
 
@@ -366,6 +366,34 @@ def _unprotect(data: bytes) -> bytes:
     return _dpapi_transform(data, protect=False)
 
 
+def _try_lock_file_byte(handle: BinaryIO) -> bool:
+    try:
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    return True
+
+
+def _unlock_file_byte(handle: BinaryIO) -> None:
+    handle.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 @contextmanager
 def _cross_process_lock(timeout: float = 5.0) -> Iterator[None]:
     lock_path = session_lock_path()
@@ -374,45 +402,21 @@ def _cross_process_lock(timeout: float = 5.0) -> Iterator[None]:
     acquired = False
     deadline = time.monotonic() + timeout
     try:
-        if os.name == "nt":
-            import msvcrt
-
-            if handle.tell() == 0:
-                handle.write(b"0")
-                handle.flush()
-            while not acquired:
-                try:
-                    handle.seek(0)
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-                    acquired = True
-                except OSError:
-                    if time.monotonic() >= deadline:
-                        raise SessionBusyError("登录态正在被另一个任务使用，请稍后重试")
-                    time.sleep(0.05)
-        else:
-            import fcntl
-
-            while not acquired:
-                try:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    acquired = True
-                except OSError:
-                    if time.monotonic() >= deadline:
-                        raise SessionBusyError("登录态正在被另一个任务使用，请稍后重试")
-                    time.sleep(0.05)
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        while not acquired:
+            acquired = _try_lock_file_byte(handle)
+            if not acquired:
+                if time.monotonic() >= deadline:
+                    raise SessionBusyError("登录态正在被另一个任务使用，请稍后重试")
+                time.sleep(0.05)
         yield
     finally:
         if acquired:
             try:
-                if os.name == "nt":
-                    import msvcrt
-
-                    handle.seek(0)
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                _unlock_file_byte(handle)
             except OSError:
                 logging.getLogger("bili_downloader").warning("释放登录态文件锁失败")
         handle.close()
@@ -658,6 +662,25 @@ def _lease_marker_is_owned(path: Path, lease_id: str) -> bool:
     )
 
 
+def _lease_marker_is_active_or_unknown(path: Path) -> bool:
+    marker = path / LEASE_OWNER_FILE
+    try:
+        if not marker.exists():
+            return False
+        if marker.is_symlink() or not marker.is_file():
+            return True
+        with marker.open("r+b") as handle:
+            if not _try_lock_file_byte(handle):
+                return True
+            try:
+                _unlock_file_byte(handle)
+            except OSError:
+                return True
+    except OSError:
+        return True
+    return False
+
+
 def _cleanup_stale_lease_residue_locked(*, now: float | None = None) -> tuple[str, ...]:
     failures: list[str] = []
     leases = session_dir() / "leases"
@@ -675,6 +698,8 @@ def _cleanup_stale_lease_residue_locked(*, now: float | None = None) -> tuple[st
             continue
         if not _lease_marker_is_owned(path, match.group(1)):
             continue
+        if _lease_marker_is_active_or_unknown(path):
+            continue
         try:
             shutil.rmtree(path)
         except OSError as exc:
@@ -685,6 +710,23 @@ def _cleanup_stale_lease_residue_locked(*, now: float | None = None) -> tuple[st
     except OSError:
         pass
     return tuple(failures)
+
+
+def _active_cookie_lease_exists_locked() -> bool:
+    for root in _legacy_session_dirs():
+        leases = root / "leases"
+        try:
+            candidates = list(leases.iterdir())
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return True
+        for path in candidates:
+            if LEASE_NAME_RE.fullmatch(path.name) is None or path.is_symlink() or not path.is_dir():
+                continue
+            if _lease_marker_is_active_or_unknown(path):
+                return True
+    return False
 
 
 def _cleanup_stale_quarantines_locked(*, now: float | None = None) -> tuple[str, ...]:
@@ -888,6 +930,42 @@ def validate_saved_session() -> LoginStatus:
     return result
 
 
+def _remove_cookie_lease(
+    lease_dir: Path,
+    leases: Path,
+    guard_handle: BinaryIO,
+    *,
+    remove_empty_parent: bool,
+) -> None:
+    try:
+        _unlock_file_byte(guard_handle)
+    except OSError:
+        logging.getLogger("bili_downloader").warning(
+            "释放临时 Cookie lease 活动锁失败：%s", _owned_path_label(lease_dir)
+        )
+    finally:
+        try:
+            guard_handle.close()
+        except OSError:
+            pass
+
+    try:
+        shutil.rmtree(lease_dir)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        logging.getLogger("bili_downloader").warning(
+            "清理临时 Cookie lease 失败：%s", _owned_path_label(lease_dir)
+        )
+    if not remove_empty_parent:
+        return
+    try:
+        if leases.exists() and not any(leases.iterdir()):
+            leases.rmdir()
+    except OSError:
+        pass
+
+
 @contextmanager
 def cookiefile_lease(mode: CredentialMode | str = CredentialMode.SAVED) -> Iterator[Path | None]:
     normalized_mode = CredentialMode(mode)
@@ -897,25 +975,24 @@ def cookiefile_lease(mode: CredentialMode | str = CredentialMode.SAVED) -> Itera
 
     with _session_transaction():
         snapshot = _load_snapshot_locked()
-        if snapshot is None:
-            yield None
-            return
-        if not cookies_indicate_logged_in(snapshot.cookies):
-            raise SessionSaveError("登录态已失效或过期，请重新扫码登录")
-        leases = session_dir() / "leases"
-        stale_failures = _cleanup_stale_lease_residue_locked()
-        if stale_failures:
-            logging.getLogger("bili_downloader").warning(
-                "清理过期 Cookie lease 失败：%s", "; ".join(stale_failures)
-            )
-        leases.mkdir(parents=True, exist_ok=True)
-        lease_id = uuid.uuid4().hex
-        lease_dir = leases / f"lease-{lease_id}"
-        lease_dir.mkdir(mode=0o700)
-        cookiefile = lease_dir / "cookies.txt"
-        try:
+        if snapshot is not None:
+            if not cookies_indicate_logged_in(snapshot.cookies):
+                raise SessionSaveError("登录态已失效或过期，请重新扫码登录")
+            leases = session_dir() / "leases"
+            stale_failures = _cleanup_stale_lease_residue_locked()
+            if stale_failures:
+                logging.getLogger("bili_downloader").warning(
+                    "清理过期 Cookie lease 失败：%s", "; ".join(stale_failures)
+                )
+            leases.mkdir(parents=True, exist_ok=True)
+            lease_id = uuid.uuid4().hex
+            lease_dir = leases / f"lease-{lease_id}"
+            lease_dir.mkdir(mode=0o700)
+            cookiefile = lease_dir / "cookies.txt"
+            marker = lease_dir / LEASE_OWNER_FILE
+            guard_handle: BinaryIO | None = None
             try:
-                (lease_dir / LEASE_OWNER_FILE).write_text(
+                marker.write_text(
                     json.dumps(
                         {
                             "schema_version": 1,
@@ -930,19 +1007,53 @@ def cookiefile_lease(mode: CredentialMode | str = CredentialMode.SAVED) -> Itera
                     + "\n",
                     encoding="ascii",
                 )
+                guard_handle = marker.open("r+b")
+                if not _try_lock_file_byte(guard_handle):
+                    guard_handle.close()
+                    guard_handle = None
+                    raise OSError("lease activity lock unavailable")
                 export_cookies_to_netscape(snapshot.cookies, cookiefile)
             except OSError as exc:
+                if guard_handle is not None:
+                    _remove_cookie_lease(
+                        lease_dir,
+                        leases,
+                        guard_handle,
+                        remove_empty_parent=True,
+                    )
+                else:
+                    try:
+                        shutil.rmtree(lease_dir)
+                    except OSError:
+                        pass
                 raise SessionSaveError(f"无法创建临时 Cookie lease：{type(exc).__name__}") from exc
-            yield cookiefile
-        finally:
-            try:
-                shutil.rmtree(lease_dir)
-                if leases.exists() and not any(leases.iterdir()):
-                    leases.rmdir()
-            except OSError:
-                logging.getLogger("bili_downloader").warning(
-                    "清理临时 Cookie lease 失败：%s", _owned_path_label(lease_dir)
+
+    if snapshot is None:
+        yield None
+        return
+
+    assert guard_handle is not None
+    try:
+        yield cookiefile
+    finally:
+        try:
+            with _session_transaction():
+                _remove_cookie_lease(
+                    lease_dir,
+                    leases,
+                    guard_handle,
+                    remove_empty_parent=True,
                 )
+        except (OSError, SessionBusyError):
+            # Interoperate with a pre-v1.4 process that may still hold the old
+            # global lock for an entire download. The per-lease guard protects
+            # this exact directory until the fallback cleanup starts.
+            _remove_cookie_lease(
+                lease_dir,
+                leases,
+                guard_handle,
+                remove_empty_parent=False,
+            )
 
 
 def cookie_options(
@@ -1003,6 +1114,8 @@ def clear_login_state() -> ClearLoginResult:
     targets, failures = _credential_targets()
     try:
         with _session_transaction():
+            if _active_cookie_lease_exists_locked():
+                raise SessionBusyError("登录态正由另一个实例的活动任务使用，请先等待该任务结束")
             for target in targets:
                 try:
                     if not target.exists():

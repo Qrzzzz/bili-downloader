@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 - canonical DPAPI session 已存在时，先验证可解密和结构完整，再精确清理本程序拥有的旧 `storage_state.json` / `cookies.txt` 与历史 profile/cache；损坏 canonical 不触发旧明文删除。
 - 临时 Cookie lease 改为带 owner marker 的独立目录；过期 lease、失败原子临时文件和历史隔离目录只有在应用目录、精确命名/所有权与保守年龄条件同时满足时才会删除。匿名模式继续不读取凭据。
+- 全局 session 锁不再覆盖整个解析或下载周期；每个临时 Cookie lease 使用独立跨进程活动锁，允许多实例并发，同时让残留清理和跨实例退出登录继续保守避开正在使用的明文文件。
 - 清理失败仅报告脱敏的应用相对路径和错误类型，部分删除失败不影响 canonical session。
 
 ### URL、封面与外置工具边界
