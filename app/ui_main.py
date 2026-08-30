@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Callable
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QPixmap
@@ -36,15 +36,16 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__
+from .auth_qr import QrLoginClient, QrLoginError, QrStatus, render_qr_png
 from .config import AppConfig, ConfigError, config_diagnostics, load_config, save_config
 from .cookies import (
     CredentialMode,
     clear_login_state,
-    cookies_indicate_logged_in,
+    cleanup_legacy_login_residue,
     describe_login_status,
-    ensure_playwright_runtime,
     has_saved_session,
-    save_context_storage_state_atomic,
+    SessionSaveError,
+    validate_and_commit_candidate_cookies,
     validate_saved_session,
 )
 from .crash import crash_log_path
@@ -74,11 +75,6 @@ from .utils import (
     format_speed,
     normalize_bilibili_url,
 )
-
-
-LOGIN_URL = "https://passport.bilibili.com/login"
-
-
 class ParseWorker(QObject):
     finished = Signal(str, object)
     failed = Signal(str, str, str, str)
@@ -219,13 +215,22 @@ class DownloadRequest:
 
 class LoginWorker(QObject):
     status = Signal(str)
-    screenshot = Signal(bytes)
+    qr_image = Signal(bytes)
     completed = Signal(object)
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        client_factory: Callable[[], QrLoginClient] = QrLoginClient,
+        total_timeout: float = 300.0,
+        poll_interval: float = 1.0,
+    ) -> None:
         super().__init__()
         self._cancelled = threading.Event()
         self._refresh_requested = threading.Event()
+        self._client_factory = client_factory
+        self._total_timeout = total_timeout
+        self._poll_interval = poll_interval
         self.terminal_outcome: LoginOutcome | None = None
 
     def request_cancel(self) -> None:
@@ -234,120 +239,122 @@ class LoginWorker(QObject):
     def request_refresh(self) -> None:
         self._refresh_requested.set()
 
-    def _launch_browser(self, playwright):
-        launch_kwargs = {
-            "headless": False,
-        }
-        errors: list[str] = []
-        for channel in ("msedge", "chrome", None):
-            try:
-                if channel:
-                    return playwright.chromium.launch(channel=channel, **launch_kwargs)
-                return playwright.chromium.launch(**launch_kwargs)
-            except Exception as exc:  # noqa: BLE001
-                label = "Playwright Chromium" if channel is None else channel
-                errors.append(f"{label}: {redact_sensitive(exc)}")
-        raise RuntimeError("无法启动扫码登录浏览器。\n" + "\n".join(errors))
+    def _stopping(self) -> bool:
+        return self._cancelled.is_set()
+
+    def _candidate_cancelled(self) -> bool:
+        return self._cancelled.is_set() or self._refresh_requested.is_set()
+
+    @staticmethod
+    def _validation_failure(code: str, text: str) -> LoginOutcome:
+        if code == "platform_412":
+            return LoginOutcome(
+                "platform_412",
+                "Bilibili 返回 HTTP 412，当前环境受平台限制。",
+                "未尝试绕过限制，原有本地登录态未更改。",
+            )
+        if code == "offline":
+            return LoginOutcome("network_failure", "网络超时或当前离线。", text)
+        if code == "invalid":
+            return LoginOutcome("invalid", "扫码返回的登录凭据无效。", text)
+        return LoginOutcome("protocol_error", "Bilibili 登录验证响应异常。", text)
 
     @Slot()
     def run(self) -> None:
         outcome: LoginOutcome | None = None
+        client: QrLoginClient | None = None
+        challenge = None
+        deadline = time.monotonic() + self._total_timeout
         try:
-            ensure_playwright_runtime()
-            from playwright.sync_api import Error as PlaywrightError
-            from playwright.sync_api import sync_playwright
-        except Exception as exc:  # noqa: BLE001
-            logging.getLogger("bili_downloader").exception("Playwright 初始化失败")
+            while outcome is None:
+                if self._stopping():
+                    outcome = LoginOutcome("cancelled", "已取消扫码登录。")
+                    break
+                if time.monotonic() >= deadline:
+                    outcome = LoginOutcome(
+                        "timeout",
+                        "扫码登录超时，请重试。",
+                        "扫码登录超过 5 分钟未完成，原有登录态未更改。",
+                    )
+                    break
+
+                if challenge is None or self._refresh_requested.is_set():
+                    self._refresh_requested.clear()
+                    if client is not None:
+                        client.close()
+                    client = self._client_factory()
+                    self.status.emit("正在生成 Bilibili 官方二维码...")
+                    challenge = client.generate()
+                    if self._candidate_cancelled():
+                        challenge = None
+                        continue
+                    self.qr_image.emit(render_qr_png(challenge.qr_url))
+                    self.status.emit("等待扫码：请使用 Bilibili App")
+
+                assert client is not None and challenge is not None
+                polled = client.poll(challenge)
+                if self._candidate_cancelled():
+                    challenge = None
+                    continue
+
+                if polled.status is QrStatus.WAITING_SCAN:
+                    self.status.emit("等待扫码：请使用 Bilibili App")
+                elif polled.status is QrStatus.WAITING_CONFIRMATION:
+                    self.status.emit("已扫码，请在手机上确认登录")
+                elif polled.status is QrStatus.EXPIRED:
+                    self.status.emit("二维码已过期，请点击“刷新二维码”")
+                    while (
+                        not self._stopping()
+                        and not self._refresh_requested.is_set()
+                        and time.monotonic() < deadline
+                    ):
+                        self._refresh_requested.wait(0.2)
+                    challenge = None
+                    continue
+                elif polled.status is QrStatus.SUCCESS:
+                    self.status.emit("手机已确认，正在验证登录凭据...")
+                    validation = validate_and_commit_candidate_cookies(
+                        client.candidate_cookies(),
+                        cancelled=self._candidate_cancelled,
+                    )
+                    if validation.code == "cancelled":
+                        if self._stopping():
+                            outcome = LoginOutcome("cancelled", "已取消扫码登录。")
+                        else:
+                            challenge = None
+                        continue
+                    if validation.code == "verified":
+                        self.status.emit("登录成功，凭据已验证并安全保存")
+                        outcome = LoginOutcome("success")
+                    else:
+                        outcome = self._validation_failure(validation.code, validation.text)
+                    continue
+
+                self._cancelled.wait(self._poll_interval)
+        except QrLoginError as exc:
+            if exc.status is QrStatus.CANCELLED or self._stopping():
+                outcome = LoginOutcome("cancelled", "已取消扫码登录。")
+            elif exc.code == "platform_412":
+                outcome = self._validation_failure("platform_412", str(exc))
+            elif exc.status is QrStatus.NETWORK_FAILURE:
+                outcome = LoginOutcome("network_failure", "网络超时或当前离线。", str(exc))
+            else:
+                outcome = LoginOutcome("protocol_error", "Bilibili 扫码协议响应异常。", str(exc))
+        except SessionSaveError as exc:
             outcome = LoginOutcome(
-                "failed",
-                "Playwright 未安装或浏览器依赖缺失。",
-                f"{redact_sensitive(exc)}\n请重新安装 requirements.txt，并确认系统 Edge 或 Chrome 可以正常启动。",
+                "save_failed",
+                "登录凭据已验证，但本地原子保存失败。",
+                redact_sensitive(exc),
             )
-        else:
-            browser = None
-            context = None
-            try:
-                self.status.emit("请使用 Bilibili App 扫码登录")
-                with sync_playwright() as playwright:
-                    try:
-                        browser = self._launch_browser(playwright)
-                        context = browser.new_context(
-                            locale="zh-CN",
-                            viewport={"width": 520, "height": 720},
-                        )
-                        page = context.new_page()
-                        page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
-                        page.bring_to_front()
-
-                        last_screenshot = 0.0
-                        deadline = time.monotonic() + 300
-                        while not self._cancelled.is_set() and time.monotonic() < deadline:
-                            if self._refresh_requested.is_set():
-                                self._refresh_requested.clear()
-                                self.status.emit("请使用 Bilibili App 扫码登录")
-                                page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
-                                page.bring_to_front()
-
-                            cookies = context.cookies(
-                                [
-                                    "https://www.bilibili.com",
-                                    "https://passport.bilibili.com",
-                                    "https://api.bilibili.com",
-                                ]
-                            )
-                            if cookies_indicate_logged_in(cookies):
-                                self.status.emit("登录成功，正在保存登录状态")
-                                save_context_storage_state_atomic(context)
-                                outcome = LoginOutcome("success")
-                                break
-
-                            try:
-                                body_text = page.locator("body").inner_text(timeout=1000)
-                                if any(
-                                    token in body_text
-                                    for token in ("扫码成功", "扫描成功", "确认登录", "请在手机")
-                                ):
-                                    self.status.emit("已扫码，请在手机上确认")
-                                elif any(
-                                    token in body_text for token in ("二维码已失效", "二维码已过期", "刷新二维码")
-                                ):
-                                    self.status.emit("登录失败或二维码已过期，请重试")
-                            except PlaywrightError:
-                                pass
-
-                            now = time.monotonic()
-                            if now - last_screenshot > 1.0:
-                                try:
-                                    self.screenshot.emit(page.screenshot(type="png", full_page=False))
-                                    last_screenshot = now
-                                except PlaywrightError:
-                                    pass
-                            page.wait_for_timeout(500)
-
-                        if outcome is None:
-                            if self._cancelled.is_set():
-                                outcome = LoginOutcome("cancelled", "已取消扫码登录。")
-                            else:
-                                outcome = LoginOutcome(
-                                    "timeout",
-                                    "登录失败或二维码已过期，请重试。",
-                                    "扫码登录超过 5 分钟未完成。",
-                                )
-                    finally:
-                        # Playwright objects must be closed before leaving sync_playwright().
-                        if context is not None:
-                            try:
-                                context.close()
-                            except Exception:  # noqa: BLE001
-                                logging.getLogger("bili_downloader").exception("关闭扫码登录浏览器上下文失败")
-                        if browser is not None:
-                            try:
-                                browser.close()
-                            except Exception:  # noqa: BLE001
-                                logging.getLogger("bili_downloader").exception("关闭扫码登录浏览器失败")
-            except Exception as exc:  # noqa: BLE001
-                logging.getLogger("bili_downloader").exception("扫码登录流程失败")
-                outcome = LoginOutcome("failed", "扫码登录失败。", redact_sensitive(exc))
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger("bili_downloader").exception("扫码登录流程发生未预期异常")
+            outcome = LoginOutcome("failed", "扫码登录失败。", redact_sensitive(exc))
+        finally:
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:  # noqa: BLE001
+                    logging.getLogger("bili_downloader").exception("关闭扫码协议会话失败")
 
         if outcome is None:
             outcome = LoginOutcome("failed", "扫码登录失败。", "登录线程未产生终态。")
@@ -372,7 +379,7 @@ class LoginDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Bilibili 扫码登录")
-        self.resize(600, 760)
+        self.resize(480, 560)
         self.worker: LoginWorker | None = None
         self.thread: QThread | None = None
         self._finished_thread: QThread | None = None
@@ -382,11 +389,11 @@ class LoginDialog(QDialog):
         self._dismiss_requested = False
 
         layout = QVBoxLayout(self)
-        self.preview_label = QLabel("正在打开 Bilibili 官方登录页面...")
+        self.preview_label = QLabel("正在生成 Bilibili 官方二维码...")
         self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setMinimumSize(520, 620)
+        self.preview_label.setMinimumSize(360, 360)
         self.preview_label.setStyleSheet("QLabel { border: 1px solid #d0d0d0; background: #f8f8f8; color: #555; }")
-        self.status_label = QLabel("请使用 Bilibili App 扫码登录")
+        self.status_label = QLabel("正在生成二维码")
         self.status_label.setAlignment(Qt.AlignCenter)
         self.status_label.setWordWrap(True)
 
@@ -410,7 +417,7 @@ class LoginDialog(QDialog):
         worker.setParent(self)
         thread = LoginThread(worker, self)
         worker.status.connect(self.on_status)
-        worker.screenshot.connect(self.on_screenshot)
+        worker.qr_image.connect(self.on_qr_image)
         worker.completed.connect(self.on_terminal)
         thread.finished.connect(self.on_thread_finished)
         self.worker = worker
@@ -421,7 +428,9 @@ class LoginDialog(QDialog):
     def refresh_qr(self) -> None:
         if not self.thread or not self.thread.isRunning() or self._dismiss_requested:
             return
-        self.status_label.setText("请使用 Bilibili App 扫码登录")
+        self.preview_label.clear()
+        self.preview_label.setText("正在生成新的二维码...")
+        self.status_label.setText("正在刷新二维码")
         self.status_for_main.emit("等待扫码")
         if self.worker:
             self.worker.request_refresh()
@@ -443,19 +452,19 @@ class LoginDialog(QDialog):
         self.status_label.setText(text)
         if "已扫码" in text:
             self.status_for_main.emit("等待手机确认")
-        elif "成功" in text:
-            self.status_for_main.emit("正在保存本地登录凭据")
-        elif "失败" in text or "过期" in text:
-            self.status_for_main.emit("登录已失效")
+        elif "验证" in text or "保存" in text:
+            self.status_for_main.emit("正在验证并保存本地登录凭据")
+        elif "过期" in text:
+            self.status_for_main.emit("二维码已过期，等待刷新")
         else:
             self.status_for_main.emit("等待扫码")
 
     @Slot(bytes)
-    def on_screenshot(self, data: bytes) -> None:
+    def on_qr_image(self, data: bytes) -> None:
         pixmap = QPixmap()
         if pixmap.loadFromData(data):
             self.preview_label.setPixmap(
-                pixmap.scaled(self.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                pixmap.scaled(self.preview_label.size(), Qt.KeepAspectRatio, Qt.FastTransformation)
             )
 
     @Slot(object)
@@ -556,6 +565,7 @@ class MainWindow(QMainWindow):
 
         self.log_emitter = LogEmitter()
         self.logger = setup_logging()
+        cleanup_legacy_login_residue()
 
         self._build_ui()
         self._connect()
@@ -662,7 +672,8 @@ class MainWindow(QMainWindow):
         login_buttons.addWidget(self.view_crash_log_button)
         login_buttons.addWidget(self.diagnostics_button)
         compliance = QLabel(
-            "不输入账号密码，不读取 Chrome/Edge/Firefox 等日常浏览器 Cookie。扫码登录只使用本程序打开的 Bilibili 官方登录页，登录态仅保存在本机应用数据目录。"
+            "不输入账号密码，不读取 Chrome/Edge/Firefox 等日常浏览器 Cookie。"
+            "二维码由本程序直接显示，验证通过后的登录态仅保存在本机应用数据目录。"
         )
         compliance.setWordWrap(True)
         compliance.setStyleSheet("color: #555;")
@@ -771,7 +782,7 @@ class MainWindow(QMainWindow):
         self.set_login_status(text, code)
         if code == "verified":
             self._append_log("登录态验证成功。")
-        elif code in {"invalid", "offline", "local_pending", "none"}:
+        elif code in {"invalid", "offline", "platform_412", "protocol_error", "local_pending", "none"}:
             self._append_log(f"登录态验证结果：{text}")
 
     @Slot()
@@ -821,7 +832,9 @@ class MainWindow(QMainWindow):
         result = QMessageBox.question(
             self,
             "保存登录态提示",
-            "扫码登录会打开 Bilibili 官方登录页面。登录成功后，本程序会把登录态仅保存在本机应用数据目录，用于后续解析和下载你本来有权限观看的视频清晰度。\n\n是否继续？",
+            "扫码登录会在应用内显示 Bilibili 官方二维码，不启动或读取任何日常浏览器。"
+            "手机确认后，只有经 Bilibili 服务端验证有效的登录态才会受保护地保存在本机，"
+            "用于后续解析和下载你本来有权限观看的视频清晰度。\n\n是否继续？",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
@@ -838,9 +851,8 @@ class MainWindow(QMainWindow):
             if accepted and dialog.login_succeeded:
                 self.credential_mode = CredentialMode.SAVED
                 self.safe_mode = False
-                self.set_login_status("本地登录凭据待服务端验证", "local_pending")
-                self._append_log("扫码登录完成，已保存受保护的本地凭据，正在请求服务端验证。")
-                self.start_session_validation()
+                self.set_login_status("登录凭据已通过服务端验证", "verified")
+                self._append_log("扫码登录完成，已验证并保存受保护的本地凭据。")
                 if self.url_edit.text().strip() and not self._closing:
                     self._append_log("登录成功，正在重新解析当前链接以刷新可用清晰度。")
                     self.start_parse()
@@ -864,7 +876,7 @@ class MainWindow(QMainWindow):
         result = QMessageBox.question(
             self,
             "退出登录",
-            "将删除本程序保存的 Bilibili 登录态和内部 cookies.txt。是否继续？",
+            "将删除本程序保存的 Bilibili 登录态、临时 Cookie lease 和兼容迁移残留。是否继续？",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )

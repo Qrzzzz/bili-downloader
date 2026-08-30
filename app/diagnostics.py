@@ -10,10 +10,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 import requests
+import segno
 
 from . import __version__
+from .auth_qr import render_qr_png
 from .config import AppConfig, app_data_dir
-from .cookies import describe_login_status, ensure_playwright_runtime
+from .cookies import describe_login_status
 from .utils import FFmpegProbeStatus, probe_ffmpeg
 
 
@@ -71,11 +73,10 @@ class UpdateCheckResult:
 
 
 def _version_tuple(value: str) -> tuple[int, ...]:
-    match = re.fullmatch(r"v?(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?", value.strip(), re.IGNORECASE)
+    match = re.fullmatch(r"[vV]?(\d+)\.(\d+)", value)
     if not match:
         raise ValueError(f"无法识别版本号：{value}")
-    parts = tuple(int(part) if part is not None else 0 for part in match.groups())
-    return parts
+    return tuple(int(part) for part in match.groups())
 
 
 def check_latest_release(
@@ -93,8 +94,10 @@ def check_latest_release(
         payload = response.json()
         if not isinstance(payload, dict):
             raise ValueError("GitHub 返回内容不是对象")
-        tag = str(payload.get("tag_name") or "").strip()
-        url = str(payload.get("html_url") or "").strip()
+        tag = payload.get("tag_name")
+        url = payload.get("html_url")
+        if not isinstance(tag, str) or not isinstance(url, str):
+            raise ValueError("GitHub Release 字段类型无效")
         current = _version_tuple(current_version)
         latest = _version_tuple(tag)
         if not url.startswith(RELEASE_URL_PREFIX):
@@ -130,30 +133,26 @@ def _directory_item(name: str, path: Path) -> DiagnosticItem:
         return DiagnosticItem(name, DiagnosticStatus.FAILED, "不可写", type(exc).__name__)
 
 
-def _playwright_item(cancelled: Callable[[], bool]) -> DiagnosticItem:
+def _qr_login_item(cancelled: Callable[[], bool]) -> DiagnosticItem:
     if cancelled():
-        return DiagnosticItem("登录浏览器", DiagnosticStatus.WARNING, "检测已取消")
-    errors: list[str] = []
+        return DiagnosticItem("扫码登录组件", DiagnosticStatus.WARNING, "检测已取消")
     try:
-        ensure_playwright_runtime()
-        from playwright.sync_api import sync_playwright
-
-        with sync_playwright() as playwright:
-            for channel, label in (("msedge", "系统 Edge"), ("chrome", "系统 Chrome"), (None, "Playwright Chromium")):
-                if cancelled():
-                    return DiagnosticItem("登录浏览器", DiagnosticStatus.WARNING, "检测已取消")
-                try:
-                    kwargs: dict[str, Any] = {"headless": True}
-                    if channel:
-                        kwargs["channel"] = channel
-                    browser = playwright.chromium.launch(**kwargs)
-                    browser.close()
-                    return DiagnosticItem("登录浏览器", DiagnosticStatus.OK, f"{label} 可启动")
-                except Exception as exc:  # noqa: BLE001
-                    errors.append(f"{label}: {type(exc).__name__}")
+        png = render_qr_png("https://account.bilibili.com/qr-login-component-check")
+        if not png.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise ValueError("invalid PNG")
+        return DiagnosticItem(
+            "扫码登录组件",
+            DiagnosticStatus.OK,
+            "应用内二维码可本地生成",
+            f"segno {segno.__version__}；未启动外部组件",
+        )
     except Exception as exc:  # noqa: BLE001
-        errors.append(f"Playwright: {type(exc).__name__}")
-    return DiagnosticItem("登录浏览器", DiagnosticStatus.FAILED, "没有可启动的浏览器", "；".join(errors))
+        return DiagnosticItem(
+            "扫码登录组件",
+            DiagnosticStatus.FAILED,
+            "无法本地生成二维码",
+            type(exc).__name__,
+        )
 
 
 def collect_diagnostics(
@@ -184,7 +183,7 @@ def collect_diagnostics(
         items.append(DiagnosticItem("FFmpeg", DiagnosticStatus.FAILED, "未找到", ffmpeg.detail))
 
     if not cancelled():
-        items.append(_playwright_item(cancelled))
+        items.append(_qr_login_item(cancelled))
     items.append(_directory_item("应用数据目录", app_data_dir()))
     items.append(_directory_item("下载目录", Path(config.download_dir)))
 
