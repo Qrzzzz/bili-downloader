@@ -6,10 +6,11 @@ import sys
 import threading
 import time
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QCloseEvent, QPixmap
+from PySide6.QtGui import QAction, QCloseEvent, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -25,12 +27,13 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
-    QSplitter,
-    QStatusBar,
+    QScrollArea,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -392,7 +395,7 @@ class LoginDialog(QDialog):
         self.preview_label = QLabel("正在生成 Bilibili 官方二维码...")
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setMinimumSize(360, 360)
-        self.preview_label.setStyleSheet("QLabel { border: 1px solid #d0d0d0; background: #f8f8f8; color: #555; }")
+        self.preview_label.setFrameShape(QFrame.StyledPanel)
         self.status_label = QLabel("正在生成二维码")
         self.status_label.setAlignment(Qt.AlignCenter)
         self.status_label.setWordWrap(True)
@@ -562,6 +565,7 @@ class MainWindow(QMainWindow):
         self._closing = False
         self._allow_close = False
         self._shutdown_wait_attempted = False
+        self._view_phase = "idle"
 
         self.log_emitter = LogEmitter()
         self.logger = setup_logging()
@@ -570,6 +574,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._connect()
         self._load_config_into_ui()
+        self._set_view_phase("idle")
         self._append_log("程序已启动。")
         for diagnostic in config_diagnostics():
             self._append_log(f"配置诊断：{diagnostic}")
@@ -581,29 +586,75 @@ class MainWindow(QMainWindow):
         central = QWidget(self)
         root = QVBoxLayout(central)
         root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(10)
+        root.setSpacing(12)
 
-        url_row = QHBoxLayout()
+        primary_row = QHBoxLayout()
         self.url_edit = QLineEdit()
         self.url_edit.setPlaceholderText("粘贴 Bilibili 视频链接，或输入 BV/av 号")
+        self.url_edit.setAccessibleName("Bilibili 视频链接")
         self.parse_button = QPushButton("解析视频")
-        url_row.addWidget(self.url_edit, 1)
-        url_row.addWidget(self.parse_button)
-        root.addLayout(url_row)
+        self.login_status_label = QLabel("账号：未登录")
+        self.login_status_label.setToolTip("登录态仅保存在本机应用数据目录。")
+        self.qr_login_button = QPushButton("扫码登录")
+        self.logout_button = QPushButton("退出登录")
+        self.logout_button.hide()
 
-        splitter = QSplitter(Qt.Horizontal)
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 8, 0)
+        self.more_button = QToolButton()
+        self.more_button.setText("更多")
+        self.more_button.setPopupMode(QToolButton.InstantPopup)
+        self.more_menu = QMenu(self.more_button)
+        self.toggle_log_action = QAction("显示任务详情", self)
+        self.toggle_log_action.setCheckable(True)
+        self.diagnostics_action = QAction("环境诊断", self)
+        self.view_crash_log_action = QAction("查看错误日志", self)
+        self.login_privacy_action = QAction("登录与隐私说明", self)
+        self.clear_login_action = QAction("清除登录状态", self)
+        self.clear_login_action.setVisible(False)
+        self.more_menu.addAction(self.toggle_log_action)
+        self.more_menu.addSeparator()
+        self.more_menu.addAction(self.diagnostics_action)
+        self.more_menu.addAction(self.view_crash_log_action)
+        self.more_menu.addSeparator()
+        self.more_menu.addAction(self.login_privacy_action)
+        self.more_menu.addAction(self.clear_login_action)
+        self.more_button.setMenu(self.more_menu)
 
-        info_group = QGroupBox("视频信息")
-        info_layout = QGridLayout(info_group)
-        self.cover_label = QLabel("封面")
+        primary_row.addWidget(self.url_edit, 1)
+        primary_row.addWidget(self.parse_button)
+        primary_row.addSpacing(8)
+        primary_row.addWidget(self.login_status_label)
+        primary_row.addWidget(self.qr_login_button)
+        primary_row.addWidget(self.logout_button)
+        primary_row.addWidget(self.more_button)
+        root.addLayout(primary_row)
+
+        self.flow_scroll = QScrollArea()
+        self.flow_scroll.setWidgetResizable(True)
+        self.flow_scroll.setFrameShape(QFrame.NoFrame)
+        self.flow_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        flow = QWidget()
+        flow_layout = QVBoxLayout(flow)
+        flow_layout.setContentsMargins(0, 0, 0, 0)
+        flow_layout.setSpacing(10)
+
+        self.empty_state_label = QLabel(
+            "粘贴视频链接并解析。\n解析完成后才会显示视频信息、画质与下载选项。"
+        )
+        self.empty_state_label.setAlignment(Qt.AlignCenter)
+        self.empty_state_label.setWordWrap(True)
+        self.empty_state_label.setMinimumHeight(220)
+        flow_layout.addWidget(self.empty_state_label, 1)
+
+        self.video_group = QGroupBox("视频")
+        info_layout = QGridLayout(self.video_group)
+        self.cover_label = QLabel("暂无封面")
         self.cover_label.setAlignment(Qt.AlignCenter)
-        self.cover_label.setMinimumSize(240, 150)
-        self.cover_label.setStyleSheet("QLabel { border: 1px solid #d0d0d0; background: #f7f7f7; color: #666; }")
+        self.cover_label.setMinimumSize(192, 108)
+        self.cover_label.setMaximumSize(240, 135)
+        self.cover_label.setFrameShape(QFrame.StyledPanel)
         self.title_label = QLabel("-")
         self.title_label.setWordWrap(True)
+        self.title_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.uploader_label = QLabel("-")
         self.duration_label = QLabel("-")
         self.parts_label = QLabel("-")
@@ -617,98 +668,94 @@ class MainWindow(QMainWindow):
         info_layout.addWidget(QLabel("分 P："), 3, 1)
         info_layout.addWidget(self.parts_label, 3, 2)
         info_layout.setColumnStretch(2, 1)
-        left_layout.addWidget(info_group)
+        self.video_group.hide()
+        flow_layout.addWidget(self.video_group)
 
-        parts_group = QGroupBox("分 P 选择")
-        parts_layout = QVBoxLayout(parts_group)
+        self.parts_group = QGroupBox("分 P 选择")
+        parts_layout = QVBoxLayout(self.parts_group)
         part_actions = QHBoxLayout()
+        self.parts_summary_label = QLabel("已选 0 / 0")
         self.select_all_button = QPushButton("全选")
         self.select_first_button = QPushButton("仅第一 P")
+        part_actions.addWidget(self.parts_summary_label)
+        part_actions.addStretch(1)
         part_actions.addWidget(self.select_all_button)
         part_actions.addWidget(self.select_first_button)
-        part_actions.addStretch(1)
         self.parts_list = QListWidget()
+        self.parts_list.setAccessibleName("分 P 选择")
         self.parts_list.setSelectionMode(QAbstractItemView.NoSelection)
+        self.parts_list.setMinimumHeight(140)
+        self.parts_list.setMaximumHeight(260)
         parts_layout.addLayout(part_actions)
         parts_layout.addWidget(self.parts_list, 1)
-        left_layout.addWidget(parts_group, 1)
+        self.parts_group.hide()
+        flow_layout.addWidget(self.parts_group)
 
-        download_group = QGroupBox("下载设置")
-        form = QFormLayout(download_group)
+        self.download_group = QGroupBox("下载选项")
+        form = QFormLayout(self.download_group)
         self.format_combo = QComboBox()
+        self.format_combo.setAccessibleName("下载画质")
+        self.format_combo.setToolTip("画质严格匹配，不会自动降档。")
         self.download_dir_edit = QLineEdit()
+        self.download_dir_edit.setAccessibleName("保存目录")
         self.browse_button = QPushButton("选择目录")
         dir_row = QHBoxLayout()
         dir_row.addWidget(self.download_dir_edit, 1)
         dir_row.addWidget(self.browse_button)
+        self.format_note_label = QLabel()
+        self.format_note_label.setWordWrap(True)
+        self.format_note_label.hide()
         self.download_button = QPushButton("下载")
         self.download_button.setEnabled(False)
-        self.cancel_button = QPushButton("取消")
-        self.cancel_button.setEnabled(False)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         buttons.addWidget(self.download_button)
-        buttons.addWidget(self.cancel_button)
         form.addRow("清晰度：", self.format_combo)
+        form.addRow("", self.format_note_label)
         form.addRow("保存目录：", dir_row)
         form.addRow("", buttons)
-        left_layout.addWidget(download_group)
+        self.download_group.hide()
+        flow_layout.addWidget(self.download_group)
 
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(8, 0, 0, 0)
-
-        login_group = QGroupBox("Bilibili 官方扫码登录")
-        login_layout = QVBoxLayout(login_group)
-        self.login_status_label = QLabel("登录状态：未登录")
-        self.login_status_label.setWordWrap(True)
-        login_buttons = QHBoxLayout()
-        self.qr_login_button = QPushButton("扫码登录")
-        self.logout_button = QPushButton("退出登录 / 清除登录状态")
-        self.view_crash_log_button = QPushButton("查看错误日志")
-        self.diagnostics_button = QPushButton("环境诊断")
-        login_buttons.addWidget(self.qr_login_button)
-        login_buttons.addWidget(self.logout_button)
-        login_buttons.addWidget(self.view_crash_log_button)
-        login_buttons.addWidget(self.diagnostics_button)
-        compliance = QLabel(
-            "不输入账号密码，不读取 Chrome/Edge/Firefox 等日常浏览器 Cookie。"
-            "二维码由本程序直接显示，验证通过后的登录态仅保存在本机应用数据目录。"
-        )
-        compliance.setWordWrap(True)
-        compliance.setStyleSheet("color: #555;")
-        login_layout.addWidget(self.login_status_label)
-        login_layout.addLayout(login_buttons)
-        login_layout.addWidget(compliance)
-        right_layout.addWidget(login_group)
-
-        progress_group = QGroupBox("进度")
-        progress_layout = QVBoxLayout(progress_group)
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
+        self.activity_group = QGroupBox("任务状态")
+        progress_layout = QVBoxLayout(self.activity_group)
+        activity_row = QHBoxLayout()
         self.status_label = QLabel("待命")
-        self.metrics_label = QLabel("速度：-    剩余：-    文件：-")
+        self.status_label.setWordWrap(True)
+        self.cancel_button = QPushButton("取消下载")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.hide()
+        self.details_button = QPushButton("查看任务详情")
+        activity_row.addWidget(self.status_label, 1)
+        activity_row.addWidget(self.cancel_button)
+        activity_row.addWidget(self.details_button)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setAccessibleName("任务进度")
+        self.progress_bar.setRange(0, 100)
+        self.metrics_label = QLabel()
         self.metrics_label.setWordWrap(True)
         progress_layout.addWidget(self.progress_bar)
-        progress_layout.addWidget(self.status_label)
+        progress_layout.addLayout(activity_row)
         progress_layout.addWidget(self.metrics_label)
-        right_layout.addWidget(progress_group)
+        self.activity_group.hide()
+        self.metrics_label.hide()
+        flow_layout.addWidget(self.activity_group)
 
-        log_group = QGroupBox("日志")
-        log_layout = QVBoxLayout(log_group)
+        self.log_group = QGroupBox("任务详情")
+        log_layout = QVBoxLayout(self.log_group)
         self.log_view = QPlainTextEdit()
+        self.log_view.setAccessibleName("任务详情日志")
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(1500)
+        self.log_view.setMinimumHeight(180)
         log_layout.addWidget(self.log_view)
-        right_layout.addWidget(log_group, 1)
+        self.log_group.hide()
+        flow_layout.addWidget(self.log_group)
+        flow_layout.addStretch(1)
 
-        splitter.addWidget(left)
-        splitter.addWidget(right)
-        splitter.setSizes([620, 420])
-        root.addWidget(splitter, 1)
-
+        self.flow_scroll.setWidget(flow)
+        root.addWidget(self.flow_scroll, 1)
         self.setCentralWidget(central)
-        self.setStatusBar(QStatusBar(self))
 
     def _connect(self) -> None:
         self.url_edit.textChanged.connect(self.invalidate_current_video)
@@ -718,11 +765,81 @@ class MainWindow(QMainWindow):
         self.cancel_button.clicked.connect(self.cancel_download)
         self.qr_login_button.clicked.connect(self.start_qr_login)
         self.logout_button.clicked.connect(self.logout)
-        self.view_crash_log_button.clicked.connect(self.open_crash_log)
-        self.diagnostics_button.clicked.connect(self.open_diagnostics)
+        self.clear_login_action.triggered.connect(self.logout)
+        self.view_crash_log_action.triggered.connect(self.open_crash_log)
+        self.diagnostics_action.triggered.connect(self.open_diagnostics)
+        self.login_privacy_action.triggered.connect(self.show_login_privacy)
+        self.toggle_log_action.toggled.connect(self._set_log_expanded)
+        self.details_button.clicked.connect(self._toggle_log_expanded)
         self.select_all_button.clicked.connect(self.select_all_parts)
         self.select_first_button.clicked.connect(self.select_first_part)
+        self.parts_list.itemChanged.connect(self._update_parts_summary)
         self.log_emitter.message.connect(self._append_log)
+
+    @Slot()
+    def _toggle_log_expanded(self) -> None:
+        self.toggle_log_action.setChecked(not self.toggle_log_action.isChecked())
+
+    @Slot(bool)
+    def _set_log_expanded(self, expanded: bool) -> None:
+        self.log_group.setVisible(expanded)
+        self.toggle_log_action.setText("隐藏任务详情" if expanded else "显示任务详情")
+        self.details_button.setText("隐藏任务详情" if expanded else "查看任务详情")
+
+    def _set_view_phase(self, phase: str) -> None:
+        if self._closing:
+            phase = "closing"
+        elif phase not in {"finished", "error", "closing"}:
+            download_active = self.download_thread is not None and (
+                phase == "downloading" or self._view_phase == "downloading"
+            )
+            parse_active = self.parse_thread is not None and (
+                phase == "parsing" or self._view_phase == "parsing"
+            )
+            if download_active:
+                phase = "downloading"
+            elif parse_active:
+                phase = "parsing"
+        self._view_phase = phase
+        has_video = self.current_info is not None
+        part_count = len(self.current_info.parts) if self.current_info else 0
+        downloading = phase == "downloading"
+        closing = phase == "closing"
+        show_activity = phase in {"changed", "parsing", "downloading", "finished", "error", "closing"}
+
+        self.empty_state_label.setVisible(not has_video and not show_activity)
+        self.video_group.setVisible(has_video and not closing)
+        self.parts_group.setVisible(has_video and part_count > 1 and not downloading and not closing)
+        self.download_group.setVisible(has_video and not downloading and not closing)
+        self.activity_group.setVisible(show_activity)
+        self.download_button.setVisible(not downloading)
+        self.cancel_button.setVisible(downloading)
+        self.cancel_button.setEnabled(downloading and not self._closing)
+        self.progress_bar.setVisible(phase in {"parsing", "downloading", "finished"})
+        self.metrics_label.setVisible(downloading and bool(self.metrics_label.text()))
+
+        if phase == "parsing":
+            self.progress_bar.setRange(0, 0)
+        else:
+            self.progress_bar.setRange(0, 100)
+        if closing:
+            self.log_group.hide()
+
+    def _update_parts_summary(self, _item: QListWidgetItem | None = None) -> None:
+        count = self.parts_list.count()
+        selected = sum(self.parts_list.item(index).checkState() == Qt.Checked for index in range(count))
+        self.parts_summary_label.setText(f"已选 {selected} / {count}")
+
+    @Slot()
+    def show_login_privacy(self) -> None:
+        QMessageBox.information(
+            self,
+            "登录与隐私说明",
+            "扫码登录会在应用内显示 Bilibili 官方二维码，不输入账号密码，也不会读取 "
+            "Chrome、Edge、Firefox 等日常浏览器 Cookie。\n\n"
+            "手机确认后，只有经 Bilibili 服务端验证有效的登录态才会受保护地保存在本机应用数据目录，"
+            "仅用于解析和下载你本来有权限观看的内容。",
+        )
 
     def _load_config_into_ui(self) -> None:
         self.download_dir_edit.setText(self.config.download_dir)
@@ -731,6 +848,7 @@ class MainWindow(QMainWindow):
                 "安全模式：本地凭据已禁用，解析和下载将匿名进行；重新扫码后可恢复登录模式。",
                 "safe_mode",
             )
+            self.clear_login_action.setVisible(has_saved_session())
             return
         if has_saved_session():
             self.set_login_status("检测登录状态中", "checking")
@@ -751,14 +869,45 @@ class MainWindow(QMainWindow):
             self.login_status_code = "none"
         elif "失效" in status or "异常" in status:
             self.login_status_code = "invalid"
-        self.login_status_label.setText(f"登录状态：{status}")
+
+        display = {
+            "verified": "已登录",
+            "safe_mode": "匿名模式",
+            "checking": "正在确认",
+            "local_pending": "待确认",
+            "offline": "待联网确认",
+            "platform_412": "暂时无法确认",
+            "protocol_error": "登录异常",
+            "invalid": "登录已失效",
+            "none": "未登录",
+        }.get(self.login_status_code, status)
+        self.login_status_label.setText(f"账号：{display}")
+        self.login_status_label.setToolTip(
+            f"登录状态：{status}\n\n登录态仅保存在本机应用数据目录；不会读取日常浏览器 Cookie。"
+        )
+
+        verified = self.login_status_code == "verified"
+        checking = self.login_status_code == "checking"
+        recoverable = self.login_status_code in {
+            "local_pending",
+            "offline",
+            "platform_412",
+            "protocol_error",
+            "invalid",
+        }
+        self.qr_login_button.setText("重新扫码" if recoverable else "扫码登录")
+        self.qr_login_button.setVisible(not verified and not checking)
+        self.qr_login_button.setEnabled(not self._closing and not checking)
+        self.logout_button.setVisible(verified)
+        self.logout_button.setEnabled(verified and not self._closing)
+        self.clear_login_action.setVisible(recoverable)
 
     def refresh_login_status(self) -> None:
         status = describe_login_status()
         self.set_login_status(status.text, status.code)
 
     def start_session_validation(self) -> None:
-        if self.session_thread and self.session_thread.isRunning():
+        if self._closing or (self.session_thread and self.session_thread.isRunning()):
             return
         thread = QThread(self)
         worker = SessionValidationWorker()
@@ -813,6 +962,8 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def open_diagnostics(self) -> None:
+        if self._closing:
+            return
         if self.diagnostics_dialog is not None:
             self.diagnostics_dialog.show()
             self.diagnostics_dialog.raise_()
@@ -825,6 +976,8 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def start_qr_login(self) -> None:
+        if self._closing:
+            return
         if self.login_dialog is not None:
             self.login_dialog.raise_()
             self.login_dialog.activateWindow()
@@ -854,8 +1007,11 @@ class MainWindow(QMainWindow):
                 self.set_login_status("登录凭据已通过服务端验证", "verified")
                 self._append_log("扫码登录完成，已验证并保存受保护的本地凭据。")
                 if self.url_edit.text().strip() and not self._closing:
-                    self._append_log("登录成功，正在重新解析当前链接以刷新可用清晰度。")
-                    self.start_parse()
+                    if self.download_thread is not None:
+                        self._append_log("登录成功；当前下载继续，任务结束后重新解析可刷新可用清晰度。")
+                    else:
+                        self._append_log("登录成功，正在重新解析当前链接以刷新可用清晰度。")
+                        self.start_parse()
             elif not self._closing:
                 if has_saved_session():
                     self.start_session_validation()
@@ -898,6 +1054,9 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def invalidate_current_video(self, _text: str = "") -> None:
         """Discard every download-capable object as soon as the input changes."""
+        had_video = self.current_info is not None or self._parsed_url is not None
+        had_active_parse = self.parse_thread is not None and self._view_phase == "parsing"
+        had_active_download = self.download_thread is not None and self._view_phase == "downloading"
         if self.parse_worker:
             self.parse_worker.request_cancel()
         self.current_info = None
@@ -910,13 +1069,27 @@ class MainWindow(QMainWindow):
         self.duration_label.setText("-")
         self.parts_label.setText("-")
         self.cover_label.clear()
-        self.cover_label.setText("封面")
+        self.cover_label.setText("暂无封面")
+        self.title_label.setToolTip("")
+        self.format_note_label.clear()
+        self.format_note_label.hide()
+        self._update_parts_summary()
         self.download_button.setEnabled(False)
         self._retry_context_valid = False
         if self.result_dialog is not None:
             self.result_dialog.invalidate_retry()
-        if self.url_edit.text().strip() and not self._closing:
-            self.status_label.setText("链接已更改，请重新解析")
+        if not self._closing and had_active_download:
+            if had_video:
+                self._append_log("链接已更改；当前下载继续，新链接需等待任务结束后重新解析。")
+            self._set_view_phase("downloading")
+        elif not self._closing and (had_video or had_active_parse):
+            self.status_label.setText(
+                "链接已更改，正在取消旧解析..." if had_active_parse else "链接已更改，请重新解析"
+            )
+            self._set_view_phase("changed")
+        elif not self._closing:
+            self.status_label.setText("待命")
+            self._set_view_phase("idle")
 
     def _input_matches(self, source_url: str) -> bool:
         try:
@@ -929,10 +1102,14 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def start_parse(self) -> None:
+        if self._closing or self.download_thread is not None:
+            return
         self.invalidate_current_video()
         try:
             url = normalize_bilibili_url(self.url_edit.text())
         except ValueError as exc:
+            self.status_label.setText(str(exc))
+            self._set_view_phase("error")
             QMessageBox.warning(self, "链接无效", str(exc))
             return
 
@@ -940,6 +1117,7 @@ class MainWindow(QMainWindow):
             return
 
         self.parse_button.setEnabled(False)
+        self.parse_button.setText("解析中...")
         self.download_button.setEnabled(False)
         self.status_label.setText("正在解析视频信息...")
         self.progress_bar.setValue(0)
@@ -962,55 +1140,79 @@ class MainWindow(QMainWindow):
         thread.finished.connect(self.on_parse_thread_finished)
         self.parse_worker = worker
         self.parse_thread = thread
+        self._set_view_phase("parsing")
         thread.start()
 
     @Slot()
     def on_parse_thread_finished(self) -> None:
         self.parse_thread = None
         self.parse_worker = None
-        if not self._closing:
+        download_active = self.download_thread is not None and self._view_phase == "downloading"
+        if not self._closing and not download_active:
+            self.parse_button.setText("解析视频")
             self.parse_button.setEnabled(True)
             self.download_button.setEnabled(self._can_download_current())
+            if self.current_info is not None:
+                self._set_view_phase("ready")
+            elif self._view_phase == "parsing":
+                self._set_view_phase("changed" if self.url_edit.text().strip() else "idle")
 
     @Slot(str, object)
     def on_parse_finished(self, source_url: str, result: VideoInfoResult) -> None:
         if not self._input_matches(source_url) or self._closing:
             self._append_log("解析结果已过期，已丢弃。")
             return
+        if self.download_thread is not None and self._view_phase == "downloading":
+            self._append_log("下载期间收到新的解析结果，已忽略；当前下载继续。")
+            return
         self.current_info = result
         self.current_formats = result.formats
         self._parsed_url = source_url
         self.title_label.setText(result.title)
+        self.title_label.setToolTip(result.title)
         self.uploader_label.setText(result.uploader)
         self.duration_label.setText(format_duration(result.duration))
         self.parts_label.setText(str(len(result.parts)))
         self.populate_parts(result.parts, result.current_part_index)
         self.populate_formats(result.formats)
+        self.format_note_label.clear()
+        self.format_note_label.hide()
         self.status_label.setText("解析成功")
         self._append_log(f"解析成功：{result.title}")
         self.notice_resolution_limits(result.formats)
         self.parse_button.setEnabled(True)
+        self.parse_button.setText("解析视频")
         self.download_button.setEnabled(True)
+        self._set_view_phase("ready")
 
     @Slot(str, str, str, str)
     def on_parse_failed(self, source_url: str, error_code: str, friendly: str, detail: str) -> None:
-        self.parse_button.setEnabled(True)
-        self.download_button.setEnabled(False)
         if not self._input_matches(source_url) or self._closing:
             return
-        self.status_label.setText("解析失败")
+        if self.download_thread is not None and self._view_phase == "downloading":
+            self._append_log(f"下载期间的解析失败已忽略：{friendly}")
+            self._append_log(detail)
+            return
+        self.parse_button.setEnabled(True)
+        self.download_button.setEnabled(False)
+        self.status_label.setText(f"解析失败：{friendly}")
         if error_code == ErrorKind.LOGIN_INVALID.value:
             self.set_login_status("解析遇到登录相关错误，正在向服务端复核", "local_pending")
             self.start_session_validation()
         self._append_log(f"解析失败：{friendly}")
         self._append_log(detail)
+        self._set_view_phase("error")
         QMessageBox.warning(self, "解析失败", f"{friendly}\n\n详细信息：{detail}")
 
     @Slot(str)
     def on_parse_cancelled(self, _source_url: str) -> None:
-        if not self._closing:
+        download_active = self.download_thread is not None and self._view_phase == "downloading"
+        if not self._closing and not download_active:
             self.parse_button.setEnabled(True)
+            self.parse_button.setText("解析视频")
             self.download_button.setEnabled(False)
+            self.status_label.setText("解析已取消")
+            self._set_view_phase("changed" if self.url_edit.text().strip() else "idle")
 
     def notice_resolution_limits(self, choices: list[FormatChoice]) -> None:
         max_height = max((choice.height or 0 for choice in choices), default=0)
@@ -1018,8 +1220,11 @@ class MainWindow(QMainWindow):
             return
         if self.login_status_code in {"verified", "local_pending", "offline"}:
             self._append_log("当前账号无该清晰度权限或视频本身不提供该清晰度；程序不会绕过会员、付费、地区或 DRM 限制。")
+            self.format_note_label.setText("当前账号可用画质已全部列出；不会绕过会员、付费、地区或 DRM 限制。")
         else:
             self._append_log("未登录时可能只能解析普通清晰度；如需 1080p 及以上清晰度，请扫码登录后重新解析。")
+            self.format_note_label.setText("未登录时可能只有普通画质；扫码登录后重新解析，可能获得更多画质。")
+        self.format_note_label.show()
 
     @Slot(str, bytes)
     def set_thumbnail(self, source_url: str, data: bytes) -> None:
@@ -1039,21 +1244,26 @@ class MainWindow(QMainWindow):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked if part.index == selected_index else Qt.Unchecked)
             self.parts_list.addItem(item)
+        self._update_parts_summary()
 
     def populate_formats(self, choices: list[FormatChoice]) -> None:
         self.format_combo.clear()
         for choice in choices:
-            self.format_combo.addItem(choice.label, choice.selector)
+            label = choice.label.replace("最高可用（各分 P 分别选择）", "最高可用（推荐）")
+            label = label.replace("（严格匹配，不降档）", "")
+            self.format_combo.addItem(label, choice.selector)
 
     @Slot()
     def select_all_parts(self) -> None:
         for i in range(self.parts_list.count()):
             self.parts_list.item(i).setCheckState(Qt.Checked)
+        self._update_parts_summary()
 
     @Slot()
     def select_first_part(self) -> None:
         for i in range(self.parts_list.count()):
             self.parts_list.item(i).setCheckState(Qt.Checked if i == 0 else Qt.Unchecked)
+        self._update_parts_summary()
 
     def selected_parts(self) -> list[VideoPart]:
         parts: list[VideoPart] = []
@@ -1065,6 +1275,8 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def start_download(self) -> None:
+        if self._closing:
+            return
         if not self._can_download_current():
             self.invalidate_current_video()
             QMessageBox.information(self, "请先解析", "请先解析视频，再开始下载。")
@@ -1110,13 +1322,15 @@ class MainWindow(QMainWindow):
 
     def _begin_download(self, parts: tuple[VideoPart, ...]) -> None:
         request = self.download_request
-        if request is None or self.download_thread is not None or not parts:
+        if self._closing or request is None or self.download_thread is not None or not parts:
             return
 
         self.download_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.parse_button.setEnabled(False)
         self.progress_bar.setValue(0)
+        self.metrics_label.clear()
+        self.metrics_label.setToolTip("")
         self.status_label.setText("准备下载...")
         self._active_download_parts = parts
 
@@ -1143,6 +1357,7 @@ class MainWindow(QMainWindow):
         thread.finished.connect(self.on_download_thread_finished)
         self.download_worker = worker
         self.download_thread = thread
+        self._set_view_phase("downloading")
         thread.start()
 
     @Slot()
@@ -1157,20 +1372,28 @@ class MainWindow(QMainWindow):
             self.cancel_button.setEnabled(False)
             self.parse_button.setEnabled(True)
             self.download_button.setEnabled(self._can_download_current())
+            if self._view_phase == "downloading":
+                self._set_view_phase("ready" if self.current_info is not None else "idle")
+            else:
+                self._set_view_phase(self._view_phase)
 
     @Slot()
     def cancel_download(self) -> None:
         if self.download_controller:
             self.download_controller.cancel()
             if self.download_controller.waiting_for_merge:
-                text = "已请求取消，正在等待当前 FFmpeg 合并安全结束..."
+                text = "正在安全结束当前文件处理..."
+                detail = "已请求取消，正在等待当前 FFmpeg 合并安全结束..."
             else:
                 text = "正在取消下载..."
+                detail = text
             self.status_label.setText(text)
-            self._append_log(text)
+            self._append_log(detail)
 
     @Slot(dict)
     def on_download_progress(self, status: dict[str, Any]) -> None:
+        if self._closing:
+            return
         raw_status = status.get("status", "")
         downloaded = status.get("downloaded_bytes") or 0
         total = status.get("total_bytes") or status.get("total_bytes_estimate") or 0
@@ -1189,7 +1412,7 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"正在下载第 {part_number}/{part_count} 个分 P")
         elif phase == "merging":
             if self.download_controller and self.download_controller.waiting_for_merge:
-                self.status_label.setText("已请求取消，正在等待当前 FFmpeg 合并安全结束...")
+                self.status_label.setText("正在安全结束当前文件处理...")
             else:
                 self.status_label.setText(f"正在合并第 {part_number}/{part_count} 个分 P")
         elif phase == "completed":
@@ -1197,16 +1420,25 @@ class MainWindow(QMainWindow):
         elif phase == "failed":
             self.status_label.setText(f"第 {part_number}/{part_count} 个分 P 失败，继续处理其余任务")
 
+        full_filename = str(filename)
+        try:
+            display_filename = Path(full_filename).name or full_filename
+        except (OSError, TypeError, ValueError):
+            display_filename = full_filename
         self.metrics_label.setText(
-            f"已下载：{format_bytes(downloaded)} / {format_bytes(total)}    "
-            f"速度：{format_speed(speed)}    剩余：{format_eta(eta)}    文件：{filename}"
+            f"{format_bytes(downloaded)} / {format_bytes(total)}  ·  "
+            f"{format_speed(speed)}  ·  剩余 {format_eta(eta)}  ·  {display_filename}"
         )
+        self.metrics_label.setToolTip(full_filename if full_filename != "-" else "")
+        self.metrics_label.show()
+        self._set_view_phase("downloading")
 
     @Slot(object)
     def on_download_finished(self, result: DownloadBatchResult | list[str]) -> None:
-        self.download_button.setEnabled(self._can_download_current())
-        self.cancel_button.setEnabled(False)
-        self.parse_button.setEnabled(True)
+        if not self._closing:
+            self.download_button.setEnabled(self._can_download_current())
+            self.cancel_button.setEnabled(False)
+            self.parse_button.setEnabled(True)
         if not isinstance(result, DownloadBatchResult):
             legacy_files = tuple(dict.fromkeys(result))
             result = DownloadBatchResult(
@@ -1225,10 +1457,11 @@ class MainWindow(QMainWindow):
         completed = result.completed
         failed = result.failed
         cancelled = tuple(item for item in result.part_results if item.status is PartDownloadStatus.CANCELLED)
-        if not cancelled:
+        if not cancelled and not self._closing:
             self.progress_bar.setValue(100)
         summary = f"任务结束：成功 {len(completed)}，失败 {len(failed)}，取消 {len(cancelled)}。"
-        self.status_label.setText(summary)
+        if not self._closing:
+            self.status_label.setText(summary)
         self._append_log(summary)
         for item in completed:
             for path in item.saved_files:
@@ -1237,12 +1470,15 @@ class MainWindow(QMainWindow):
             message = item.error.message if item.error else "下载失败"
             self._append_log(f"P{item.part.index} 失败：{message}；{item.detail}")
 
+        if self._closing:
+            return
+
         if any(item.error and item.error.kind is ErrorKind.LOGIN_INVALID for item in failed):
             self.set_login_status("下载遇到登录相关错误，正在向服务端复核", "local_pending")
             self.start_session_validation()
 
-        if self._closing:
-            return
+        self.metrics_label.hide()
+        self._set_view_phase("error" if failed and not completed else "finished")
 
         request = self.download_request
         if self._download_is_retry and self.result_dialog is not None:
@@ -1273,7 +1509,8 @@ class MainWindow(QMainWindow):
     def retry_failed_parts(self, parts: tuple[VideoPart, ...]) -> None:
         request = self.download_request
         if (
-            not self._retry_context_valid
+            self._closing
+            or not self._retry_context_valid
             or request is None
             or not self._input_matches(request.source_url)
             or self.download_thread is not None
@@ -1286,13 +1523,14 @@ class MainWindow(QMainWindow):
 
     @Slot(object, str)
     def on_download_failed(self, classified: ErrorClassification, detail: str) -> None:
-        self.download_button.setEnabled(self._can_download_current())
-        self.cancel_button.setEnabled(False)
-        self.parse_button.setEnabled(True)
-        self.status_label.setText(classified.message)
+        if not self._closing:
+            self.download_button.setEnabled(self._can_download_current())
+            self.cancel_button.setEnabled(False)
+            self.parse_button.setEnabled(True)
+            self.status_label.setText(classified.message)
         self._append_log(f"下载失败：{classified.message}")
         self._append_log(detail)
-        if classified.kind is ErrorKind.LOGIN_INVALID:
+        if classified.kind is ErrorKind.LOGIN_INVALID and not self._closing:
             self.set_login_status("下载遇到登录相关错误，正在向服务端复核", "local_pending")
             self.start_session_validation()
         result = DownloadBatchResult(
@@ -1362,13 +1600,17 @@ class MainWindow(QMainWindow):
             return
 
         self._closing = True
+        self.url_edit.setEnabled(False)
         self.parse_button.setEnabled(False)
         self.download_button.setEnabled(False)
         self.cancel_button.setEnabled(False)
         self.qr_login_button.setEnabled(False)
         self.logout_button.setEnabled(False)
-        self.diagnostics_button.setEnabled(False)
+        self.more_button.setEnabled(False)
+        self.details_button.setEnabled(False)
+        self.diagnostics_action.setEnabled(False)
         self.status_label.setText("正在安全关闭，请稍候...")
+        self._set_view_phase("closing")
         self._request_shutdown()
 
         if not self._shutdown_wait_attempted:

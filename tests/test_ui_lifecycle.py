@@ -274,6 +274,178 @@ def _video_result(ui: Any, label: str, source_url: str) -> Any:
     )
 
 
+def test_main_window_progressively_discloses_task_controls(ui: Any, qtbot: Any) -> None:
+    window = ui.MainWindow(safe_mode=True)
+    qtbot.addWidget(window)
+
+    assert not window.empty_state_label.isHidden()
+    assert window.video_group.isHidden()
+    assert window.parts_group.isHidden()
+    assert window.download_group.isHidden()
+    assert window.activity_group.isHidden()
+    assert window.log_group.isHidden()
+    assert not window.qr_login_button.isHidden()
+    assert window.logout_button.isHidden()
+
+    source_url = "https://www.bilibili.com/video/BV1aa411c7mD"
+    window.url_edit.setText(source_url)
+    result = _video_result(ui, "Single", source_url)
+    window.on_parse_finished(source_url, result)
+
+    assert window.empty_state_label.isHidden()
+    assert not window.video_group.isHidden()
+    assert window.parts_group.isHidden()
+    assert not window.download_group.isHidden()
+    assert window.activity_group.isHidden()
+    assert window.parts_list.count() == 1
+    assert window.parts_list.item(0).checkState() == QtCore.Qt.Checked
+    assert window.download_button.isEnabled()
+
+
+def test_multi_part_result_shows_only_contextual_picker(ui: Any, qtbot: Any) -> None:
+    source_url = "https://www.bilibili.com/video/BV1aa411c7mD"
+    window = ui.MainWindow(safe_mode=True)
+    qtbot.addWidget(window)
+    window.url_edit.setText(source_url)
+    result = _video_result(ui, "Multi", source_url)
+    result.parts = [
+        ui.VideoPart(index=1, title="P1", url=f"{source_url}?p=1", duration=10),
+        ui.VideoPart(index=2, title="P2", url=f"{source_url}?p=2", duration=20),
+    ]
+    result.current_part_index = 2
+
+    window.on_parse_finished(source_url, result)
+
+    assert not window.parts_group.isHidden()
+    assert window.parts_list.count() == 2
+    assert window.parts_list.item(0).checkState() == QtCore.Qt.Unchecked
+    assert window.parts_list.item(1).checkState() == QtCore.Qt.Checked
+    assert window.parts_summary_label.text() == "已选 1 / 2"
+
+
+def test_login_actions_and_log_panel_remain_contextual(ui: Any, qtbot: Any) -> None:
+    window = ui.MainWindow(safe_mode=True)
+    qtbot.addWidget(window)
+
+    window.set_login_status("无本地登录凭据", "none")
+    assert not window.qr_login_button.isHidden()
+    assert window.logout_button.isHidden()
+
+    window.set_login_status("登录凭据已通过服务端验证", "verified")
+    assert window.qr_login_button.isHidden()
+    assert not window.logout_button.isHidden()
+
+    window.set_login_status("登录凭据失效", "invalid")
+    assert not window.qr_login_button.isHidden()
+    assert window.logout_button.isHidden()
+    assert window.clear_login_action.isVisible()
+
+    window.set_login_status("检测登录状态中", "checking")
+    assert window.qr_login_button.isHidden()
+    assert window.logout_button.isHidden()
+    assert not window.clear_login_action.isVisible()
+
+    for code in ("local_pending", "offline", "platform_412", "protocol_error"):
+        window.set_login_status("需要重新确认登录状态", code)
+        assert not window.qr_login_button.isHidden()
+        assert window.qr_login_button.text() == "重新扫码"
+        assert window.logout_button.isHidden()
+        assert window.clear_login_action.isVisible()
+
+    window.set_login_status("安全模式", "safe_mode")
+    assert not window.qr_login_button.isHidden()
+    assert window.qr_login_button.text() == "扫码登录"
+    assert window.logout_button.isHidden()
+    assert not window.clear_login_action.isVisible()
+
+    window._append_log("synthetic detail")
+    assert window.log_group.isHidden()
+    assert "synthetic detail" in window.log_view.toPlainText()
+    window.toggle_log_action.setChecked(True)
+    assert not window.log_group.isHidden()
+    assert window.details_button.text() == "隐藏任务详情"
+    window._set_view_phase("changed")
+    assert not window.log_group.isHidden()
+    window.toggle_log_action.setChecked(False)
+    assert window.log_group.isHidden()
+    assert window.details_button.text() == "查看任务详情"
+
+
+def test_safe_mode_still_offers_clearing_saved_login_state(
+    ui: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    qtbot: Any,
+) -> None:
+    monkeypatch.setattr(ui, "has_saved_session", lambda: True)
+    window = ui.MainWindow(safe_mode=True)
+    qtbot.addWidget(window)
+
+    assert window.login_status_label.text() == "账号：匿名模式"
+    assert not window.qr_login_button.isHidden()
+    assert window.logout_button.isHidden()
+    assert window.clear_login_action.isVisible()
+
+
+def test_url_change_during_download_keeps_progress_and_cancel_visible(ui: Any, qtbot: Any) -> None:
+    source_url = "https://www.bilibili.com/video/BV1aa411c7mD"
+    window = ui.MainWindow(safe_mode=True)
+    qtbot.addWidget(window)
+    window.url_edit.setText(source_url)
+    window.on_parse_finished(source_url, _video_result(ui, "Active", source_url))
+
+    window.download_thread = object()  # type: ignore[assignment]
+    try:
+        window._set_view_phase("downloading")
+        window.status_label.setText("正在合并第 1/2 个分 P")
+        assert not window.activity_group.isHidden()
+        assert not window.cancel_button.isHidden()
+        assert window.download_group.isHidden()
+
+        window.url_edit.setText("https://www.bilibili.com/video/BV1bb411c7mE")
+        assert window.current_info is None
+        assert window._view_phase == "downloading"
+        assert window.status_label.text() == "正在合并第 1/2 个分 P"
+        assert not window.activity_group.isHidden()
+        assert not window.cancel_button.isHidden()
+        assert "当前下载继续" in window.log_view.toPlainText()
+
+        active_source = ui.normalize_bilibili_url(window.url_edit.text())
+        window.parse_button.setEnabled(False)
+        window.on_parse_failed(active_source, "network", "synthetic parse failure", "detail")
+        assert window._view_phase == "downloading"
+        assert window.status_label.text() == "正在合并第 1/2 个分 P"
+        assert not window.cancel_button.isHidden()
+        assert not window.parse_button.isEnabled()
+
+        window.start_parse()
+        assert window.parse_thread is None
+        window.url_edit.setText("https://www.bilibili.com/video/BV1bb411c7mE?p=2")
+        assert window.log_view.toPlainText().count("当前下载继续") == 1
+    finally:
+        window.download_thread = None
+        window._set_view_phase("finished")
+
+
+def test_url_change_after_download_result_does_not_restore_downloading_phase(ui: Any, qtbot: Any) -> None:
+    source_url = "https://www.bilibili.com/video/BV1aa411c7mD"
+    window = ui.MainWindow(safe_mode=True)
+    qtbot.addWidget(window)
+    window.url_edit.setText(source_url)
+    window.on_parse_finished(source_url, _video_result(ui, "Finished", source_url))
+
+    window.download_thread = object()  # type: ignore[assignment]
+    try:
+        window._set_view_phase("finished")
+        window.url_edit.setText("https://www.bilibili.com/video/BV1bb411c7mE")
+
+        assert window.current_info is None
+        assert window._view_phase == "changed"
+        assert window.status_label.text() == "链接已更改，请重新解析"
+        assert window.cancel_button.isHidden()
+    finally:
+        window.download_thread = None
+
+
 def test_thumbnail_failure_does_not_turn_successful_parse_into_failure(
     ui: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -325,7 +497,7 @@ def test_url_change_parse_failure_and_stale_callback_cannot_download_old_video(
 
     window = ui.MainWindow(safe_mode=True)
     qtbot.addWidget(window)
-    assert window.windowTitle() == "Bili Downloader Lite V1.4"
+    assert window.windowTitle() == "Bili Downloader Lite V2.0"
     window.url_edit.setText(url_a)
     result_a = _video_result(ui, "A", url_a)
     window.on_parse_finished(url_a, result_a)
@@ -429,6 +601,14 @@ def test_main_window_close_requests_cancel_and_keeps_running_qthread_alive(
 
     window = ui.MainWindow(safe_mode=True)
     qtbot.addWidget(window)
+    source_url = "https://www.bilibili.com/video/BV1aa411c7mD"
+    window.url_edit.setText(source_url)
+    result = _video_result(ui, "Closing", source_url)
+    result.parts.append(ui.VideoPart(2, "second", f"{source_url}?p=2", 20))
+    window.on_parse_finished(source_url, result)
+    assert not window.video_group.isHidden()
+    assert not window.parts_group.isHidden()
+    assert not window.download_group.isHidden()
     window.show()
     worker = BlockingWorker()
     thread = TrackingThread(window)
@@ -455,6 +635,21 @@ def test_main_window_close_requests_cancel_and_keeps_running_qthread_alive(
     assert thread.terminate_calls == 0
     assert window._closing is True
     assert window._allow_close is False
+    assert window._view_phase == "closing"
+    assert window.status_label.text() == "正在安全关闭，请稍候..."
+    assert window.video_group.isHidden()
+    assert window.parts_group.isHidden()
+    assert window.download_group.isHidden()
+    assert not window.url_edit.isEnabled()
+    assert not window.details_button.isEnabled()
+
+    window.on_download_progress({"phase": "downloading", "overall_percent": 50})
+    window.on_download_finished(ui.DownloadBatchResult(()))
+    window.start_parse()
+    assert window._view_phase == "closing"
+    assert window.status_label.text() == "正在安全关闭，请稍候..."
+    assert not window.parse_button.isEnabled()
+    assert window.parse_thread is thread
 
     release.set()
     assert thread.wait(2000)
@@ -473,7 +668,7 @@ def test_diagnostics_dialog_only_checks_updates_after_manual_action(
     report = diagnostics.DiagnosticReport(
         (
             diagnostics.DiagnosticItem(
-                "程序", diagnostics.DiagnosticStatus.INFO, "V1.4，测试"
+                "程序", diagnostics.DiagnosticStatus.INFO, "V2.0，测试"
             ),
         )
     )
@@ -482,7 +677,13 @@ def test_diagnostics_dialog_only_checks_updates_after_manual_action(
         dialogs,
         "check_latest_release",
         lambda: update_calls.append("called")
-        or diagnostics.UpdateCheckResult("1.3", "1.4", "https://github.com/Qrzzzz/bili-downloader/releases/tag/v1.4", True, "发现新版"),
+        or diagnostics.UpdateCheckResult(
+            "1.3",
+            "2.0",
+            "https://github.com/Qrzzzz/bili-downloader/releases/tag/v2.0",
+            True,
+            "发现新版",
+        ),
     )
 
     dialog = dialogs.DiagnosticsDialog(ui.AppConfig(download_dir=str(Path.cwd())))
