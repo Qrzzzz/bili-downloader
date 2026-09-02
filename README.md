@@ -1,6 +1,6 @@
 # Bili Downloader Lite
 
-一个 Windows x64 单窗口桌面程序，用于解析并下载用户有权访问的 Bilibili 视频内容。当前源码与候选发布版本为 **1.4**；已公开版本以 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases) 为准。
+一个 Windows x64 单窗口桌面程序，用于解析并下载用户有权访问的 Bilibili 视频内容。当前源码与候选发布版本为 **2.0**；已公开版本以 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases) 为准。
 
 本项目只服务于合法、授权、个人备份或学习场景，不支持绕过会员、付费、DRM、地区、风控或其他访问限制。
 
@@ -14,13 +14,13 @@
 
 ## 发布资产
 
-v1.4 候选 Release 标题固定为 `Bili Downloader Lite v1.4`，并应只包含：
+v2.0 Release 标题固定为 `Bili Downloader Lite v2.0`，并只包含：
 
-- `BiliDownloader.v1.4.exe`
-- `BiliDownloader.v1.4.sbom.json`
+- `BiliDownloader.v2.0.exe`
+- `BiliDownloader.v2.0.sbom.json`
 - `SHA256SUMS`
 
-版本只使用两级数字。源码 `1.4`、标签 `v1.4`、PE 元数据、文件名与 Release 标题必须一致。
+版本只使用两级数字。发布时，源码、标签、PE 元数据、文件名与 Release 标题必须一致。
 
 ## 从源码运行
 
@@ -32,7 +32,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m app.main
 ```
 
-`requirements.in`、`requirements-dev.in` 和 `requirements-sbom.in` 记录直接依赖；对应 `.txt` 是 Python 3.13/Windows x64 哈希锁。v1.4 的二维码渲染依赖仍为无传递依赖的 `segno==1.6.6`，本版没有新增运行时依赖。
+`requirements.in`、`requirements-dev.in` 和 `requirements-sbom.in` 记录直接依赖；对应 `.txt` 是 Python 3.13/Windows x64 哈希锁。v2.0 的二维码渲染依赖仍为无传递依赖的 `segno==1.6.6`，本版没有新增运行时依赖。
 
 ## 打包 Windows exe
 
@@ -44,7 +44,7 @@ python -m venv .venv
 .\build.ps1 -Clean -OneFile
 ```
 
-默认 onedir 输出为 `dist\BiliDownloader\BiliDownloader.v1.4.exe`，onefile 输出为 `dist\BiliDownloader.v1.4.exe`。`build.ps1` 每次删除并重建 `build\.venv`，不复用开发环境。
+默认 onedir 输出为 `dist\BiliDownloader\BiliDownloader.v2.0.exe`，onefile 输出为 `dist\BiliDownloader.v2.0.exe`。`build.ps1` 每次删除并重建 `build\.venv`，不复用开发环境。
 
 发布前必须运行 package smoke、PE/内嵌版本/提交校验和 PyInstaller 归档审计。审计会拒绝 Playwright 包与 driver/Node、`ms-playwright`、Chromium、Electron runtime、浏览器 profile、FFmpeg、凭据和日志。EXE 只测量实际字节和 MiB，不设体积阈值。
 
@@ -67,7 +67,7 @@ PR/main 质量门禁的网络逻辑全部 mock。定时/手动 `public-smoke.yml
 
 ## 清晰度与 FFmpeg
 
-程序只展示 yt-dlp 在当前账号、视频、地区、平台策略和支持能力下实际解析到的格式。FFmpeg 用于合并音视频流；v1.4 不捆绑 `ffmpeg.exe` 或 `ffprobe.exe`。程序依次查找 EXE 相邻的 `tools\ffmpeg.exe`、PyInstaller 资源目录中的同一布局和绝对 `PATH` 目录；不会从任意当前工作目录执行 FFmpeg。onefile 用户可把自行取得且合规的 `ffmpeg.exe` 放在 `BiliDownloader.v1.4.exe` 相邻的 `tools` 文件夹中，无需修改系统 `PATH`。
+程序只展示 yt-dlp 在当前账号、视频、地区、平台策略和支持能力下实际解析到的格式。FFmpeg 用于合并音视频流；v2.0 不捆绑 `ffmpeg.exe` 或 `ffprobe.exe`。程序依次查找 EXE 相邻的 `tools\ffmpeg.exe`、PyInstaller 资源目录中的同一布局和绝对 `PATH` 目录；不会从任意当前工作目录执行 FFmpeg。onefile 用户可把自行取得且合规的 `ffmpeg.exe` 放在 `BiliDownloader.v2.0.exe` 相邻的 `tools` 文件夹中，无需修改系统 `PATH`。
 
 ## URL、短链与封面边界
 
