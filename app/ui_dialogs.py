@@ -86,26 +86,30 @@ class DiagnosticsDialog(QDialog):
         self.update_label = QLabel("尚未检查更新")
         self.update_label.setWordWrap(True)
 
-        buttons = QHBoxLayout()
+        local_buttons = QHBoxLayout()
         self.rerun_button = QPushButton("重新检测")
-        self.copy_button = QPushButton("复制脱敏报告")
+        self.copy_button = QPushButton("复制诊断报告")
         self.update_button = QPushButton("检查更新")
         self.open_release_button = QPushButton("打开新版页面")
         self.open_release_button.setEnabled(False)
+        self.open_release_button.hide()
         self.close_button = QPushButton("关闭")
-        for button in (
-            self.rerun_button,
-            self.copy_button,
-            self.update_button,
-            self.open_release_button,
-            self.close_button,
-        ):
-            buttons.addWidget(button)
+        local_buttons.addWidget(self.rerun_button)
+        local_buttons.addWidget(self.copy_button)
+        local_buttons.addStretch(1)
+        local_buttons.addWidget(self.close_button)
+
+        update_buttons = QHBoxLayout()
+        update_buttons.addWidget(QLabel("联网更新（仅在点击后访问 GitHub）"))
+        update_buttons.addStretch(1)
+        update_buttons.addWidget(self.update_button)
+        update_buttons.addWidget(self.open_release_button)
 
         layout.addWidget(intro)
         layout.addWidget(self.tree, 1)
         layout.addWidget(self.update_label)
-        layout.addLayout(buttons)
+        layout.addLayout(update_buttons)
+        layout.addLayout(local_buttons)
 
         self.rerun_button.clicked.connect(self.start_diagnostics)
         self.copy_button.clicked.connect(self.copy_report)
@@ -173,7 +177,9 @@ class DiagnosticsDialog(QDialog):
     def on_update_finished(self, result: UpdateCheckResult) -> None:
         self.update_result = result
         self.update_label.setText(result.message)
-        self.open_release_button.setEnabled(bool(result.update_available and result.release_url))
+        has_release = bool(result.update_available and result.release_url)
+        self.open_release_button.setVisible(has_release)
+        self.open_release_button.setEnabled(has_release)
 
     @Slot()
     def open_release(self) -> None:
@@ -194,7 +200,13 @@ class DiagnosticsDialog(QDialog):
 
     def request_shutdown(self) -> None:
         self._closing = True
-        for button in (self.rerun_button, self.copy_button, self.update_button, self.open_release_button, self.close_button):
+        for button in (
+            self.rerun_button,
+            self.copy_button,
+            self.update_button,
+            self.open_release_button,
+            self.close_button,
+        ):
             button.setEnabled(False)
         for task in self._tasks:
             request_cancel = getattr(task.worker, "request_cancel", None)
@@ -234,6 +246,9 @@ class DownloadResultDialog(QDialog):
         self.context_label = QLabel(f"视频：{video_title}\n清晰度：{format_label}")
         self.context_label.setWordWrap(True)
         self.summary_label = QLabel()
+        self.saved_label = QLabel()
+        self.saved_label.setWordWrap(True)
+        self.saved_label.hide()
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["分 P", "标题", "状态", "输出文件", "错误"])
@@ -254,6 +269,7 @@ class DownloadResultDialog(QDialog):
 
         layout.addWidget(self.context_label)
         layout.addWidget(self.summary_label)
+        layout.addWidget(self.saved_label)
         layout.addWidget(self.table, 1)
         layout.addLayout(buttons)
 
@@ -291,6 +307,23 @@ class DownloadResultDialog(QDialog):
         self.table.resizeColumnsToContents()
         if self.table.rowCount():
             self.table.selectRow(0)
+        compact = (
+            len(result.part_results) == 1
+            and bool(result.completed)
+            and len(result.part_results[0].saved_files) == 1
+        )
+        if compact:
+            saved_path = Path(result.part_results[0].saved_files[0])
+            self.saved_label.setText(f"已保存：{saved_path.name}")
+            self.saved_label.setToolTip(str(saved_path))
+            self.resize(620, 220)
+        else:
+            self.saved_label.clear()
+            self.saved_label.setToolTip("")
+            self.resize(860, 500)
+        self.saved_label.setVisible(compact)
+        self.table.setVisible(not compact)
+        self.retry_button.setVisible(not compact)
         self.retry_button.setEnabled(bool(result.failed) and self.retry_valid)
         self._update_actions()
 

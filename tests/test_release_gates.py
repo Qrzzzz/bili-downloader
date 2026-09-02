@@ -10,24 +10,24 @@ from types import SimpleNamespace
 import pytest
 
 
-def test_release_version_is_1_4_and_windows_compatible() -> None:
+def test_release_version_is_2_0_and_windows_compatible() -> None:
     app = importlib.import_module("app")
     version_tool = importlib.import_module("tools.write_version_info")
 
     assert app.__app_name__ == "Bili Downloader Lite"
-    assert app.__version__ == "1.4"
-    assert version_tool._numeric_version(app.__version__) == (1, 4, 0, 0)
+    assert app.__version__ == "2.0"
+    assert version_tool._numeric_version(app.__version__) == (2, 0, 0, 0)
     resource = version_tool._version_resource(
         app.__version__,
-        (1, 4, 0, 0),
+        (2, 0, 0, 0),
         "a" * 40,
         False,
         "2026-07-12T00:00:00Z",
     )
     assert "StringStruct('ProductName', 'Bili Downloader Lite')" in resource
-    assert "StringStruct('OriginalFilename', 'BiliDownloader.v1.4.exe')" in resource
-    assert "StringStruct('FileVersion', '1.4')" in resource
-    assert "StringStruct('ProductVersion', '1.4')" in resource
+    assert "StringStruct('OriginalFilename', 'BiliDownloader.v2.0.exe')" in resource
+    assert "StringStruct('FileVersion', '2.0')" in resource
+    assert "StringStruct('ProductVersion', '2.0')" in resource
 
 
 @pytest.mark.parametrize("version", ["1", "1.2.0", "v1.2", "1.2rc1", "1.2.3.4"])
@@ -112,9 +112,10 @@ def test_workflows_pin_actions_and_keep_public_network_out_of_quality() -> None:
     assert "public_qr_smoke.py" in public_smoke
 
     release = workflows["release.yml"]
-    assert "tags:\n      - v1.4" in release
-    assert "RELEASE_TITLE: Bili Downloader Lite v1.4" in release
-    assert "BiliDownloader.v1.4.exe" in release
+    assert "tags:\n      - v2.0" in release
+    assert "RELEASE_TITLE: Bili Downloader Lite v2.0" in release
+    assert "BiliDownloader.v2.0.exe" in release
+    assert 'docs/releases/v2.0.md' in release
     assert "attestations: write" in release
     assert "id-token: write" in release
 

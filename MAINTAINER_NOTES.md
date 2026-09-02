@@ -1,11 +1,11 @@
 # Maintainer Notes
 
-## v1.4 候选发布边界
+## v2.0 候选发布边界
 
-- 版本严格为源码 `1.4`、标签 `v1.4`、成品 `BiliDownloader.v1.4.exe`、Release 标题 `Bili Downloader Lite v1.4`；不允许多一级版本。
-- 已公开 `v1.1`、`v1.2` 与 `v1.3` 是不可改写历史，不得移动、删除或重置标签。v1.4 必须从已验收发布的 v1.3 提交 `01d7a0df4fee38e31067f4971f92a70de45e7c54` 发展。
+- 版本严格为源码 `2.0`、标签 `v2.0`、成品 `BiliDownloader.v2.0.exe`、Release 标题 `Bili Downloader Lite v2.0`；不允许多一级版本。
+- 已公开 `v1.1`、`v1.2`、`v1.3` 与 `v1.4` 是不可改写历史，不得移动、删除或重置标签。v2.0 必须从已验收发布的 v1.4 提交 `fba7d60acabfcddfd06edea7b2a090ff36cb6f07` 发展。
 - `quality.yml` 只运行确定性检查，不访问 Bilibili 实时网络。`public-smoke.yml` 仅定时/手动运行匿名解析和二维码首次等待态检查；HTTP 412 必须失败留证。
-- `release.yml` 只由精确 `v1.4` 触发，并绑定 tag/source/commit/PE/asset/digest/attestation。不得从分支 push 触发发布。
+- `release.yml` 只由精确 `v2.0` 触发，并绑定 tag/source/commit/PE/asset/digest/attestation。不得从分支 push 触发发布。
 - 构建固定 Windows x64 + Python 3.13；`build.ps1` 每次重建 `build\.venv`，只从哈希锁安装 wheel。
 - 不设 EXE 体积阈值。删除浏览器自动化依赖后的自然缩小是预期结果，禁止填充无用内容。
 
@@ -25,7 +25,13 @@
 - `playwright-profile` 和 `login-cache` 只是历史残留清理名称，不是运行时依赖。临时 Netscape lease 只在全局 session 锁内创建和销毁，使用期由各自 owner marker 的跨进程活动锁保护；不得重新让全局锁覆盖网络解析或下载。匿名模式不得读取凭据。
 - canonical 已存在时也必须先解密并验证结构，再清理精确的旧明文目标；canonical 损坏时不得清理旧明文。过期 lease、原子临时文件和历史隔离目录必须同时满足应用目录、精确命名/owner marker 与保守年龄条件。
 
-## v1.4 稳定性边界
+## v2.0 界面与生命周期边界
+
+- 主窗口按任务阶段渐进披露：初始链接入口、解析后视频与选项、下载进度与取消、最终结果；日志、诊断和隐私说明保留但默认不抢占主流程。
+- 单 P 隐藏选集，多 P 保留选择摘要与列表。单 P 且只有一个成功输出时可使用紧凑结果页；多输出、多 P、失败、取消与重试继续使用完整明细表。
+- `closing` 是最高优先级终态；下载期间不得启动新解析或让迟到解析回调隐藏取消入口。修改 URL 必须立即撤销旧下载目标，但不得中断已经开始的任务。
+
+## v1.4 稳定性边界（v2.0 继续保留）
 
 - FFmpeg 查找顺序固定为 EXE 相邻 `tools\ffmpeg.exe`、PyInstaller 资源目录同布局、绝对 PATH；不搜索当前工作目录，不下载、不捆绑、不安装，也不修改系统 PATH。
 - b23 只手工处理 301/302/303/307/308；每跳请求前验证官方 HTTPS 主机、无 userinfo、无异常端口，限制跳数和循环。最终必须是受支持的 bilibili.com BV/av 视频 URL。
