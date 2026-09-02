@@ -450,6 +450,37 @@ def parse_video_info(
     )
 
 
+def _is_allowed_thumbnail_host(host: str) -> bool:
+    normalized = host.lower().rstrip(".")
+    try:
+        ipaddress.ip_address(normalized)
+    except ValueError:
+        return any(
+            normalized == domain or normalized.endswith(f".{domain}")
+            for domain in THUMBNAIL_HOST_DOMAINS
+        )
+    return False
+
+
+def _upgrade_trusted_thumbnail_url(url: str) -> str:
+    """Upgrade an official CDN URL without ever requesting it over plain HTTP."""
+
+    if not isinstance(url, str) or not url or any(ord(character) < 0x20 for character in url):
+        return url
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != "http" or not parsed.hostname:
+        return url
+    if parsed.username is not None or parsed.password is not None:
+        return url
+    try:
+        port = parsed.port
+    except ValueError:
+        return url
+    if port is not None or not _is_allowed_thumbnail_host(parsed.hostname):
+        return url
+    return parsed._replace(scheme="https").geturl()
+
+
 def _validate_thumbnail_url(url: str) -> None:
     if not isinstance(url, str) or not url or any(ord(character) < 0x20 for character in url):
         raise ValueError("封面地址格式无效。")
@@ -471,14 +502,14 @@ def _validate_thumbnail_url(url: str) -> None:
         pass
     else:
         raise ValueError("封面地址不能使用 IP 地址。")
-    if not any(host == domain or host.endswith(f".{domain}") for domain in THUMBNAIL_HOST_DOMAINS):
+    if not _is_allowed_thumbnail_host(parsed.hostname):
         raise ValueError("封面地址不是允许的 Bilibili/CDN 主机。")
 
 
 def fetch_thumbnail(url: str) -> bytes:
     if not url:
         return b""
-    current = url
+    current = _upgrade_trusted_thumbnail_url(url)
     seen: set[str] = set()
     for redirect_count in range(THUMBNAIL_MAX_REDIRECTS + 1):
         _validate_thumbnail_url(current)

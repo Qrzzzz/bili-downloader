@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.1] - 2026-09-03
+
+### 封面兼容性修复
+
+- 修复 Bilibili 视频信息 API 返回官方 CDN `http://` 封面地址时，安全校验直接拒绝该地址、导致视频解析成功但封面保持空白的问题。
+- 对无 userinfo、无自定义端口且主机位于既有 Bilibili/官方 CDN 允许列表的 HTTP 封面，在任何网络请求前升级为 HTTPS；外域、IP、含凭据或自定义端口地址仍保持拒绝。
+- 保留封面下载的手工重定向、连接/读取超时、Content-Type、声明长度、streaming 实际 5 MiB 上限，以及“封面失败不覆盖视频解析成功”的边界。
+- 没有新增运行时依赖，也不改变下载、扫码登录、权限、FFmpeg 或主界面任务流程。
+
 ## [2.0] - 2026-09-02
 
 ### 主流程与信息层级
