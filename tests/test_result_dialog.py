@@ -67,6 +67,102 @@ def test_result_dialog_opens_existing_file_and_retries_only_failures(
     assert not dialog.retry_button.isEnabled()
 
 
+def test_single_success_result_uses_compact_presentation(qtbot: Any, tmp_path: Path) -> None:
+    dialogs = importlib.import_module("app.ui_dialogs")
+    downloader = importlib.import_module("app.downloader")
+    first, _second = _parts(downloader)
+    output = tmp_path / "single.mp4"
+    output.write_bytes(b"video")
+    result = downloader.DownloadBatchResult(
+        (
+            downloader.PartDownloadResult(
+                first,
+                downloader.PartDownloadStatus.COMPLETED,
+                (str(output),),
+            ),
+        )
+    )
+
+    dialog = dialogs.DownloadResultDialog(result, video_title="单 P 视频", format_label="1080p")
+    qtbot.addWidget(dialog)
+
+    assert dialog.table.isHidden()
+    assert dialog.retry_button.isHidden()
+    assert not dialog.saved_label.isHidden()
+    assert dialog.saved_label.text() == "已保存：single.mp4"
+    assert dialog.saved_label.toolTip() == str(output)
+    assert dialog.summary_label.text() == "任务结束：成功 1，失败 0，取消 0。"
+    assert dialog.open_file_button.isEnabled()
+    assert dialog.open_folder_button.isEnabled()
+
+
+def test_single_success_with_multiple_outputs_keeps_detail_table(qtbot: Any, tmp_path: Path) -> None:
+    dialogs = importlib.import_module("app.ui_dialogs")
+    downloader = importlib.import_module("app.downloader")
+    first, _second = _parts(downloader)
+    video = tmp_path / "single.mp4"
+    audio = tmp_path / "single.m4a"
+    video.write_bytes(b"video")
+    audio.write_bytes(b"audio")
+    result = downloader.DownloadBatchResult(
+        (
+            downloader.PartDownloadResult(
+                first,
+                downloader.PartDownloadStatus.COMPLETED,
+                (str(video), str(audio)),
+            ),
+        )
+    )
+
+    dialog = dialogs.DownloadResultDialog(result, video_title="单 P 多输出", format_label="1080p")
+    qtbot.addWidget(dialog)
+
+    assert not dialog.table.isHidden()
+    assert dialog.saved_label.isHidden()
+    assert dialog.table.item(0, 3).text() == "single.mp4；single.m4a"
+    assert dialog.table.item(0, 3).toolTip() == f"{video}\n{audio}"
+
+
+def test_single_retry_success_switches_to_compact_presentation(qtbot: Any, tmp_path: Path) -> None:
+    dialogs = importlib.import_module("app.ui_dialogs")
+    downloader = importlib.import_module("app.downloader")
+    first, _second = _parts(downloader)
+    error = downloader.ErrorClassification(downloader.ErrorKind.TIMEOUT, "网络超时", True)
+    original = downloader.DownloadBatchResult(
+        (
+            downloader.PartDownloadResult(
+                first,
+                downloader.PartDownloadStatus.FAILED,
+                error=error,
+            ),
+        )
+    )
+    output = tmp_path / "retried.mp4"
+    output.write_bytes(b"video")
+    retry = downloader.DownloadBatchResult(
+        (
+            downloader.PartDownloadResult(
+                first,
+                downloader.PartDownloadStatus.COMPLETED,
+                (str(output),),
+            ),
+        )
+    )
+    dialog = dialogs.DownloadResultDialog(original, video_title="重试视频", format_label="720p")
+    qtbot.addWidget(dialog)
+
+    assert not dialog.table.isHidden()
+    assert not dialog.retry_button.isHidden()
+    assert dialog.retry_button.isEnabled()
+
+    dialog.merge_retry_result(retry)
+
+    assert dialog.table.isHidden()
+    assert dialog.retry_button.isHidden()
+    assert not dialog.saved_label.isHidden()
+    assert dialog.saved_label.text() == "已保存：retried.mp4"
+
+
 def test_result_dialog_merge_and_invalidation(
     qtbot: Any,
     tmp_path: Path,
