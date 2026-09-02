@@ -1,30 +1,122 @@
-# Bili Downloader Lite
+<div align="center">
 
-一个 Windows x64 单窗口桌面程序，用于解析并下载用户有权访问的 Bilibili 视频内容。当前源码与候选发布版本为 **2.0**；已公开版本以 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases) 为准。
+# 📺 Bili Downloader Lite
 
-本项目只服务于合法、授权、个人备份或学习场景，不支持绕过会员、付费、DRM、地区、风控或其他访问限制。
+### 简洁、原生的 Bilibili 视频解析与下载工具
 
-## 功能与边界
+**Bilibili 链接 / BV / av · 分 P 选择 · 当前账号可用画质 · 应用内扫码登录 · Windows x64**
 
-- 支持 Bilibili 视频链接、BV 号和 av 号，显示标题、UP 主、时长、封面、分 P 和当前可用清晰度。
-- 通过 yt-dlp Python API 下载，支持进度、取消、逐分 P 结果、失败项重试、日志和诊断。
-- 扫码登录直接在应用内显示本地生成的二维码；不启动浏览器，不读取日常浏览器 Cookie，不要求输入账号密码。
-- 保持 Python 3.13 + PySide6 + yt-dlp + PyInstaller 的 Windows x64 单窗口形态。不使用 Electron、Tauri、WebView2、QtWebEngine、后台服务或自动更新器。
-- 不安装或内置 Chromium，不捆绑 FFmpeg。
+<p>
+  <strong>导航</strong><br/>
+  <a href="https://github.com/Qrzzzz/bili-downloader/releases/latest">下载最新版</a> ·
+  <a href="./docs/releases/v2.1.md">v2.1 发布说明</a> ·
+  <a href="#主要功能">主要功能</a> ·
+  <a href="#从源码运行">从源码运行</a> ·
+  <a href="./SECURITY.md">安全策略</a> ·
+  <a href="./DISCLAIMER.md">使用声明</a> ·
+  <a href="./LICENSE">许可证</a>
+</p>
 
-## 发布资产
+![Platform](https://img.shields.io/badge/Platform-Windows%20x64-0078D4)
+![Runtime](https://img.shields.io/badge/Runtime-Python%203.13-3776AB)
+![UI](https://img.shields.io/badge/UI-PySide6-41CD52)
+![Downloader](https://img.shields.io/badge/Downloader-yt--dlp-FF5722)
+![Release](https://img.shields.io/github/v/release/Qrzzzz/bili-downloader)
+![License](https://img.shields.io/badge/License-MIT-7C3AED)
 
-v2.0 Release 标题固定为 `Bili Downloader Lite v2.0`，并只包含：
+</div>
 
-- `BiliDownloader.v2.0.exe`
-- `BiliDownloader.v2.0.sbom.json`
-- `SHA256SUMS`
+---
 
-版本只使用两级数字。发布时，源码、标签、PE 元数据、文件名与 Release 标题必须一致。
+> 本项目仅用于合法、授权、个人备份或学习场景。使用者应确保自己拥有下载和使用相关内容的权利，并遵守 Bilibili 服务条款及所在地法律法规。本项目与 Bilibili 官方无关，不提供或支持会员、付费、地区、风控、DRM 等限制的绕过能力。
 
-## 从源码运行
+## 📦 下载与使用
 
-已验证目标为 Windows x64 + Python 3.13。`requirements.txt` 锁定完整传递依赖和 SHA-256，并只允许 wheel：
+最新公开版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest) 获取。v2.1 的 Windows x64 发布文件为：
+
+* 主程序：`BiliDownloader.v2.1.exe`
+* 软件物料清单：`BiliDownloader.v2.1.sbom.json`
+* 校验文件：`SHA256SUMS`
+
+主程序为单文件应用，无需安装 Python 或 Node.js。下载前请自行准备合法来源的 `ffmpeg.exe`，并选择以下任一方式放置：
+
+1. 放入主程序相邻的 `tools\ffmpeg.exe`。
+2. 将 FFmpeg 所在的绝对目录加入系统 `PATH`。
+
+程序不会下载、安装或捆绑 FFmpeg，也不会从任意当前工作目录执行它。
+
+### 基本流程
+
+1. 运行 `BiliDownloader.v2.1.exe`。
+2. 粘贴 Bilibili 视频链接、BV 号或 av 号并解析。
+3. 如需账号权限下的更多可用画质，可使用应用内二维码扫码登录。
+4. 选择分 P、画质和保存目录后开始下载。
+5. 在任务结果中查看成功、失败或取消的项目，并按需重试失败项。
+
+### v2.1 更新重点
+
+* 修复部分视频信息解析成功、但封面保持空白的问题。
+* 兼容 Bilibili API 返回的官方 CDN HTTP 封面地址：只有无凭据、无自定义端口且属于既有允许列表的地址，才会在请求前升级为 HTTPS。
+* 外域、IP、含凭据或自定义端口的 HTTP 地址仍会被拒绝；程序不会通过明文 HTTP 下载封面。
+* 没有新增运行时依赖，不改变下载、扫码登录、权限、FFmpeg 或主界面任务流程。
+
+<a id="主要功能"></a>
+
+## ✨ 主要功能
+
+### 🎬 视频解析与下载
+
+* 支持标准 Bilibili 视频链接、`b23.tv` 短链、BV 号和 av 号
+* 显示标题、UP 主、时长、封面、分 P 和当前实际可用画质
+* 支持单 P 与多 P 选择、下载进度、取消、逐项结果和失败项重试
+* 通过 yt-dlp Python API 工作，不启动命令行子进程解析视频
+* 只展示当前账号、视频、地区和平台策略实际允许访问的格式
+
+### 🧭 清晰的任务流程
+
+* 初始界面聚焦链接输入、解析和账号状态
+* 解析成功后再显示视频信息、分 P、画质、保存目录和下载操作
+* 下载期间突出显示进度与取消入口，任务结束后展示紧凑或完整结果
+* 日志、环境诊断、隐私说明和详细任务信息默认收纳，不抢占主流程
+
+### 📱 应用内扫码登录
+
+* 二维码由应用使用 Segno 在本地生成，不启动浏览器
+* 不要求输入账号密码，也不读取日常浏览器 Cookie
+* 覆盖等待扫码、手机确认、过期、刷新、取消、超时和网络异常状态
+* 候选 Cookie 经过允许列表和 Bilibili NAV API 验证后，才会原子保存
+* Windows 登录态使用 DPAPI 保护；匿名模式不会读取已保存凭据
+
+### 🛡️ URL、封面与隐私边界
+
+* 视频输入和短链最终目标只接受受支持的 Bilibili 官方 HTTPS 地址
+* `b23.tv` 重定向逐跳校验，拒绝协议降级、外域、循环、异常端口和 IP 地址
+* 封面只通过 HTTPS 从 Bilibili 或官方 CDN 读取，并限制响应类型、超时和实际 5 MiB 大小
+* 封面失败只影响封面展示，不会覆盖已经成功的视频解析结果
+* 不收集遥测，不上传视频链接、下载记录、Cookie、账号信息或日志
+
+### 🪟 原生 Windows 桌面应用
+
+* 使用 Python 3.13、PySide6、yt-dlp 和 PyInstaller
+* 保持 Windows x64 原生单窗口体验
+* 不使用 Electron、Tauri、WebView2、QtWebEngine 或后台服务
+* 不安装或内置 Chromium，不提供浏览器 Cookie 导入
+* 支持多实例运行，并区分正常退出、异常退出和 PID 重用
+* 环境诊断默认只检查本地状态；只有用户主动点击“检查更新”时才访问 GitHub
+
+## 🔐 安全与使用边界
+
+本项目不会尝试绕过会员、付费、地区、DRM、风控或其他平台限制。HTTP 412 等平台拒绝会被如实报告，而不会通过削弱校验或伪装请求来规避。
+
+提交 issue、PR、截图或日志前，请删除 `SESSDATA`、`bili_jct`、`DedeUserID`、`qrcode_key`、`refresh_token`、完整扫码回调 URL、Cookie、session/profile 和可识别账号身份的信息。
+
+完整要求请阅读 [安全策略](./SECURITY.md) 与 [使用声明](./DISCLAIMER.md)。
+
+<a id="从源码运行"></a>
+
+## 🧰 从源码运行
+
+已验证环境为 Windows x64 + Python 3.13。依赖锁包含完整传递依赖与 SHA-256，并只允许安装 wheel：
 
 ```powershell
 python -m venv .venv
@@ -32,65 +124,42 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m app.main
 ```
 
-`requirements.in`、`requirements-dev.in` 和 `requirements-sbom.in` 记录直接依赖；对应 `.txt` 是 Python 3.13/Windows x64 哈希锁。v2.0 的二维码渲染依赖仍为无传递依赖的 `segno==1.6.6`，本版没有新增运行时依赖。
-
-## 打包 Windows exe
+<details>
+<summary><strong>展开查看测试与打包命令</strong></summary>
 
 ```powershell
-# onedir
+# 确认三组直接依赖与哈希锁一致
+python tools\verify_dependency_lock.py
+
+# 运行完整测试
+python -m pytest -q
+
+# 构建 onedir
 .\build.ps1 -Clean
 
-# onefile 候选发布包
+# 构建 onefile 候选包
 .\build.ps1 -Clean -OneFile
 ```
 
-默认 onedir 输出为 `dist\BiliDownloader\BiliDownloader.v2.0.exe`，onefile 输出为 `dist\BiliDownloader.v2.0.exe`。`build.ps1` 每次删除并重建 `build\.venv`，不复用开发环境。
+默认 onedir 输出为 `dist\BiliDownloader\BiliDownloader.v2.1.exe`，onefile 输出为 `dist\BiliDownloader.v2.1.exe`。`build.ps1` 会重新创建隔离的 `build\.venv`，不会复用开发环境。
 
-发布前必须运行 package smoke、PE/内嵌版本/提交校验和 PyInstaller 归档审计。审计会拒绝 Playwright 包与 driver/Node、`ms-playwright`、Chromium、Electron runtime、浏览器 profile、FFmpeg、凭据和日志。EXE 只测量实际字节和 MiB，不设体积阈值。
+发布前还需完成 package smoke、PE 与内嵌版本校验、PyInstaller 归档审计、SBOM、摘要及 attestation 检查。详见 [发布检查清单](./RELEASE_CHECKLIST.md) 与 [维护者说明](./MAINTAINER_NOTES.md)。
 
-## 应用内扫码登录
+</details>
 
-1. 程序用有限超时的 `requests.Session` 请求 Bilibili 官方网页扫码接口。
-2. 应用使用 Segno 在本地生成带完整 quiet zone 的 PNG，只显示图像，不展示或记录 key/URL。
-3. 等待扫码、已扫码待手机确认、过期、刷新、成功、取消、超时和网络/协议异常均有明确状态。刷新会废弃旧 key 和旧会话。
-4. 候选 Cookie 先经域名、名称和字段白名单过滤，再请求 NAV API 验证。只有服务端确认有效后，才会在跨线程/跨进程锁内用 DPAPI 原子替换 canonical session。
+## 🙏 致谢
 
-取消、过期、超时、离线、HTTP 412、协议异常或保存失败都不会删除或覆盖原有登录态。HTTP 412 会被如实报告为外部平台限制，程序不尝试绕过。
+感谢以下开源项目及其维护者：
 
-v1.2/v1.3 的 DPAPI canonical session schema 保持可读。程序先确认 canonical 数据可解密且结构有效，再精确删除本程序拥有的旧 `storage_state.json` / `cookies.txt`、`playwright-profile` / `login-cache`；损坏 canonical 不触发旧明文删除。过期 lease、失败原子临时文件和历史隔离残留仅在精确命名、应用目录所有权和保守年龄条件同时满足时清理。每个活动 lease 另有独立跨进程锁，因此多个实例可以同时读取各自的临时文件，清理与退出登录则会保守避开仍在使用的 lease。
+* [yt-dlp](https://github.com/yt-dlp/yt-dlp) 提供持续维护的视频解析与下载能力
+* [PySide6 / Qt for Python](https://doc.qt.io/qtforpython/) 提供原生 Windows 桌面界面
+* [Segno](https://segno.readthedocs.io/) 提供本地二维码生成能力
+* [Requests](https://requests.readthedocs.io/) 提供受控的网络请求基础
+* [FFmpeg](https://ffmpeg.org/) 提供音视频处理能力，由用户自行安装和配置
+* [PyInstaller](https://pyinstaller.org/) 提供 Windows 应用打包能力
 
-## 诊断、更新与公共网络 smoke
+## 📄 许可证
 
-打开“环境诊断”不会联网；它只检查本地二维码组件、FFmpeg、目录和本地登录态。只有用户点击“检查更新”时才访问 GitHub，且只接受可选 `v` / `V` 前缀加两级数字版本。
+本项目采用 [MIT License](./LICENSE)。你可以在许可证条款允许的范围内使用、复制、修改、合并、发布和分发本项目。
 
-PR/main 质量门禁的网络逻辑全部 mock。定时/手动 `public-smoke.yml` 独立运行匿名解析和“生成二维码 + 首次等待态”协议检查；`412` / `environment_blocked_412` 会失败并保留 JSON 证据。
-
-## 清晰度与 FFmpeg
-
-程序只展示 yt-dlp 在当前账号、视频、地区、平台策略和支持能力下实际解析到的格式。FFmpeg 用于合并音视频流；v2.0 不捆绑 `ffmpeg.exe` 或 `ffprobe.exe`。程序依次查找 EXE 相邻的 `tools\ffmpeg.exe`、PyInstaller 资源目录中的同一布局和绝对 `PATH` 目录；不会从任意当前工作目录执行 FFmpeg。onefile 用户可把自行取得且合规的 `ffmpeg.exe` 放在 `BiliDownloader.v2.0.exe` 相邻的 `tools` 文件夹中，无需修改系统 `PATH`。
-
-## URL、短链与封面边界
-
-- 输入、b23 最终目标和内部 canonical 视频 URL 共用独立的视频 URL 校验边界：只接受官方 HTTPS 主机、无用户信息、无异常端口的 BV/av 视频页与正整数 `p` 参数。
-- b23 展开禁用自动重定向，逐跳验证 301/302/303/307/308，限制跳数并拒绝循环、协议降级、外域、localhost、私网/IP literal 和畸形 `Location`。
-- 封面仅从 Bilibili/官方 CDN HTTPS 来源以 streaming 下载；连接/读取超时、Content-Type、声明长度和实际字节均有硬边界。封面失败只影响封面展示，不会把已成功的视频解析改判为失败。
-
-## 运行恢复与多实例
-
-运行标记使用版本化、原子写入的每实例文件，并用 Windows PID + 进程创建时间识别活跃实例、PID 重用和异常退出残留。程序不强制单实例；正常退出只删除本实例拥有的标记，不会删除其他活跃实例状态。
-
-## 隐私与安全
-
-- 程序本地运行，不收集遥测，不上传视频链接、下载记录、Cookie、账号信息或日志。
-- `qrcode_key`、完整轮询/成功回调 URL、`refresh_token`、Cookie 和响应原文不会记录或展示。
-- 提交 issue/PR 前请脱敏，不要上传 `SESSDATA`、`bili_jct`、`DedeUserID`、`storage_state.json`、`cookies.txt`、session/profile 或账号截图。
-
-更完整的发布、安全和合规要求见 [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)、[SECURITY.md](SECURITY.md) 与 [DISCLAIMER.md](DISCLAIMER.md)。
-
-## 鸣谢
-
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp)
-- [PySide6 / Qt for Python](https://doc.qt.io/qtforpython/)
-- [Segno](https://segno.readthedocs.io/)
-- [FFmpeg](https://ffmpeg.org/)
-- [PyInstaller](https://pyinstaller.org/)
+第三方组件仍遵循各自的许可证与通知要求，详见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
