@@ -94,7 +94,7 @@ jobs:
         shell: powershell
         timeout-minutes: 4
         run: |
-          $artifact = ".\dist\BiliDownloader.v2.0.exe"
+          $artifact = ".\dist\BiliDownloader.v2.1.exe"
           .\tools\package_smoke.ps1 -Executable $artifact
-          .\build\.venv\Scripts\python.exe tools\audit_release_artifact.py --executable $artifact --expected-version 2.0 --expected-commit $env:GITHUB_SHA --require-clean
+          .\build\.venv\Scripts\python.exe tools\audit_release_artifact.py --executable $artifact --expected-version 2.1 --expected-commit $env:GITHUB_SHA --require-clean
           if ($LASTEXITCODE -ne 0) { throw "artifact audit failed with exit code $LASTEXITCODE" }

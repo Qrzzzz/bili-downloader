@@ -397,6 +397,47 @@ def test_thumbnail_streaming_accepts_small_image_and_closes_response(
     assert response.closed
 
 
+def test_thumbnail_upgrades_trusted_http_cdn_before_request(
+    downloader: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = "http://i1.hdslb.com/bfs/archive/cover.jpg"
+    upgraded = "https://i1.hdslb.com/bfs/archive/cover.jpg"
+    response = FakeResponse(
+        upgraded,
+        headers={"Content-Type": "image/jpeg", "Content-Length": "6"},
+        chunks=(b"abc", b"def"),
+    )
+    requested: list[str] = []
+
+    def get(url: str, **_kwargs: object) -> FakeResponse:
+        requested.append(url)
+        return response
+
+    monkeypatch.setattr(downloader.requests, "get", get)
+
+    assert downloader.fetch_thumbnail(source) == b"abcdef"
+    assert requested == [upgraded]
+    assert response.closed
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://example.com/cover.jpg",
+        "http://user@i1.hdslb.com/cover.jpg",
+        "http://i1.hdslb.com:80/cover.jpg",
+        "http://127.0.0.1/cover.jpg",
+    ],
+)
+def test_thumbnail_does_not_upgrade_untrusted_or_ambiguous_http_url(
+    downloader: Any,
+    url: str,
+) -> None:
+    with pytest.raises(ValueError, match="HTTPS"):
+        downloader.fetch_thumbnail(url)
+
+
 @pytest.mark.parametrize(
     "headers",
     [
