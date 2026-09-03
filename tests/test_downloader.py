@@ -557,6 +557,131 @@ def test_format_labels_distinguish_8k_and_2880p(downloader: Any) -> None:
     assert "2160p" in by_height[2160].label and "4K" in by_height[2160].label
 
 
+def test_audio_mp3_mode_uses_best_audio_and_ffmpeg_conversion(
+    downloader: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    part = _parts(downloader, 1)[0]
+    controller = downloader.DownloadController()
+    scenario = YdlScenario({part.url: _formats(1080, sized=True)})
+    events: list[dict[str, Any]] = []
+
+    def download_audio(ydl: FakeYoutubeDL, url: str) -> dict[str, Any]:
+        assert ydl.options["format"] == "bestaudio/best"
+        assert ydl.options["ffmpeg_location"] == "X:/synthetic/ffmpeg.exe"
+        assert "merge_output_format" not in ydl.options
+        assert ydl.options["postprocessors"] == [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }
+        ]
+        _run_hooks(
+            ydl.options,
+            "progress_hooks",
+            {"status": "finished", "downloaded_bytes": 100, "total_bytes": 100},
+        )
+        _run_hooks(ydl.options, "postprocessor_hooks", {"status": "started"})
+        assert controller.phase == "converting"
+        output = Path(ydl.options["paths"]["home"]) / "audio.mp3"
+        output.write_bytes(b"synthetic mp3")
+        _run_hooks(ydl.options, "postprocessor_hooks", {"status": "finished"})
+        _run_hooks(ydl.options, "post_hooks", str(output))
+        return {"id": Path(url).name, "filepath": str(output)}
+
+    scenario.download_actions = {part.url: download_audio}
+    _install_scenario(downloader, monkeypatch, scenario)
+
+    result = downloader.download_videos(
+        [part],
+        _config(downloader, tmp_path),
+        str(tmp_path / "output"),
+        "height<=1080",
+        events.append,
+        controller=controller,
+        mode=downloader.DownloadMode.AUDIO_MP3,
+    )
+
+    assert result.saved_files == (str(tmp_path / "output" / "audio.mp3"),)
+    assert any(event["phase"] == "converting" for event in events)
+    assert scenario.options[0]["skip_download"] is True
+    assert controller.phase == "finished"
+
+
+def test_default_download_mode_keeps_the_existing_mp4_merge_options(
+    downloader: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    part = _parts(downloader, 1)[0]
+    scenario = YdlScenario({part.url: _formats(1080)})
+    scenario.download_actions = {part.url: _success_action("video.mp4")}
+    _install_scenario(downloader, monkeypatch, scenario)
+
+    downloader.download_videos(
+        [part],
+        _config(downloader, tmp_path),
+        str(tmp_path / "output"),
+        "bestvideo[height=1080]+bestaudio/best[height=1080]",
+        lambda _status: None,
+    )
+
+    options = scenario.options[-1]
+    assert options["format"] == "bestvideo[height=1080]+bestaudio/best[height=1080]"
+    assert options["merge_output_format"] == "mp4"
+    assert "postprocessors" not in options
+
+
+def test_audio_mp3_preflight_checks_every_part_before_zero_downloads(
+    downloader: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    parts = _parts(downloader, 2)
+    video_only = [{"format_id": "video", "height": 1080, "vcodec": "avc1", "acodec": "none"}]
+    scenario = YdlScenario({parts[0].url: _formats(1080), parts[1].url: video_only})
+    _install_scenario(downloader, monkeypatch, scenario)
+
+    with pytest.raises(downloader.FormatPreflightError) as caught:
+        downloader.download_videos(
+            parts,
+            _config(downloader, tmp_path),
+            str(tmp_path / "output"),
+            "height<=1080",
+            lambda _status: None,
+            mode=downloader.DownloadMode.AUDIO_MP3,
+        )
+
+    assert caught.value.height is None
+    assert [item.part.index for item in caught.value.missing] == [2]
+    assert "可下载音频格式" in str(caught.value)
+    assert scenario.calls == [(part.url, False) for part in parts]
+
+
+def test_audio_mp3_plan_estimates_only_the_audio_stream(
+    downloader: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    part = _parts(downloader, 1)[0]
+    scenario = YdlScenario({part.url: _formats(1080, sized=True)})
+    _install_scenario(downloader, monkeypatch, scenario)
+
+    plan = downloader.prepare_download_plan(
+        [part],
+        _config(downloader, tmp_path),
+        "height<=1080",
+        mode=downloader.DownloadMode.AUDIO_MP3,
+    )
+
+    assert plan.mode is downloader.DownloadMode.AUDIO_MP3
+    assert plan.requested_height is None
+    assert plan.parts[0].selector == "bestaudio/best"
+    assert plan.parts[0].estimated_bytes == 2 * 1024 * 1024
+
+
 def test_exact_height_preflight_checks_every_part_before_zero_downloads(
     downloader: Any,
     monkeypatch: pytest.MonkeyPatch,

@@ -9,7 +9,7 @@
 <p>
   <strong>导航</strong><br/>
   <a href="https://github.com/Qrzzzz/bili-downloader/releases/latest">下载最新版</a> ·
-  <a href="./docs/releases/v2.1.md">v2.1 发布说明</a> ·
+  <a href="./docs/releases/v2.2.md">v2.2 发布说明</a> ·
   <a href="#主要功能">主要功能</a> ·
   <a href="#从源码运行">从源码运行</a> ·
   <a href="./SECURITY.md">安全策略</a> ·
@@ -32,10 +32,10 @@
 
 ## 📦 下载与使用
 
-最新公开版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest) 获取。v2.1 的 Windows x64 发布文件为：
+最新公开版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest) 获取。v2.2 的 Windows x64 发布文件为：
 
-* 主程序：`BiliDownloader.v2.1.exe`
-* 软件物料清单：`BiliDownloader.v2.1.sbom.json`
+* 主程序：`BiliDownloader.v2.2.exe`
+* 软件物料清单：`BiliDownloader.v2.2.sbom.json`
 * 校验文件：`SHA256SUMS`
 
 主程序为单文件应用，无需安装 Python 或 Node.js。下载前请自行准备合法来源的 `ffmpeg.exe`，并选择以下任一方式放置：
@@ -47,18 +47,18 @@
 
 ### 基本流程
 
-1. 运行 `BiliDownloader.v2.1.exe`。
+1. 运行 `BiliDownloader.v2.2.exe`。
 2. 粘贴 Bilibili 视频链接、BV 号或 av 号并解析。
 3. 如需账号权限下的更多可用画质，可使用应用内二维码扫码登录。
-4. 选择分 P、画质和保存目录后开始下载。
+4. 选择音视频 MP4 或仅音频 MP3，按需选择分 P、画质和保存目录后开始下载。
 5. 在任务结果中查看成功、失败或取消的项目，并按需重试失败项。
 
-### v2.1 更新重点
+### v2.2 更新重点
 
-* 修复部分视频信息解析成功、但封面保持空白的问题。
-* 兼容 Bilibili API 返回的官方 CDN HTTP 封面地址：只有无凭据、无自定义端口且属于既有允许列表的地址，才会在请求前升级为 HTTPS。
-* 外域、IP、含凭据或自定义端口的 HTTP 地址仍会被拒绝；程序不会通过明文 HTTP 下载封面。
-* 没有新增运行时依赖，不改变下载、扫码登录、权限、FFmpeg 或主界面任务流程。
+* 新增“仅音频（MP3）”下载模式，选取最佳可用音轨并通过 FFmpeg 转换为 192 kbps MP3。
+* 选择仅音频时自动收起视频清晰度，保留分 P 选择、下载进度、安全取消、逐项结果和失败重试。
+* 在全批次下载前逐分 P 预检音轨，并按音频流估算磁盘空间。
+* 没有新增运行时依赖；继续使用用户自行提供的外置 FFmpeg，不下载、安装或捆绑 FFmpeg。
 
 <a id="主要功能"></a>
 
@@ -68,6 +68,7 @@
 
 * 支持标准 Bilibili 视频链接、`b23.tv` 短链、BV 号和 av 号
 * 显示标题、UP 主、时长、封面、分 P 和当前实际可用画质
+* 支持音视频 MP4 和 192 kbps MP3 仅音频下载
 * 支持单 P 与多 P 选择、下载进度、取消、逐项结果和失败项重试
 * 通过 yt-dlp Python API 工作，不启动命令行子进程解析视频
 * 只展示当前账号、视频、地区和平台策略实际允许访问的格式
@@ -141,7 +142,7 @@ python -m pytest -q
 .\build.ps1 -Clean -OneFile
 ```
 
-默认 onedir 输出为 `dist\BiliDownloader\BiliDownloader.v2.1.exe`，onefile 输出为 `dist\BiliDownloader.v2.1.exe`。`build.ps1` 会重新创建隔离的 `build\.venv`，不会复用开发环境。
+默认 onedir 输出为 `dist\BiliDownloader\BiliDownloader.v2.2.exe`，onefile 输出为 `dist\BiliDownloader.v2.2.exe`。`build.ps1` 会重新创建隔离的 `build\.venv`，不会复用开发环境。
 
 发布前还需完成 package smoke、PE 与内嵌版本校验、PyInstaller 归档审计、SBOM、摘要及 attestation 检查。详见 [发布检查清单](./RELEASE_CHECKLIST.md) 与 [维护者说明](./MAINTAINER_NOTES.md)。
 

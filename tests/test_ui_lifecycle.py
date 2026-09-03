@@ -302,6 +302,63 @@ def test_main_window_progressively_discloses_task_controls(ui: Any, qtbot: Any) 
     assert window.download_button.isEnabled()
 
 
+def test_audio_mode_hides_resolution_and_builds_an_mp3_request(
+    ui: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    qtbot: Any,
+) -> None:
+    source_url = "https://www.bilibili.com/video/BV1aa411c7mD"
+    window = ui.MainWindow(safe_mode=True)
+    qtbot.addWidget(window)
+    monkeypatch.setattr(ui, "save_config", lambda _config: None)
+    started: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(window, "_begin_download", lambda parts: started.append(tuple(parts)))
+    window.url_edit.setText(source_url)
+    window.on_parse_finished(source_url, _video_result(ui, "Audio", source_url))
+
+    assert window.download_mode_combo.currentData() == ui.DownloadMode.AUDIO_VIDEO.value
+    assert not window.format_combo.isHidden()
+    assert window.download_button.text() == "下载"
+
+    window.download_mode_combo.setCurrentIndex(
+        window.download_mode_combo.findData(ui.DownloadMode.AUDIO_MP3.value)
+    )
+
+    assert window.format_combo.isHidden()
+    assert window.format_field_label.isHidden()
+    assert not window.format_note_label.isHidden()
+    assert "192 kbps MP3" in window.format_note_label.text()
+    assert window.download_button.text() == "下载音频"
+
+    window.start_download()
+
+    assert started
+    assert window.download_request is not None
+    assert window.download_request.mode is ui.DownloadMode.AUDIO_MP3
+    assert window.download_request.format_selector == "bestaudio/best"
+    assert window.download_request.format_label == "仅音频（MP3，192 kbps）"
+
+
+def test_audio_conversion_progress_and_cancel_use_postprocessing_language(
+    ui: Any,
+    qtbot: Any,
+) -> None:
+    window = ui.MainWindow(safe_mode=True)
+    qtbot.addWidget(window)
+    controller = ui.DownloadController()
+    controller.set_phase("converting")
+    window.download_controller = controller
+
+    window.on_download_progress(
+        {"phase": "converting", "part_number": 1, "part_count": 2, "overall_percent": 90}
+    )
+    assert window.status_label.text() == "正在转换第 1/2 个分 P 为 MP3"
+
+    window.cancel_download()
+    assert controller.waiting_for_postprocessing
+    assert window.status_label.text() == "正在安全结束当前文件处理..."
+
+
 def test_multi_part_result_shows_only_contextual_picker(ui: Any, qtbot: Any) -> None:
     source_url = "https://www.bilibili.com/video/BV1aa411c7mD"
     window = ui.MainWindow(safe_mode=True)
@@ -497,7 +554,7 @@ def test_url_change_parse_failure_and_stale_callback_cannot_download_old_video(
 
     window = ui.MainWindow(safe_mode=True)
     qtbot.addWidget(window)
-    assert window.windowTitle() == "Bili Downloader Lite V2.1"
+    assert window.windowTitle() == "Bili Downloader Lite V2.2"
     window.url_edit.setText(url_a)
     result_a = _video_result(ui, "A", url_a)
     window.on_parse_finished(url_a, result_a)
