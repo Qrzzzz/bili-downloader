@@ -9,7 +9,7 @@
 <p>
   <strong>导航</strong><br/>
   <a href="https://github.com/Qrzzzz/bili-downloader/releases/latest">下载最新版</a> ·
-  <a href="./docs/releases/v2.2.md">v2.2 发布说明</a> ·
+  <a href="./docs/releases/v2.3.md">v2.3 发布说明</a> ·
   <a href="#主要功能">主要功能</a> ·
   <a href="#从源码运行">从源码运行</a> ·
   <a href="./SECURITY.md">安全策略</a> ·
@@ -32,10 +32,10 @@
 
 ## 📦 下载与使用
 
-最新公开版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest) 获取。v2.2 的 Windows x64 发布文件为：
+Windows x64 发布文件请从 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest) 获取。v2.3 的文件名为：
 
-* 主程序：`BiliDownloader.v2.2.exe`
-* 软件物料清单：`BiliDownloader.v2.2.sbom.json`
+* 主程序：`BiliDownloader.v2.3.exe`
+* 软件物料清单：`BiliDownloader.v2.3.sbom.json`
 * 校验文件：`SHA256SUMS`
 
 主程序为单文件应用，无需安装 Python 或 Node.js。下载前请自行准备合法来源的 `ffmpeg.exe`，并选择以下任一方式放置：
@@ -47,18 +47,18 @@
 
 ### 基本流程
 
-1. 运行 `BiliDownloader.v2.2.exe`。
+1. 运行 `BiliDownloader.v2.3.exe`。
 2. 粘贴 Bilibili 视频链接、BV 号或 av 号并解析。
 3. 如需账号权限下的更多可用画质，可使用应用内二维码扫码登录。
 4. 选择音视频 MP4 或仅音频 MP3，按需选择分 P、画质和保存目录后开始下载。
 5. 在任务结果中查看成功、失败或取消的项目，并按需重试失败项。
 
-### v2.2 更新重点
+### v2.3 更新重点
 
-* 新增“仅音频（MP3）”下载模式，选取最佳可用音轨并通过 FFmpeg 转换为 192 kbps MP3。
-* 选择仅音频时自动收起视频清晰度，保留分 P 选择、下载进度、安全取消、逐项结果和失败重试。
-* 在全批次下载前逐分 P 预检音轨，并按音频流估算磁盘空间。
-* 没有新增运行时依赖；继续使用用户自行提供的外置 FFmpeg，不下载、安装或捆绑 FFmpeg。
+* 下载完成后不再弹出独立窗口，结果直接显示在主窗口任务状态下方。
+* 单 P 成功结果保持紧凑；多 P、多输出、失败、取消与失败项重试仍保留完整明细。
+* 保留打开文件、打开所在目录和收起结果操作，主流程无需在两个窗口之间切换。
+* 没有新增运行时依赖，也不改变下载、登录、FFmpeg 或既有安全边界。
 
 <a id="主要功能"></a>
 
@@ -77,7 +77,7 @@
 
 * 初始界面聚焦链接输入、解析和账号状态
 * 解析成功后再显示视频信息、分 P、画质、保存目录和下载操作
-* 下载期间突出显示进度与取消入口，任务结束后展示紧凑或完整结果
+* 下载期间突出显示进度与取消入口，任务结束后在主窗口下方展示紧凑或完整结果
 * 日志、环境诊断、隐私说明和详细任务信息默认收纳，不抢占主流程
 
 ### 📱 应用内扫码登录
@@ -142,7 +142,7 @@ python -m pytest -q
 .\build.ps1 -Clean -OneFile
 ```
 
-默认 onedir 输出为 `dist\BiliDownloader\BiliDownloader.v2.2.exe`，onefile 输出为 `dist\BiliDownloader.v2.2.exe`。`build.ps1` 会重新创建隔离的 `build\.venv`，不会复用开发环境。
+默认 onedir 输出为 `dist\BiliDownloader\BiliDownloader.v2.3.exe`，onefile 输出为 `dist\BiliDownloader.v2.3.exe`。`build.ps1` 会重新创建隔离的 `build\.venv`，不会复用开发环境。
 
 发布前还需完成 package smoke、PE 与内嵌版本校验、PyInstaller 归档审计、SBOM、摘要及 attestation 检查。详见 [发布检查清单](./RELEASE_CHECKLIST.md) 与 [维护者说明](./MAINTAINER_NOTES.md)。
 
