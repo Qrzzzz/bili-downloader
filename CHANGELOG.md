@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.2] - 2026-09-03
+
+### 仅音频 MP3 下载
+
+- 下载选项新增“仅音频（MP3）”模式：对每个选中的分 P 预检最佳可用音轨，下载后通过现有外置 FFmpeg 转换为 192 kbps MP3。
+- 音频模式不再展示无意义的视频清晰度，并在进度、安全取消、结果与失败项重试中保留音频下载语义。
+- 继续使用现有 FFmpeg 发现与验证边界；不下载、捆绑或安装 FFmpeg，也不修改系统 `PATH`。
+
 ## [2.1] - 2026-09-03
 
 ### 封面兼容性修复

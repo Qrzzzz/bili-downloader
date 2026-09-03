@@ -72,6 +72,11 @@ class PartDownloadStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class DownloadMode(str, Enum):
+    AUDIO_VIDEO = "audio_video"
+    AUDIO_MP3 = "audio_mp3"
+
+
 @dataclass(frozen=True)
 class PartDownloadResult:
     part: VideoPart
@@ -127,14 +132,23 @@ class MissingPartFormat:
 
 
 class FormatPreflightError(AppError):
-    def __init__(self, height: int | None, missing: Iterable[MissingPartFormat]) -> None:
+    def __init__(
+        self,
+        height: int | None,
+        missing: Iterable[MissingPartFormat],
+        mode: DownloadMode = DownloadMode.AUDIO_VIDEO,
+    ) -> None:
         self.height = height
         self.missing = tuple(missing)
-        missing_text = "、".join(
-            f"P{item.part.index}（可用：{','.join(map(str, item.available_heights)) or '无'}）"
-            for item in self.missing
-        )
-        requested = f"{height}p" if height else "可下载视频格式"
+        if mode is DownloadMode.AUDIO_MP3:
+            missing_text = "、".join(f"P{item.part.index}" for item in self.missing)
+            requested = "可下载音频格式"
+        else:
+            missing_text = "、".join(
+                f"P{item.part.index}（可用：{','.join(map(str, item.available_heights)) or '无'}）"
+                for item in self.missing
+            )
+            requested = f"{height}p" if height else "可下载视频格式"
         super().__init__(ErrorKind.FORMAT_UNAVAILABLE, f"{requested} 预检失败：{missing_text}")
 
 
@@ -149,6 +163,7 @@ class PlannedPart:
 class DownloadPlan:
     parts: tuple[PlannedPart, ...]
     requested_height: int | None = None
+    mode: DownloadMode = DownloadMode.AUDIO_VIDEO
 
 
 BILIBILI_VIEW_API = "https://api.bilibili.com/x/web-interface/view"
@@ -597,6 +612,10 @@ class DownloadController:
     def waiting_for_merge(self) -> bool:
         return self.cancelled and self.phase in {"merging", "postprocessing"}
 
+    @property
+    def waiting_for_postprocessing(self) -> bool:
+        return self.cancelled and self.phase in {"merging", "converting", "postprocessing"}
+
     def cancel(self) -> None:
         self._cancelled.set()
 
@@ -642,17 +661,30 @@ def _has_playable_video(formats: list[dict[str, Any]]) -> bool:
     return any(_has_playable_height(formats, height) for height in heights)
 
 
+def _audio_formats(formats: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    with_audio = [fmt for fmt in formats if fmt.get("acodec") not in {None, "none"}]
+    audio_only = [fmt for fmt in with_audio if fmt.get("vcodec") == "none"]
+    return audio_only or with_audio
+
+
 def _format_size(fmt: dict[str, Any]) -> int:
     value = fmt.get("filesize") or fmt.get("filesize_approx") or 0
     return int(value) if isinstance(value, (int, float)) and value > 0 else 0
 
 
-def _estimate_part_size(formats: list[dict[str, Any]], height: int | None) -> int | None:
+def _estimate_part_size(
+    formats: list[dict[str, Any]],
+    height: int | None,
+    mode: DownloadMode = DownloadMode.AUDIO_VIDEO,
+) -> int | None:
+    audio = _audio_formats(formats)
+    if mode is DownloadMode.AUDIO_MP3:
+        estimate = max((_format_size(fmt) for fmt in audio), default=0)
+        return estimate or None
     video = [
         fmt for fmt in formats
         if fmt.get("vcodec") != "none" and (height is None or fmt.get("height") == height)
     ]
-    audio = [fmt for fmt in formats if fmt.get("vcodec") == "none" and fmt.get("acodec") != "none"]
     video_size = max((_format_size(fmt) for fmt in video), default=0)
     audio_size = max((_format_size(fmt) for fmt in audio), default=0)
     estimate = video_size + audio_size
@@ -667,15 +699,20 @@ def prepare_download_plan(
     emitter: LogEmitter | None = None,
     cookiefile: Path | None = None,
     controller: DownloadController | None = None,
+    mode: DownloadMode = DownloadMode.AUDIO_VIDEO,
 ) -> DownloadPlan:
     if not parts:
         raise ValueError("未选择任何分 P。")
     controller = controller or DownloadController()
-    requested_height = _selector_height(format_selector)
-    strict_selector = (
-        f"bestvideo[height={requested_height}]+bestaudio/best[height={requested_height}]"
-        if requested_height else format_selector or "bestvideo+bestaudio/best"
-    )
+    mode = DownloadMode(mode)
+    requested_height = None if mode is DownloadMode.AUDIO_MP3 else _selector_height(format_selector)
+    if mode is DownloadMode.AUDIO_MP3:
+        strict_selector = "bestaudio/best"
+    else:
+        strict_selector = (
+            f"bestvideo[height={requested_height}]+bestaudio/best[height={requested_height}]"
+            if requested_height else format_selector or "bestvideo+bestaudio/best"
+        )
     planned: list[PlannedPart] = []
     missing: list[MissingPartFormat] = []
     opts = base_ydl_options(config, emitter, cookiefile)
@@ -687,16 +724,19 @@ def prepare_download_plan(
             info = _require_info(ydl.extract_info(part.url, download=False))
             formats = [fmt for fmt in info.get("formats") or [] if isinstance(fmt, dict)]
             heights = _available_heights(formats)
-            playable = _has_playable_video(formats) if requested_height is None else _has_playable_height(
-                formats, requested_height
-            )
+            if mode is DownloadMode.AUDIO_MP3:
+                playable = bool(_audio_formats(formats))
+            else:
+                playable = _has_playable_video(formats) if requested_height is None else _has_playable_height(
+                    formats, requested_height
+                )
             if not playable:
                 missing.append(MissingPartFormat(part, heights))
                 continue
-            planned.append(PlannedPart(part, strict_selector, _estimate_part_size(formats, requested_height)))
+            planned.append(PlannedPart(part, strict_selector, _estimate_part_size(formats, requested_height, mode)))
     if missing:
-        raise FormatPreflightError(requested_height, missing)
-    return DownloadPlan(tuple(planned), requested_height)
+        raise FormatPreflightError(requested_height, missing, mode)
+    return DownloadPlan(tuple(planned), requested_height, mode)
 
 
 def _prepare_output_dir(download_dir: str) -> str:
@@ -790,7 +830,8 @@ class _ProgressAggregator:
 
     def postprocess(self, ordinal: int, part: VideoPart, status: dict[str, Any]) -> None:
         stage = {"started": 0.85, "processing": 0.9, "finished": 0.95}.get(status.get("status"), 0.85)
-        self.emit(ordinal, part, "merging", stage, status)
+        phase = "converting" if self.plan.mode is DownloadMode.AUDIO_MP3 else "merging"
+        self.emit(ordinal, part, phase, stage, status)
 
     def terminal(self, ordinal: int, part: VideoPart, status: str, *, complete: bool) -> None:
         fraction = 1.0 if complete else self._part_progress.get(ordinal, 0.0)
@@ -826,7 +867,9 @@ def download_videos(
     emitter: LogEmitter | None = None,
     controller: DownloadController | None = None,
     credential_mode: CredentialMode | str = CredentialMode.SAVED,
+    mode: DownloadMode = DownloadMode.AUDIO_VIDEO,
 ) -> DownloadBatchResult:
+    mode = DownloadMode(mode)
     controller = controller or DownloadController()
     if controller.cancelled:
         raise DownloadBatchCancelled(
@@ -845,6 +888,7 @@ def download_videos(
                 emitter=emitter,
                 cookiefile=cookiefile,
                 controller=controller,
+                mode=mode,
             )
             _check_disk_space(target_dir, plan)
             progress = _ProgressAggregator(plan, progress_hook)
@@ -868,7 +912,7 @@ def download_videos(
                     if not postprocessing_started and controller.cancelled:
                         raise DownloadCancelled("用户已取消下载")
                     postprocessing_started = True
-                    controller.set_phase("merging")
+                    controller.set_phase("converting" if mode is DownloadMode.AUDIO_MP3 else "merging")
                     progress.postprocess(ordinal, part, status)
 
                 def final_path_hook(filename: str) -> None:
@@ -880,7 +924,6 @@ def download_videos(
                     {
                         "format": planned.selector,
                         "outtmpl": {"default": outtmpl},
-                        "merge_output_format": "mp4",
                         "continuedl": True,
                         "retries": 5,
                         "fragment_retries": 5,
@@ -891,6 +934,16 @@ def download_videos(
                         "noplaylist": True,
                     }
                 )
+                if mode is DownloadMode.AUDIO_MP3:
+                    opts["postprocessors"] = [
+                        {
+                            "key": "FFmpegExtractAudio",
+                            "preferredcodec": "mp3",
+                            "preferredquality": "192",
+                        }
+                    ]
+                else:
+                    opts["merge_output_format"] = "mp4"
                 try:
                     if emitter:
                         emitter.message.emit(f"开始下载 P{part.index}：{sanitize_windows_filename(part.title)}")

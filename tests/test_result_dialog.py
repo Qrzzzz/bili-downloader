@@ -248,8 +248,11 @@ def test_main_window_retry_reuses_original_request_and_merges_result(
 ) -> None:
     ui, downloader, window = _prepare_main_window(monkeypatch, isolated_paths, qtbot)
     first, second = _parts(downloader)
-    output_one = Path(window.config.download_dir) / "first.mp4"
-    output_two = Path(window.config.download_dir) / "second.mp4"
+    window.download_mode_combo.setCurrentIndex(
+        window.download_mode_combo.findData(ui.DownloadMode.AUDIO_MP3.value)
+    )
+    output_one = Path(window.config.download_dir) / "first.mp3"
+    output_two = Path(window.config.download_dir) / "second.mp3"
     output_one.write_bytes(b"one")
     output_two.write_bytes(b"two")
     error = downloader.ErrorClassification(downloader.ErrorKind.TIMEOUT, "网络超时", True)
@@ -280,6 +283,8 @@ def test_main_window_retry_reuses_original_request_and_merges_result(
 
     assert calls[1][0] == (second.url,)
     assert calls[1][1:] == calls[0][1:]
+    assert calls[0][2] == "bestaudio/best"
+    assert calls[0][3] is ui.DownloadMode.AUDIO_MP3
     assert window.result_dialog is not None
     assert len(window.result_dialog.result.completed) == 2
     assert not window.result_dialog.result.failed

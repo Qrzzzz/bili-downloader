@@ -26,7 +26,7 @@
 
 ## 版本、构建与归档
 
-- [ ] 源码 `2.1`、标签 `v2.1`、PE FileVersion/ProductVersion `2.1`、`BiliDownloader.v2.1.exe`、Release 标题 `Bili Downloader Lite v2.1` 严格一致。
+- [ ] 源码 `2.2`、标签 `v2.2`、PE FileVersion/ProductVersion `2.2`、`BiliDownloader.v2.2.exe`、Release 标题 `Bili Downloader Lite v2.2` 严格一致。
 - [ ] update checker 只接受可选 `v` / `V` 加两级数字，拒绝多一级、多两级及前后垃圾字符。
 - [ ] compile/import、完整 pytest、锁验证、`pip check`、`pip-audit`、源码 self-test 通过。
 - [ ] 从干净 Python 3.13/Windows x64 环境构建 onefile，package smoke、PE/内嵌版本/提交校验通过。
@@ -36,7 +36,7 @@
 
 ## 只在获得发布授权后
 
-- [ ] 生成 `BiliDownloader.v2.1.exe`、`BiliDownloader.v2.1.sbom.json` 与 `SHA256SUMS`，为全部资产生成 attestation。
+- [ ] 生成 `BiliDownloader.v2.2.exe`、`BiliDownloader.v2.2.sbom.json` 与 `SHA256SUMS`，为全部资产生成 attestation。
 - [ ] 通过 GitHub API 复核 Release 非 draft/非 prerelease、标题、tag/commit、资产名称/数量/大小/API digest 与 attestation。
 - [ ] 没有移动或改写已公开 `v1.1` / `v1.2` / `v1.3` / `v1.4` / `v2.0`。
 
@@ -48,7 +48,7 @@ git diff --check
 python tools\verify_dependency_lock.py
 python -m pytest -q
 .\build.ps1 -Clean -OneFile
-.\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v2.1.exe
-.\build\.venv\Scripts\python.exe tools\audit_release_artifact.py --executable .\dist\BiliDownloader.v2.1.exe --expected-version 2.1 --expected-commit <COMMIT> --require-clean
-Get-FileHash .\dist\BiliDownloader.v2.1.exe -Algorithm SHA256
+.\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v2.2.exe
+.\build\.venv\Scripts\python.exe tools\audit_release_artifact.py --executable .\dist\BiliDownloader.v2.2.exe --expected-version 2.2 --expected-commit <COMMIT> --require-clean
+Get-FileHash .\dist\BiliDownloader.v2.2.exe -Algorithm SHA256
 ```
