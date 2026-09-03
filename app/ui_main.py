@@ -67,7 +67,7 @@ from .downloader import (
     parse_video_info,
 )
 from .logger import LogEmitter, redact_sensitive, setup_logging
-from .ui_dialogs import DiagnosticsDialog, DownloadResultDialog
+from .ui_dialogs import DiagnosticsDialog, DownloadResultPanel
 from .utils import (
     ErrorClassification,
     ErrorKind,
@@ -558,7 +558,7 @@ class MainWindow(QMainWindow):
         self.download_controller: DownloadController | None = None
         self.login_dialog: LoginDialog | None = None
         self.diagnostics_dialog: DiagnosticsDialog | None = None
-        self.result_dialog: DownloadResultDialog | None = None
+        self.result_panel: DownloadResultPanel | None = None
         self.download_request: DownloadRequest | None = None
         self._active_download_parts: tuple[VideoPart, ...] = ()
         self._download_is_retry = False
@@ -639,6 +639,7 @@ class MainWindow(QMainWindow):
         self.flow_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         flow = QWidget()
         flow_layout = QVBoxLayout(flow)
+        self.flow_layout = flow_layout
         flow_layout.setContentsMargins(0, 0, 0, 0)
         flow_layout.setSpacing(10)
 
@@ -752,6 +753,9 @@ class MainWindow(QMainWindow):
         self.metrics_label.hide()
         flow_layout.addWidget(self.activity_group)
 
+        # Download results are inserted here on demand, directly below task status.
+        self.result_panel_index = flow_layout.count()
+
         self.log_group = QGroupBox("任务详情")
         log_layout = QVBoxLayout(self.log_group)
         self.log_view = QPlainTextEdit()
@@ -836,6 +840,8 @@ class MainWindow(QMainWindow):
             self.progress_bar.setRange(0, 100)
         if closing:
             self.log_group.hide()
+            if self.result_panel is not None:
+                self.result_panel.hide()
 
     def _update_parts_summary(self, _item: QListWidgetItem | None = None) -> None:
         count = self.parts_list.count()
@@ -1088,8 +1094,8 @@ class MainWindow(QMainWindow):
         self._update_parts_summary()
         self.download_button.setEnabled(False)
         self._retry_context_valid = False
-        if self.result_dialog is not None:
-            self.result_dialog.invalidate_retry()
+        if self.result_panel is not None:
+            self.result_panel.invalidate_retry()
         if not self._closing and had_active_download:
             if had_video:
                 self._append_log("链接已更改；当前下载继续，新链接需等待任务结束后重新解析。")
@@ -1358,8 +1364,8 @@ class MainWindow(QMainWindow):
         self.download_request = request
         self._retry_context_valid = True
         self._download_is_retry = False
-        if self.result_dialog is not None:
-            self.result_dialog.close()
+        if self.result_panel is not None:
+            self.result_panel.hide()
         self._begin_download(request.parts)
 
     def _begin_download(self, parts: tuple[VideoPart, ...]) -> None:
@@ -1409,8 +1415,8 @@ class MainWindow(QMainWindow):
         self.download_worker = None
         self.download_controller = None
         self._active_download_parts = ()
-        if self.result_dialog is not None:
-            self.result_dialog.set_busy(False)
+        if self.result_panel is not None:
+            self.result_panel.set_busy(False)
         if not self._closing:
             self.cancel_button.setEnabled(False)
             self.parse_button.setEnabled(True)
@@ -1529,29 +1535,27 @@ class MainWindow(QMainWindow):
         self._set_view_phase("error" if failed and not completed else "finished")
 
         request = self.download_request
-        if self._download_is_retry and self.result_dialog is not None:
-            self.result_dialog.merge_retry_result(result)
-            self.result_dialog.set_busy(False)
+        if self._download_is_retry and self.result_panel is not None:
+            self.result_panel.merge_retry_result(result)
+            self.result_panel.set_busy(False)
+            self.result_panel.show()
         else:
-            if self.result_dialog is not None:
-                self.result_dialog.close()
-            dialog = DownloadResultDialog(
+            if self.result_panel is not None:
+                self.result_panel.hide()
+                self.result_panel.deleteLater()
+            panel = DownloadResultPanel(
                 result,
                 video_title=request.video_title if request else "下载任务",
                 format_label=request.format_label if request else "自动选择",
                 parent=self,
             )
             if not self._retry_context_valid:
-                dialog.invalidate_retry()
-            dialog.retry_requested.connect(self.retry_failed_parts)
-            dialog.destroyed.connect(lambda _obj=None, target=dialog: self._clear_result_dialog(target))
-            self.result_dialog = dialog
-            dialog.show()
+                panel.invalidate_retry()
+            panel.retry_requested.connect(self.retry_failed_parts)
+            self.flow_layout.insertWidget(self.result_panel_index, panel)
+            self.result_panel = panel
+            panel.show()
         self._download_is_retry = False
-
-    def _clear_result_dialog(self, dialog: DownloadResultDialog) -> None:
-        if self.result_dialog is dialog:
-            self.result_dialog = None
 
     @Slot(object)
     def retry_failed_parts(self, parts: tuple[VideoPart, ...]) -> None:
@@ -1563,8 +1567,8 @@ class MainWindow(QMainWindow):
             or not self._input_matches(request.source_url)
             or self.download_thread is not None
         ):
-            if self.result_dialog is not None:
-                self.result_dialog.invalidate_retry()
+            if self.result_panel is not None:
+                self.result_panel.invalidate_retry()
             return
         self._download_is_retry = True
         self._begin_download(tuple(parts))

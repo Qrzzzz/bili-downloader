@@ -10,6 +10,7 @@ from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
+    QGroupBox,
     QAbstractItemView,
     QHBoxLayout,
     QLabel,
@@ -223,7 +224,7 @@ class DiagnosticsDialog(QDialog):
         super().closeEvent(event)
 
 
-class DownloadResultDialog(QDialog):
+class DownloadResultPanel(QGroupBox):
     retry_requested = Signal(object)
 
     def __init__(
@@ -234,10 +235,8 @@ class DownloadResultDialog(QDialog):
         format_label: str,
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("下载结果")
-        self.resize(860, 500)
-        self.setAttribute(Qt.WA_DeleteOnClose)
+        super().__init__("下载结果", parent)
+        self.setAccessibleName("下载结果")
         self.result = result
         self.retry_valid = True
         self.video_title = video_title
@@ -255,17 +254,19 @@ class DownloadResultDialog(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setMinimumHeight(180)
+        self.table.setMaximumHeight(320)
 
         buttons = QHBoxLayout()
         self.open_file_button = QPushButton("打开文件")
         self.open_folder_button = QPushButton("打开所在目录")
         self.retry_button = QPushButton("重试失败项")
-        self.close_button = QPushButton("关闭")
+        self.dismiss_button = QPushButton("收起结果")
         buttons.addWidget(self.open_file_button)
         buttons.addWidget(self.open_folder_button)
         buttons.addStretch(1)
         buttons.addWidget(self.retry_button)
-        buttons.addWidget(self.close_button)
+        buttons.addWidget(self.dismiss_button)
 
         layout.addWidget(self.context_label)
         layout.addWidget(self.summary_label)
@@ -277,7 +278,7 @@ class DownloadResultDialog(QDialog):
         self.open_file_button.clicked.connect(self.open_selected_file)
         self.open_folder_button.clicked.connect(self.open_selected_folder)
         self.retry_button.clicked.connect(self.retry_failed)
-        self.close_button.clicked.connect(self.close)
+        self.dismiss_button.clicked.connect(self.hide)
         self.set_result(result)
 
     def set_result(self, result: DownloadBatchResult) -> None:
@@ -316,11 +317,9 @@ class DownloadResultDialog(QDialog):
             saved_path = Path(result.part_results[0].saved_files[0])
             self.saved_label.setText(f"已保存：{saved_path.name}")
             self.saved_label.setToolTip(str(saved_path))
-            self.resize(620, 220)
         else:
             self.saved_label.clear()
             self.saved_label.setToolTip("")
-            self.resize(860, 500)
         self.saved_label.setVisible(compact)
         self.table.setVisible(not compact)
         self.retry_button.setVisible(not compact)
@@ -337,7 +336,7 @@ class DownloadResultDialog(QDialog):
 
     def set_busy(self, busy: bool) -> None:
         self.retry_button.setEnabled(not busy and self.retry_valid and bool(self.result.failed))
-        self.close_button.setEnabled(not busy)
+        self.dismiss_button.setEnabled(not busy)
         if busy:
             self.summary_label.setText("正在重试失败项...")
 
