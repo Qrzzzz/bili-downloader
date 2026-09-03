@@ -243,7 +243,7 @@ class DownloadResultDialog(QDialog):
         self.video_title = video_title
 
         layout = QVBoxLayout(self)
-        self.context_label = QLabel(f"视频：{video_title}\n清晰度：{format_label}")
+        self.context_label = QLabel(f"视频：{video_title}\n下载规格：{format_label}")
         self.context_label.setWordWrap(True)
         self.summary_label = QLabel()
         self.saved_label = QLabel()

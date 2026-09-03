@@ -56,6 +56,7 @@ from .downloader import (
     DownloadBatchCancelled,
     DownloadBatchResult,
     DownloadController,
+    DownloadMode,
     FormatChoice,
     PartDownloadResult,
     PartDownloadStatus,
@@ -137,6 +138,7 @@ class DownloadWorker(QObject):
         format_selector: str,
         controller: DownloadController,
         credential_mode: CredentialMode,
+        mode: DownloadMode,
     ) -> None:
         super().__init__()
         self.parts = parts
@@ -145,6 +147,7 @@ class DownloadWorker(QObject):
         self.format_selector = format_selector
         self.controller = controller
         self.credential_mode = credential_mode
+        self.mode = mode
         self.emitter = LogEmitter()
         self.emitter.message.connect(self.log.emit)
 
@@ -160,6 +163,7 @@ class DownloadWorker(QObject):
                 self.emitter,
                 self.controller,
                 self.credential_mode,
+                self.mode,
             )
             self.finished.emit(saved)
         except DownloadBatchCancelled as exc:
@@ -214,6 +218,7 @@ class DownloadRequest:
     format_selector: str
     format_label: str
     credential_mode: CredentialMode
+    mode: DownloadMode
 
 
 class LoginWorker(QObject):
@@ -693,6 +698,10 @@ class MainWindow(QMainWindow):
 
         self.download_group = QGroupBox("下载选项")
         form = QFormLayout(self.download_group)
+        self.download_mode_combo = QComboBox()
+        self.download_mode_combo.setAccessibleName("下载内容")
+        self.download_mode_combo.addItem("音视频（MP4）", DownloadMode.AUDIO_VIDEO.value)
+        self.download_mode_combo.addItem("仅音频（MP3）", DownloadMode.AUDIO_MP3.value)
         self.format_combo = QComboBox()
         self.format_combo.setAccessibleName("下载画质")
         self.format_combo.setToolTip("画质严格匹配，不会自动降档。")
@@ -710,7 +719,9 @@ class MainWindow(QMainWindow):
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         buttons.addWidget(self.download_button)
-        form.addRow("清晰度：", self.format_combo)
+        self.format_field_label = QLabel("清晰度：")
+        form.addRow("下载内容：", self.download_mode_combo)
+        form.addRow(self.format_field_label, self.format_combo)
         form.addRow("", self.format_note_label)
         form.addRow("保存目录：", dir_row)
         form.addRow("", buttons)
@@ -774,6 +785,7 @@ class MainWindow(QMainWindow):
         self.select_all_button.clicked.connect(self.select_all_parts)
         self.select_first_button.clicked.connect(self.select_first_part)
         self.parts_list.itemChanged.connect(self._update_parts_summary)
+        self.download_mode_combo.currentIndexChanged.connect(self._on_download_mode_changed)
         self.log_emitter.message.connect(self._append_log)
 
     @Slot()
@@ -1175,11 +1187,11 @@ class MainWindow(QMainWindow):
         self.parts_label.setText(str(len(result.parts)))
         self.populate_parts(result.parts, result.current_part_index)
         self.populate_formats(result.formats)
-        self.format_note_label.clear()
-        self.format_note_label.hide()
+        self._on_download_mode_changed()
         self.status_label.setText("解析成功")
         self._append_log(f"解析成功：{result.title}")
-        self.notice_resolution_limits(result.formats)
+        if self._selected_download_mode() is DownloadMode.AUDIO_VIDEO:
+            self.notice_resolution_limits(result.formats)
         self.parse_button.setEnabled(True)
         self.parse_button.setText("解析视频")
         self.download_button.setEnabled(True)
@@ -1214,17 +1226,40 @@ class MainWindow(QMainWindow):
             self.status_label.setText("解析已取消")
             self._set_view_phase("changed" if self.url_edit.text().strip() else "idle")
 
-    def notice_resolution_limits(self, choices: list[FormatChoice]) -> None:
+    def notice_resolution_limits(self, choices: list[FormatChoice], *, emit_log: bool = True) -> None:
         max_height = max((choice.height or 0 for choice in choices), default=0)
         if max_height >= 1080:
             return
         if self.login_status_code in {"verified", "local_pending", "offline"}:
-            self._append_log("当前账号无该清晰度权限或视频本身不提供该清晰度；程序不会绕过会员、付费、地区或 DRM 限制。")
+            if emit_log:
+                self._append_log("当前账号无该清晰度权限或视频本身不提供该清晰度；程序不会绕过会员、付费、地区或 DRM 限制。")
             self.format_note_label.setText("当前账号可用画质已全部列出；不会绕过会员、付费、地区或 DRM 限制。")
         else:
-            self._append_log("未登录时可能只能解析普通清晰度；如需 1080p 及以上清晰度，请扫码登录后重新解析。")
+            if emit_log:
+                self._append_log("未登录时可能只能解析普通清晰度；如需 1080p 及以上清晰度，请扫码登录后重新解析。")
             self.format_note_label.setText("未登录时可能只有普通画质；扫码登录后重新解析，可能获得更多画质。")
         self.format_note_label.show()
+
+    @Slot(int)
+    def _on_download_mode_changed(self, _index: int = -1) -> None:
+        audio_only = self._selected_download_mode() is DownloadMode.AUDIO_MP3
+        self.format_field_label.setVisible(not audio_only)
+        self.format_combo.setVisible(not audio_only)
+        self.download_button.setText("下载音频" if audio_only else "下载")
+        self.format_note_label.clear()
+        self.format_note_label.hide()
+        if audio_only:
+            self.format_note_label.setText("将下载最佳可用音轨，并通过 FFmpeg 转换为 192 kbps MP3。")
+            self.format_note_label.show()
+        elif self.current_info is not None:
+            self.notice_resolution_limits(self.current_formats, emit_log=False)
+
+    def _selected_download_mode(self) -> DownloadMode:
+        value = self.download_mode_combo.currentData()
+        try:
+            return DownloadMode(value)
+        except ValueError:
+            return DownloadMode.AUDIO_VIDEO
 
     @Slot(str, bytes)
     def set_thumbnail(self, source_url: str, data: bytes) -> None:
@@ -1300,8 +1335,14 @@ class MainWindow(QMainWindow):
             return
         self.config = updated_config
 
-        selector = str(self.format_combo.currentData() or "bestvideo+bestaudio/best")
-        self._append_log(f"下载格式选择器：{selector}")
+        mode = self._selected_download_mode()
+        if mode is DownloadMode.AUDIO_MP3:
+            selector = "bestaudio/best"
+            format_label = "仅音频（MP3，192 kbps）"
+        else:
+            selector = str(self.format_combo.currentData() or "bestvideo+bestaudio/best")
+            format_label = f"音视频（MP4） · {self.format_combo.currentText() or '自动选择'}"
+        self._append_log(f"下载规格：{format_label}")
 
         request = DownloadRequest(
             source_url=str(self._parsed_url),
@@ -1310,8 +1351,9 @@ class MainWindow(QMainWindow):
             config=AppConfig(**asdict(self.config)),
             download_dir=download_dir,
             format_selector=selector,
-            format_label=self.format_combo.currentText() or "自动选择",
+            format_label=format_label,
             credential_mode=self.credential_mode,
+            mode=mode,
         )
         self.download_request = request
         self._retry_context_valid = True
@@ -1343,6 +1385,7 @@ class MainWindow(QMainWindow):
             request.format_selector,
             self.download_controller,
             request.credential_mode,
+            request.mode,
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -1381,9 +1424,9 @@ class MainWindow(QMainWindow):
     def cancel_download(self) -> None:
         if self.download_controller:
             self.download_controller.cancel()
-            if self.download_controller.waiting_for_merge:
+            if self.download_controller.waiting_for_postprocessing:
                 text = "正在安全结束当前文件处理..."
-                detail = "已请求取消，正在等待当前 FFmpeg 合并安全结束..."
+                detail = "已请求取消，正在等待当前 FFmpeg 处理安全结束..."
             else:
                 text = "正在取消下载..."
                 detail = text
@@ -1411,10 +1454,15 @@ class MainWindow(QMainWindow):
         if phase == "downloading":
             self.status_label.setText(f"正在下载第 {part_number}/{part_count} 个分 P")
         elif phase == "merging":
-            if self.download_controller and self.download_controller.waiting_for_merge:
+            if self.download_controller and self.download_controller.waiting_for_postprocessing:
                 self.status_label.setText("正在安全结束当前文件处理...")
             else:
                 self.status_label.setText(f"正在合并第 {part_number}/{part_count} 个分 P")
+        elif phase == "converting":
+            if self.download_controller and self.download_controller.waiting_for_postprocessing:
+                self.status_label.setText("正在安全结束当前文件处理...")
+            else:
+                self.status_label.setText(f"正在转换第 {part_number}/{part_count} 个分 P 为 MP3")
         elif phase == "completed":
             self.status_label.setText(f"第 {part_number}/{part_count} 个分 P 已完成")
         elif phase == "failed":

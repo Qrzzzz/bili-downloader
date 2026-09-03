@@ -21,7 +21,7 @@ def test_onefile_prefers_exe_adjacent_tools_before_meipass_and_path(
     meipass = isolated_paths.root / "onefile-extraction"  # type: ignore[attr-defined]
     path_dir = isolated_paths.root / "system-path"  # type: ignore[attr-defined]
     monkeypatch.setattr(utils.sys, "frozen", True, raising=False)  # type: ignore[attr-defined]
-    monkeypatch.setattr(utils.sys, "executable", str(exe_dir / "BiliDownloader.v2.1.exe"))  # type: ignore[attr-defined]
+    monkeypatch.setattr(utils.sys, "executable", str(exe_dir / "BiliDownloader.v2.2.exe"))  # type: ignore[attr-defined]
     monkeypatch.setattr(utils.sys, "_MEIPASS", str(meipass), raising=False)  # type: ignore[attr-defined]
     monkeypatch.setenv("PATH", str(path_dir))
 
@@ -41,7 +41,7 @@ def test_onedir_deduplicates_resource_and_executable_layout(
 ) -> None:
     exe_dir = isolated_paths.root / "onedir"  # type: ignore[attr-defined]
     monkeypatch.setattr(utils.sys, "frozen", True, raising=False)  # type: ignore[attr-defined]
-    monkeypatch.setattr(utils.sys, "executable", str(exe_dir / "BiliDownloader.v2.1.exe"))  # type: ignore[attr-defined]
+    monkeypatch.setattr(utils.sys, "executable", str(exe_dir / "BiliDownloader.v2.2.exe"))  # type: ignore[attr-defined]
     monkeypatch.setattr(utils.sys, "_MEIPASS", str(exe_dir), raising=False)  # type: ignore[attr-defined]
     monkeypatch.setenv("PATH", "")
 

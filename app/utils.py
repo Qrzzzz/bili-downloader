@@ -249,7 +249,7 @@ def ffmpeg_status_text() -> str:
         return f"FFmpeg 可用：{result.path}{version}"
     if result.status is FFmpegProbeStatus.BROKEN:
         return f"检测到 FFmpeg，但无法执行：{result.path}（{result.detail}）。"
-    return "未检测到 FFmpeg。可解析视频，但下载后音视频合并会失败。"
+    return "未检测到 FFmpeg。可解析视频，但音视频合并和 MP3 转换会失败。"
 
 
 def format_duration(seconds: int | float | None) -> str:
@@ -304,7 +304,7 @@ _ERROR_MESSAGES: dict[ErrorKind, tuple[str, bool]] = {
     ErrorKind.OUTPUT_PERMISSION: ("下载目录不可写或访问被拒绝。请选择有写入权限的本地文件夹。", False),
     ErrorKind.DISK_FULL: ("磁盘空间不足，无法继续写入下载文件。请释放空间或更换下载目录。", False),
     ErrorKind.FORMAT_UNAVAILABLE: (
-        "所选清晰度在至少一个分 P 中不可用。为避免静默降档，下载未继续；请重新选择清晰度。",
+        "所选下载格式在至少一个分 P 中不可用。为避免静默降档，下载未继续；请重新选择。",
         False,
     ),
     ErrorKind.FFMPEG_MISSING: (
@@ -312,7 +312,7 @@ _ERROR_MESSAGES: dict[ErrorKind, tuple[str, bool]] = {
         False,
     ),
     ErrorKind.FFMPEG_BROKEN: ("检测到了 FFmpeg，但程序无法正常执行它。请更换完整、可信的 FFmpeg 安装。", False),
-    ErrorKind.FFMPEG_MERGE: ("FFmpeg 可以启动，但音视频合并失败。已完成的其他分 P 不会被丢弃。", False),
+    ErrorKind.FFMPEG_MERGE: ("FFmpeg 可以启动，但音视频合并或格式转换失败。已完成的其他分 P 不会被丢弃。", False),
     ErrorKind.INVALID_URL: ("链接无效或不是 yt-dlp 支持的 Bilibili 视频链接。", False),
     ErrorKind.VIDEO_UNAVAILABLE: ("视频不存在、已删除、私密，或当前账号无权访问。", False),
     ErrorKind.TLS: ("网络证书校验失败。请检查系统时间、网络代理或证书环境。", True),
