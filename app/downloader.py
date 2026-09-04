@@ -7,14 +7,16 @@ import re
 import shutil
 import tempfile
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Iterator
 from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 from yt_dlp import YoutubeDL
+from yt_dlp.postprocessor.ffmpeg import FFmpegPostProcessor
 from yt_dlp.utils import DownloadCancelled
 
 from .config import AppConfig
@@ -27,6 +29,7 @@ from .utils import (
     ErrorKind,
     classify_error_details,
     ensure_dir,
+    find_ffmpeg,
     format_duration,
     require_ffmpeg,
     sanitize_windows_filename,
@@ -201,9 +204,27 @@ def base_ydl_options(
     }
     if cookiefile is not None:
         opts["cookiefile"] = str(cookiefile)
-    if ffmpeg_path:
-        opts["ffmpeg_location"] = ffmpeg_path
+    if ffmpeg_path is not None and not Path(ffmpeg_path).is_absolute():
+        raise AppError(ErrorKind.FFMPEG_BROKEN, "FFmpeg 路径必须是绝对路径")
+    # In the locked yt-dlp, None enables bare-name search, while an empty
+    # location disables both ffmpeg and ffprobe (os.path.exists('') is false).
+    # Unlike a made-up missing filename, this sentinel cannot become a file.
+    opts["ffmpeg_location"] = ffmpeg_path if ffmpeg_path is not None else find_ffmpeg() or ""
     return opts
+
+
+@contextmanager
+def _youtube_dl(options: dict[str, Any]) -> Iterator[YoutubeDL]:
+    # yt-dlp's FFmpegFD.available() constructs a postprocessor without a
+    # downloader, so options alone do not constrain that fallback. Match the
+    # locked library's CLI context, scoped to this operation/thread and reset
+    # even when construction, extraction or postprocessing fails.
+    token = FFmpegPostProcessor._ffmpeg_location.set(options["ffmpeg_location"])
+    try:
+        with YoutubeDL(options) as ydl:
+            yield ydl
+    finally:
+        FFmpegPostProcessor._ffmpeg_location.reset(token)
 
 
 def build_format_choices(formats: list[dict[str, Any]]) -> list[FormatChoice]:
@@ -400,7 +421,7 @@ def parse_video_info(
     logging.getLogger("bili_downloader").info("开始解析：%s", resolved.canonical_url)
     view = _fetch_bilibili_view(resolved)
     with cookiefile_lease(credential_mode) as cookiefile:
-        with YoutubeDL(base_ydl_options(config, emitter, cookiefile)) as ydl:
+        with _youtube_dl(base_ydl_options(config, emitter, cookiefile)) as ydl:
             if view:
                 parts = _pages_to_parts(view)
                 selected = next((part for part in parts if part.index == resolved.requested_page), None)
@@ -700,6 +721,7 @@ def prepare_download_plan(
     cookiefile: Path | None = None,
     controller: DownloadController | None = None,
     mode: DownloadMode = DownloadMode.AUDIO_VIDEO,
+    ffmpeg_path: str | None = None,
 ) -> DownloadPlan:
     if not parts:
         raise ValueError("未选择任何分 P。")
@@ -715,9 +737,9 @@ def prepare_download_plan(
         )
     planned: list[PlannedPart] = []
     missing: list[MissingPartFormat] = []
-    opts = base_ydl_options(config, emitter, cookiefile)
+    opts = base_ydl_options(config, emitter, cookiefile, ffmpeg_path)
     opts.update({"noplaylist": True, "skip_download": True})
-    with YoutubeDL(opts) as ydl:
+    with _youtube_dl(opts) as ydl:
         for part in parts:
             if controller.cancelled:
                 raise DownloadCancelled("用户已取消下载")
@@ -889,6 +911,7 @@ def download_videos(
                 cookiefile=cookiefile,
                 controller=controller,
                 mode=mode,
+                ffmpeg_path=ffmpeg_path,
             )
             _check_disk_space(target_dir, plan)
             progress = _ProgressAggregator(plan, progress_hook)
@@ -947,7 +970,7 @@ def download_videos(
                 try:
                     if emitter:
                         emitter(f"开始下载 P{part.index}：{sanitize_windows_filename(part.title)}")
-                    with YoutubeDL(opts) as ydl:
+                    with _youtube_dl(opts) as ydl:
                         info = _require_info(ydl.extract_info(part.url, download=True))
                     files = _existing_output_paths(info, captured)
                     if not files:
