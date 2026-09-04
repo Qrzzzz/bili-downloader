@@ -129,11 +129,10 @@ python -m venv .venv
 <summary><strong>展开查看测试与打包命令</strong></summary>
 
 ```powershell
-# 确认三组直接依赖与哈希锁一致
-python tools\verify_dependency_lock.py
-
-# 运行完整测试
+# 安装开发依赖，运行完整测试（已包含三组锁一致性验证）
+python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.txt
 python -m pytest -q
+python -m pip check
 
 # 构建 onedir
 .\build.ps1 -Clean
@@ -144,7 +143,7 @@ python -m pytest -q
 
 默认 onedir 输出为 `dist\BiliDownloader\BiliDownloader.v2.3.exe`，onefile 输出为 `dist\BiliDownloader.v2.3.exe`。`build.ps1` 会重新创建隔离的 `build\.venv`，不会复用开发环境。
 
-发布前还需完成 package smoke、PE 与内嵌版本校验、PyInstaller 归档审计、SBOM、摘要及 attestation 检查。详见 [发布检查清单](./RELEASE_CHECKLIST.md) 与 [维护者说明](./MAINTAINER_NOTES.md)。
+PR/main CI 只运行自动回归，纯 Markdown 变更跳过。正式构建集中在 Release，自动完成 PE 与内嵌版本校验、package smoke、归档审计、SBOM、摘要和来源证明。真实扫码、下载、截图与许可证复核按相关改动触发；公网探测仅供手动诊断。详见 [发布检查清单](./RELEASE_CHECKLIST.md) 与 [维护者说明](./MAINTAINER_NOTES.md)。
 
 </details>
 

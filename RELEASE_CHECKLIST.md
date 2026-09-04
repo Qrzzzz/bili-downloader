@@ -1,55 +1,58 @@
 # Release Checklist
 
-## 仓库与依赖
+只检查本次变更相关的风险。同一提交已有通过的 CI 证据时，不再为填写清单重复跑本地全量回归或独立重建。
 
-- [ ] 工作树干净，分支与候选提交已记录。
-- [ ] 没有 Cookie、登录态、`storage_state.json`、`cookies.txt`、`session.dat`、session/profile、日志、视频、下载记录或用户配置。
-- [ ] 没有 `.venv/`、`build/`、`dist/`、`__pycache__/`、本机绝对路径、用户名、token 或账号信息。
-- [ ] `requirements.in` / `requirements.txt` 不包含 Playwright 及其独有传递依赖；`segno==1.6.6` 有精确哈希。
-- [ ] Python 固定 3.13/Windows x64，三份 `.in` 和哈希锁一致，`--require-hashes --only-binary=:all:` 安装通过。
-- [ ] 已核对 `LICENSE`、`THIRD_PARTY_NOTICES.md` 和实际 SBOM，包括 PySide6/Qt、yt-dlp、Segno 和 PyInstaller。
+## 日常 CI
 
-## 功能与安全回归
+- `quality.yml` 在 PR 和 main 上执行 Windows / Python 3.13 的完整 pytest 与 `pip check`；纯 Markdown 变更跳过。
+- pytest 已包含三份依赖锁一致性、登录态安全、下载、界面生命周期及发布约束测试，无需再逐项人工勾选。
+- PR 验证合并结果，main 验证实际落地主分支的提交；两者都不打包，也不访问 Bilibili 实时网络。
 
-- [ ] 协议 schema/状态/未知码、超时/断网/412、非允许来源、PNG、刷新废弃旧会话与取消/关闭测试通过。
-- [ ] 候选 Cookie 域/名称/字段白名单、先验证后提交、失败保留旧凭据和 DPAPI 原子替换测试通过。
-- [ ] v1.2 canonical schema 可读，旧 `storage_state.json` / `cookies.txt` 安全迁移，旧 `playwright-profile` / `login-cache` 只做兼容清理。
-- [ ] 临时 Netscape lease 权限/生命周期/清理与匿名模式不读凭据的契约通过。
-- [ ] canonical 有效时旧明文会被精确清理；损坏 canonical、部分删除失败、双进程 lease 重叠、活动 lease 防清理/防退出、原子临时文件和隔离残留的保守清理测试通过。
-- [ ] onefile/onedir/源码/绝对 PATH 的 FFmpeg 顺序、Unicode/空格路径和损坏候选测试通过，归档仍不含 FFmpeg。
-- [ ] b23 逐跳状态、相对跳转、循环/超限、协议降级、外域、私网/IP、端口和 userinfo 测试通过；单元测试不访问实时网络。
-- [ ] 官方 CDN HTTP 封面在请求前安全升级为 HTTPS；外域、userinfo、自定义端口和 IP 不得升级。封面类型、声明/实际大小、chunked、重定向、超时、中断与正常小图测试通过，失败不破坏解析结果。
-- [ ] 运行 marker 的正常退出、硬崩溃、双实例、PID 重用、损坏/无权限、旧格式和重启陈旧状态测试通过。
-- [ ] `qrcode_key`、完整轮询/回调 URL、`refresh_token`、Cookie 和响应原文均通过脱敏测试。
-- [ ] 打开环境诊断不联网；检查项为应用内二维码组件/本地登录态，不启动外部组件。
-- [ ] 下载结果只作为主窗口内嵌区域显示，不产生额外顶层窗口；紧凑/完整结果、文件操作、收起、失败重试及链接变化后的重试失效均通过。
-- [ ] 真实手机扫码 Gate 已人工完成或被明确列为待验收，未用 mock/协议探测伪造通过。
+## 每次发布必须完成
 
-## 版本、构建与归档
+- [ ] 已获得发布授权，候选提交已记录；适用的 Quality checks 通过，提交内容不含凭据、日志、用户配置或本机产物。
+- [ ] 源码版本、目标 tag、提交、EXE 名称和 Release 标题一致；不移动、覆盖或删除任何已公开标签和 Release。
+- [ ] Release 从干净的 Windows x64 / Python 3.13 环境构建一次；哈希锁安装、`pip check`、tag/commit 与 PE 元数据由 `build.ps1` 校验。
+- [ ] 最终 EXE 的 package smoke 和归档审计通过：能启动/退出，内嵌版本和提交正确，不夹带凭据、日志、浏览器运行时或 FFmpeg。
+- [ ] 生成 EXE、CycloneDX SBOM、`SHA256SUMS`，发布前为三份资产生成并验证 attestation。
+- [ ] 发布后用 API 核对 Release 状态、标题、tag/commit、资产名称/数量/大小及 digest；本地同一份资产已验证过 attestation，无需再验一遍或重新下载。
 
-- [ ] 源码 `2.3`、标签 `v2.3`、PE FileVersion/ProductVersion `2.3`、`BiliDownloader.v2.3.exe`、Release 标题 `Bili Downloader Lite v2.3` 严格一致。
-- [ ] update checker 只接受可选 `v` / `V` 加两级数字，拒绝多一级、多两级及前后垃圾字符。
-- [ ] compile/import、完整 pytest、锁验证、`pip check`、`pip-audit`、源码 self-test 通过。
-- [ ] 从干净 Python 3.13/Windows x64 环境构建 onefile，package smoke、PE/内嵌版本/提交校验通过。
-- [ ] PyInstaller CArchive 和内嵌 PYZ 审计中 Playwright、driver/Node、`ms-playwright`、Chromium、Electron、profile、FFmpeg、凭据和日志均为零。
-- [ ] 已记录 EXE 实际 bytes/MiB 和 SHA-256，未设体积阈值，未填充无用内容。
-- [ ] 已如实记录 Authenticode 状态；本机缺少代码签名证书不伪装为已签名。
+## 仅在相关变更时验收
 
-## 只在获得发布授权后
+| 变更范围 | 需要的额外验证 |
+| --- | --- |
+| 二维码协议、登录界面、凭据存储/迁移，或登录相关依赖升级 | 真实手机扫码、确认、刷新/过期、取消/关闭，以及登录态读写；不以 mock 或首次等待扫码状态替代。 |
+| 解析/下载逻辑、yt-dlp、FFmpeg 查找或调用 | 用有权访问的内容验证受影响的 MP4/MP3、分 P、取消或重试流程。 |
+| 界面布局、窗口层级、交互流程 | 检查受影响界面的截图和交互；改动窗口层级时确认顶层窗口数量。 |
+| 依赖或分发方式变化 | 对变化的依赖运行漏洞审计，复核对应许可证与 notice；收到新安全公告时也需要复核。首次分发仍需核对全部组件。 |
+| 打包脚本、spec、资源或打包依赖 | 可提前本地构建并执行 package smoke，避免到发布时才发现问题；无需恢复每个 PR 的固定打包。 |
 
-- [ ] 生成 `BiliDownloader.v2.3.exe`、`BiliDownloader.v2.3.sbom.json` 与 `SHA256SUMS`，为全部资产生成 attestation。
-- [ ] 通过 GitHub API 复核 Release 非 draft/非 prerelease、标题、tag/commit、资产名称/数量/大小/API digest 与 attestation。
-- [ ] 没有移动或改写已公开 `v1.1` / `v1.2` / `v1.3` / `v1.4` / `v2.0` / `v2.1` / `v2.2`。
+相关人工验证未完成时记录待验收及原因。无关变更填写“不适用”，无需每版重新扫码、下载、截图或做全量许可证复核。
 
-## 建议检查命令
+`public-smoke.yml` 仅供手动诊断，不作为合并或发布门槛；HTTP 412 仍如实报错并保存结果，不当作产品回归通过。没有 Authenticode 证书、EXE 体积变化也不是发布门槛，不宣称未实际完成的签名。
+
+## 已移除的重复检查
+
+| 原检查 | 处理及原因 |
+| --- | --- |
+| PR、main、Release 各构建一次 | 正式构建集中在 Release，常规发布由三次构建减为一次。 |
+| 独立 compile/import、源码 self-test | 导入和界面生命周期由 pytest 覆盖；最终启动验证由 EXE package smoke 完成。 |
+| CI 单独验证锁，随后 pytest 再验证锁 | CI 由 pytest 验证；独立构建仍在 `build.ps1` 中验证。 |
+| 单独 tag/source/commit、PE 校验脚本 | 合并到已有的 `build.ps1` 检查，不保留两套入口。 |
+| 发布前后各验证三份 attestation | 发布前验证一次；发布后通过 API digest 确认上传的是相同文件。 |
+| 每周公网解析/二维码探测 | 改为手动运行，避免平台网络/风控造成定时失败噪声。 |
+| 每版固定 pip-audit、扫码、截图与许可证复核 | 按上表中的变更范围或新公告触发。 |
+
+## 本地检查命令
 
 ```powershell
-git status --short
-git diff --check
-python tools\verify_dependency_lock.py
+# 日常改动：安装开发依赖后执行，与 Quality checks 一致
+python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.txt
 python -m pytest -q
-.\build.ps1 -Clean -OneFile
+python -m pip check
+
+# 仅需验证打包时执行；普通开发构建会如实标记 dirty 状态
+.\build.ps1 -OneFile
 .\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v2.3.exe
-.\build\.venv\Scripts\python.exe tools\audit_release_artifact.py --executable .\dist\BiliDownloader.v2.3.exe --expected-version 2.3 --expected-commit <COMMIT> --require-clean
-Get-FileHash .\dist\BiliDownloader.v2.3.exe -Algorithm SHA256
+.\build\.venv\Scripts\python.exe tools\audit_release_artifact.py --executable .\dist\BiliDownloader.v2.3.exe --expected-version 2.3
 ```

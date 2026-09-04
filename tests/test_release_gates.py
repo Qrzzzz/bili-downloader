@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import re
@@ -103,11 +104,9 @@ def test_workflows_pin_actions_and_keep_public_network_out_of_quality() -> None:
     assert "public_parse_smoke.py" not in quality
     assert "public_qr_smoke.py" not in quality
     assert "playwright" not in quality.lower()
-    assert "BiliDownloader.v2.3.exe" in quality
-    assert "--expected-version 2.3" in quality
 
     public_smoke = workflows["public-smoke.yml"]
-    assert "schedule:" in public_smoke
+    assert "schedule:" not in public_smoke
     assert "workflow_dispatch:" in public_smoke
     assert "pull_request:" not in public_smoke
     assert "environment_blocked_412" not in public_smoke
@@ -120,6 +119,73 @@ def test_workflows_pin_actions_and_keep_public_network_out_of_quality() -> None:
     assert 'docs/releases/v2.3.md' in release
     assert "attestations: write" in release
     assert "id-token: write" in release
+
+
+@pytest.mark.parametrize(
+    ("mismatch", "error"),
+    [
+        (None, None),
+        ("digest", "digest mismatch"),
+        ("commit", "Tag resolves to"),
+        ("assets", "Release assets mismatch"),
+    ],
+)
+def test_published_release_matches_verified_local_assets(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    mismatch: str | None,
+    error: str | None,
+) -> None:
+    verifier = importlib.import_module("tools.verify_github_release")
+    commit = "a" * 40
+    asset_names = ["BiliDownloader.v2.3.exe", "BiliDownloader.v2.3.sbom.json", "SHA256SUMS"]
+    assets = []
+    for name in asset_names:
+        data = f"test asset {name}".encode()
+        (tmp_path / name).write_bytes(data)
+        assets.append({
+            "name": name,
+            "state": "uploaded",
+            "size": len(data),
+            "digest": f"sha256:{hashlib.sha256(data).hexdigest()}",
+        })
+    release = {
+        "tag_name": "v2.3",
+        "name": "Bili Downloader Lite v2.3",
+        "draft": False,
+        "prerelease": False,
+        "published_at": "2026-09-04T00:00:00Z",
+        "assets": assets,
+    }
+    if mismatch == "digest":
+        assets[0]["digest"] = "sha256:" + "0" * 64
+    elif mismatch == "assets":
+        assets.pop()
+    remote_commit = "b" * 40 if mismatch == "commit" else commit
+
+    def fake_gh_json(*args):
+        if args == ("api", "repos/example/project/releases/tags/v2.3"):
+            return release
+        if args == ("api", "repos/example/project/git/ref/tags/v2.3"):
+            return {"object": {"type": "commit", "sha": remote_commit}}
+        raise AssertionError(f"Unexpected GitHub request: {args}")
+
+    monkeypatch.setattr(verifier, "_gh_json", fake_gh_json)
+    monkeypatch.setattr(sys, "argv", [
+        "verify_github_release.py", "--repository", "example/project",
+        "--tag", "v2.3", "--expected-version", "2.3",
+        "--expected-commit", commit, "--expected-title", "Bili Downloader Lite v2.3",
+        "--asset-directory", str(tmp_path),
+    ])
+    if error is not None:
+        with pytest.raises(ValueError, match=error):
+            verifier.main()
+    else:
+        assert verifier.main() == 0
+        result = json.loads(capsys.readouterr().out)
+        assert result["asset_count"] == 3
+        assert result["tag_commit"] == commit
 
 
 def test_parse_smoke_writes_structured_412_without_traceback(

@@ -1,8 +1,6 @@
-name: Anonymous public network smoke
+name: Manual public network diagnostics
 
 on:
-  schedule:
-    - cron: "23 3 * * 1"
   workflow_dispatch:
 
 permissions:

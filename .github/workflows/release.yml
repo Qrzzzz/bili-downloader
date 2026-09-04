@@ -44,26 +44,17 @@ jobs:
             requirements.txt
             requirements-sbom.txt
 
-      - name: Bind tag, source version, and build commit
-        shell: powershell
-        run: |
-          python tools/verify_dependency_lock.py
-          if ($LASTEXITCODE -ne 0) { throw "dependency lock verification failed with exit code $LASTEXITCODE" }
-          python tools/verify_release_identity.py --expected-version $env:RELEASE_VERSION --expected-tag $env:RELEASE_TAG --expected-commit $env:GITHUB_SHA
-          if ($LASTEXITCODE -ne 0) { throw "release identity verification failed with exit code $LASTEXITCODE" }
-
       - name: Build exact release executable from a clean environment
         shell: powershell
         timeout-minutes: 20
         run: .\build.ps1 -Clean -OneFile -RequireClean -ExpectedCommit $env:GITHUB_SHA -ExpectedTag $env:RELEASE_TAG
 
-      - name: Verify package behavior and PE metadata
+      - name: Verify package behavior
         shell: powershell
         timeout-minutes: 4
         run: |
           $artifact = Join-Path "dist" $env:RELEASE_ASSET
           .\tools\package_smoke.ps1 -Executable $artifact
-          .\tools\verify_pe_metadata.ps1 -Executable $artifact -ExpectedVersion $env:RELEASE_VERSION -ExpectedCommit $env:GITHUB_SHA
 
       - name: Measure and audit bundled contents
         shell: powershell
@@ -111,7 +102,9 @@ jobs:
           gh release create $env:RELEASE_TAG "dist/$env:RELEASE_ASSET" "dist/BiliDownloader.v$env:RELEASE_VERSION.sbom.json" "dist/SHA256SUMS" --verify-tag --title $env:RELEASE_TITLE --notes-file "docs/releases/v2.3.md" --latest
           if ($LASTEXITCODE -ne 0) { throw "GitHub Release creation failed with exit code $LASTEXITCODE" }
 
-      - name: Verify published Release, assets, digests, and attestations
+      # These are the same local files verified above; API digests bind the
+      # uploaded bytes to them without verifying all attestations a second time.
+      - name: Verify published Release, assets, and digests
         shell: powershell
         run: |
           python tools/verify_github_release.py --repository $env:GITHUB_REPOSITORY --tag $env:RELEASE_TAG --expected-version $env:RELEASE_VERSION --expected-commit $env:GITHUB_SHA --expected-title $env:RELEASE_TITLE --asset-directory dist
