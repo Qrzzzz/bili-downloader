@@ -6,9 +6,10 @@
     <Window.SystemBackdrop><MicaBackdrop /></Window.SystemBackdrop>
     <Grid x:Name="Root" Loaded="Root_Loaded" Language="zh-CN">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-        <controls:TitleBar x:Name="AppTitleBar" Title="Bili Downloader Lite" Subtitle="2.5"
+        <controls:TitleBar x:Name="AppTitleBar" Title="Bili Downloader Lite" Subtitle="2.6"
                            IsPaneToggleButtonVisible="True" PaneToggleRequested="TitleBar_PaneToggleRequested" />
         <controls:NavigationView x:Name="Navigation" Grid.Row="1" PaneDisplayMode="Auto"
+                                 OpenPaneLength="208" CompactPaneLength="48"
                                  IsEnabled="{Binding CanNavigate}"
                                  IsSettingsVisible="True" IsBackButtonVisible="Collapsed"
                                  IsPaneToggleButtonVisible="False" SelectionChanged="Navigation_SelectionChanged">
@@ -18,7 +19,7 @@
             </controls:NavigationView.MenuItems>
             <Grid>
                 <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                <controls:InfoBar Margin="24,8,24,0" IsOpen="{Binding Shell.IsOpen, Mode=TwoWay}"
+                <controls:InfoBar Margin="24,8,24,0" MaxWidth="912" HorizontalAlignment="Stretch" IsOpen="{Binding Shell.IsOpen, Mode=TwoWay}"
                                   Message="{Binding Shell.Message}" Severity="{Binding Shell.Severity}"
                                   AutomationProperties.AutomationId="GlobalStatus" AutomationProperties.LiveSetting="Polite" />
                 <Frame x:Name="ContentFrame" Grid.Row="1" />

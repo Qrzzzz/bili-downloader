@@ -14,10 +14,26 @@ public sealed partial class DownloadPage : Page
 {
     private DownloadViewModel Model => App.Session.Download;
     private bool updatingSelection;
+    private bool initiallyFocused, resultVisible;
     public DownloadPage() { InitializeComponent(); DataContext = Model; NavigationCacheMode = NavigationCacheMode.Required; }
-    private void Page_Loaded(object sender, RoutedEventArgs e) { Model.PropertyChanged += ModelChanged; SyncSelection(); InputBox.Focus(FocusState.Programmatic); }
+    private void Page_Loaded(object sender, RoutedEventArgs e)
+    {
+        Model.PropertyChanged += ModelChanged;
+        SyncSelection();
+        resultVisible = Model.ResultVisibility == Visibility.Visible;
+        VisualStateManager.GoToState(this, ActualWidth >= 720 ? "Wide" : "Narrow", false);
+        if (!initiallyFocused) { initiallyFocused = true; InputBox.Focus(FocusState.Programmatic); }
+    }
     private void Page_Unloaded(object sender, RoutedEventArgs e) => Model.PropertyChanged -= ModelChanged;
-    private void ModelChanged(object? sender, PropertyChangedEventArgs e) { if (string.IsNullOrEmpty(e.PropertyName)) SyncSelection(); }
+    private void ModelChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(e.PropertyName)) return;
+        SyncSelection();
+        bool visible = Model.ResultVisibility == Visibility.Visible;
+        if (visible && !resultVisible) DispatcherQueue.TryEnqueue(() => ResultCard.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 }));
+        resultVisible = visible;
+    }
+    private void Page_SizeChanged(object sender, SizeChangedEventArgs e) => VisualStateManager.GoToState(this, e.NewSize.Width >= 720 ? "Wide" : "Narrow", false);
     private void SyncSelection()
     {
         if (updatingSelection) return;

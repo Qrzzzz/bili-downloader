@@ -5,30 +5,42 @@ import importlib
 import json
 import re
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 
-def test_release_version_is_2_5_and_windows_compatible() -> None:
+def test_release_version_is_2_6_and_windows_compatible() -> None:
     app = importlib.import_module("app")
     version_tool = importlib.import_module("tools.write_version_info")
 
     assert app.__app_name__ == "Bili Downloader Lite"
-    assert app.__version__ == "2.5"
-    assert version_tool._numeric_version(app.__version__) == (2, 5, 0, 0)
+    assert app.__version__ == "2.6"
+    assert version_tool._numeric_version(app.__version__) == (2, 6, 0, 0)
     resource = version_tool._version_resource(
         app.__version__,
-        (2, 5, 0, 0),
+        (2, 6, 0, 0),
         "a" * 40,
         False,
         "2026-07-12T00:00:00Z",
     )
     assert "StringStruct('ProductName', 'Bili Downloader Lite')" in resource
     assert "StringStruct('OriginalFilename', 'BiliDownloader.Backend.exe')" in resource
-    assert "StringStruct('FileVersion', '2.5')" in resource
-    assert "StringStruct('ProductVersion', '2.5')" in resource
+    assert "StringStruct('FileVersion', '2.6')" in resource
+    assert "StringStruct('ProductVersion', '2.6')" in resource
+    root = Path(__file__).resolve().parents[1]
+    props = ET.parse(root / "Directory.Build.props").getroot()
+    assert props.findtext(".//Version") == app.__version__
+    assert props.findtext(".//AssemblyVersion") == f"{app.__version__}.0.0"
+    assert props.findtext(".//FileVersion") == f"{app.__version__}.0.0"
+    project = ET.parse(root / "BiliDownloader.WinUI/BiliDownloader.WinUI.csproj").getroot()
+    assert project.findtext(".//AssemblyName") == f"BiliDownloader.v{app.__version__}"
+    manifest = ET.parse(root / "BiliDownloader.WinUI/app.manifest").getroot()
+    identity = manifest.find("{urn:schemas-microsoft-com:asm.v1}assemblyIdentity")
+    assert identity is not None and identity.attrib["version"] == f"{app.__version__}.0.0"
+    assert f'AppVersion = "{app.__version__}"' in (root / "BiliDownloader.WinUI/App.xaml.cs").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("version", ["1", "1.2.0", "v1.2", "1.2rc1", "1.2.3.4"])
@@ -97,12 +109,12 @@ def test_dependency_locks_are_pinned_and_hashed_for_approved_target() -> None:
 def test_artifact_audit_rejects_missing_xaml_resource_index() -> None:
     audit = importlib.import_module("tools.audit_release_artifact")
     package = {name: None for name in (
-        "BiliDownloader.v2.5.exe", "BiliDownloader.v2.5.dll", "Assets/AppIcon.ico",
+        "BiliDownloader.v2.6.exe", "BiliDownloader.v2.6.dll", "Assets/AppIcon.ico",
         "BiliDownloader.Backend.exe", "Microsoft.ui.xaml.dll", "build-info.json",
         "backend-runtime/build-info.json",
     )}
-    with pytest.raises(ValueError, match=r"Missing native package files:.*BiliDownloader.v2.5.pri"):
-        audit._audit_contents(package, lambda _: b"", Path("unused.exe"), "2.5", None, False)
+    with pytest.raises(ValueError, match=r"Missing native package files:.*BiliDownloader.v2.6.pri"):
+        audit._audit_contents(package, lambda _: b"", Path("unused.exe"), "2.6", None, False)
 
 
 def test_workflows_pin_actions_and_keep_public_network_out_of_quality() -> None:
@@ -127,10 +139,10 @@ def test_workflows_pin_actions_and_keep_public_network_out_of_quality() -> None:
     assert "public_qr_smoke.py" in public_smoke
 
     release = workflows["release.yml"]
-    assert "tags:\n      - v2.5" in release
-    assert "RELEASE_TITLE: Bili Downloader Lite v2.5" in release
-    assert "BiliDownloader.v2.5.win-x64.zip" in release
-    assert 'docs/releases/v2.5.md' in release
+    assert "tags:\n      - v2.6" in release
+    assert "RELEASE_TITLE: Bili Downloader Lite v2.6" in release
+    assert "BiliDownloader.v2.6.win-x64.zip" in release
+    assert 'docs/releases/v2.6.md' in release
     assert "attestations: write" in release
     assert "id-token: write" in release
 
@@ -153,7 +165,7 @@ def test_published_release_matches_verified_local_assets(
 ) -> None:
     verifier = importlib.import_module("tools.verify_github_release")
     commit = "a" * 40
-    asset_names = ["BiliDownloader.v2.5.win-x64.zip", "BiliDownloader.v2.5.sbom.json", "SHA256SUMS"]
+    asset_names = ["BiliDownloader.v2.6.win-x64.zip", "BiliDownloader.v2.6.sbom.json", "SHA256SUMS"]
     assets = []
     for name in asset_names:
         data = f"test asset {name}".encode()
@@ -165,8 +177,8 @@ def test_published_release_matches_verified_local_assets(
             "digest": f"sha256:{hashlib.sha256(data).hexdigest()}",
         })
     release = {
-        "tag_name": "v2.5",
-        "name": "Bili Downloader Lite v2.5",
+        "tag_name": "v2.6",
+        "name": "Bili Downloader Lite v2.6",
         "draft": False,
         "prerelease": False,
         "published_at": "2026-09-04T00:00:00Z",
@@ -179,17 +191,17 @@ def test_published_release_matches_verified_local_assets(
     remote_commit = "b" * 40 if mismatch == "commit" else commit
 
     def fake_gh_json(*args):
-        if args == ("api", "repos/example/project/releases/tags/v2.5"):
+        if args == ("api", "repos/example/project/releases/tags/v2.6"):
             return release
-        if args == ("api", "repos/example/project/git/ref/tags/v2.5"):
+        if args == ("api", "repos/example/project/git/ref/tags/v2.6"):
             return {"object": {"type": "commit", "sha": remote_commit}}
         raise AssertionError(f"Unexpected GitHub request: {args}")
 
     monkeypatch.setattr(verifier, "_gh_json", fake_gh_json)
     monkeypatch.setattr(sys, "argv", [
         "verify_github_release.py", "--repository", "example/project",
-        "--tag", "v2.5", "--expected-version", "2.5",
-        "--expected-commit", commit, "--expected-title", "Bili Downloader Lite v2.5",
+        "--tag", "v2.6", "--expected-version", "2.6",
+        "--expected-commit", commit, "--expected-title", "Bili Downloader Lite v2.6",
         "--asset-directory", str(tmp_path),
     ])
     if error is not None:

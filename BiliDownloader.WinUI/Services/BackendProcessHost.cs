@@ -24,7 +24,7 @@ public static class BackendProcessHost
             if (string.IsNullOrWhiteSpace(python) || string.IsNullOrWhiteSpace(source) ||
                 !Path.IsPathFullyQualified(python) || !Path.IsPathFullyQualified(source) ||
                 !File.Exists(python) || !File.Exists(Path.Combine(source, "app", "backend", "__main__.py")))
-                throw new FileNotFoundException("未找到配套 Python 后端。请完整解压 v2.5 发行包。", executable);
+                throw new FileNotFoundException("未找到配套 Python 后端。请完整解压发行包。", executable);
             start.FileName = python;
             start.WorkingDirectory = source;
             start.ArgumentList.Add("-m"); start.ArgumentList.Add("app.backend");

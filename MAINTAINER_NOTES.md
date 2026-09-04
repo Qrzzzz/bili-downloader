@@ -6,6 +6,13 @@
 - PR/main 执行 Python 回归、真实 WinUI 编译和 C# 管道测试；最终目录/ZIP 组包、package smoke 和归档审计集中在 Release。
 - 真实扫码、下载、界面截图和许可证复核按相关改动触发；公网探测仅手动运行。无关变更不要求重复人工验收。
 
+## v2.6 发布边界
+
+- 从 v2.5 的 `c16dac1685e1127ebff230b29ba35deb2388575b` 开始，先审查后打磨 WinUI 3；[审查记录](./docs/architecture/v2.6-winui-review.md) 与 [验收记录](./docs/validation/v2.6.md) 分别记录发现和证据。
+- 2026-09-04 用户明确授权进入 release 流程。应用版本 2.6、标签 v2.6、包名 `BiliDownloader.v2.6.win-x64.zip`、Release 标题 `Bili Downloader Lite v2.6` 保持一致；正式资产由精确标签的干净提交构建，本地 `dirty=true` 候选不可作为发行资产。
+- 界面使用默认 WinUI 控件与主题资源；没有新增运行时依赖。协议、配置 schema、DPAPI 和平台访问边界保持兼容。
+- 原生 `--self-test` 只写入指定的隔离输出目录；`--ui-regression` 额外要求源码中的 IPC 测试夹具，测试不访问 Bilibili。结果样例与占位文件不代表真实下载完成。
+
 ## v2.5 发布边界
 
 - 应用版本 2.5，标签 v2.5，包名 `BiliDownloader.v2.5.win-x64.zip`。正式资产由 Release 工作流从精确标签的干净提交构建；带 dirty 元数据的本地候选包不可作为发行资产。
