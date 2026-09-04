@@ -1,26 +1,35 @@
 <UserControl x:Class="BiliDownloader.WinUI.Controls.DownloadResultView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <StackPanel Spacing="12" Padding="16" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-        <TextBlock Text="{Binding ResultSummary}" Style="{ThemeResource SubtitleTextBlockStyle}" TextWrapping="Wrap"/>
-        <ListView ItemsSource="{Binding Results}" SelectionMode="None" Visibility="{Binding DetailVisibility}" MaxHeight="260" AutomationProperties.Name="逐分 P 下载结果">
-            <ListView.ItemTemplate>
-                <DataTemplate>
-                    <StackPanel Spacing="4" Padding="0,4">
-                        <TextBlock Text="{Binding Label}" TextWrapping="Wrap" Style="{ThemeResource BodyStrongTextBlockStyle}"/>
-                        <TextBlock Text="{Binding StatusText}"/>
-                        <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" IsTextSelectionEnabled="True"/>
-                    </StackPanel>
-                </DataTemplate>
-            </ListView.ItemTemplate>
-        </ListView>
-        <ComboBox Header="已保存的文件" ItemsSource="{Binding OutputFiles}" SelectedItem="{Binding SelectedOutput, Mode=TwoWay}" HorizontalAlignment="Stretch"/>
-        <StackPanel Orientation="Horizontal" Spacing="12">
-            <Button Content="打开文件" Click="OpenFile_Click" IsEnabled="{Binding CanOpenFile}"/><Button Content="打开目录" Click="OpenFolder_Click" IsEnabled="{Binding CanOpenFolder}"/>
+    <Border Style="{StaticResource SurfaceCardStyle}">
+        <StackPanel Spacing="12">
+            <TextBlock x:Name="ResultHeading" Text="{Binding ResultSummary}" Style="{ThemeResource SubtitleTextBlockStyle}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+            <ListView ItemsSource="{Binding Results}" SelectionMode="None" Visibility="{Binding DetailVisibility}" MaxHeight="260" AutomationProperties.Name="逐分 P 下载结果">
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Spacing="4" Padding="0,4">
+                            <TextBlock Text="{Binding Label}" TextWrapping="Wrap" Style="{ThemeResource BodyStrongTextBlockStyle}"/>
+                            <TextBlock Text="{Binding StatusText}"/>
+                            <TextBlock Text="{Binding Detail}" Style="{StaticResource SecondaryTextStyle}" IsTextSelectionEnabled="True"/>
+                        </StackPanel>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+            <StackPanel Spacing="8" Visibility="{Binding OutputVisibility}" AutomationProperties.AutomationId="ResultFiles">
+                <TextBlock Text="{Binding SelectedOutputName}" TextWrapping="Wrap" Visibility="{Binding SingleOutputVisibility}"/>
+                <ComboBox Header="已保存的文件" ItemsSource="{Binding OutputChoices}" SelectedItem="{Binding SelectedOutputChoice, Mode=TwoWay}" DisplayMemberPath="Name"
+                          Visibility="{Binding OutputPickerVisibility}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OutputPicker"/>
+                <TextBlock Text="{Binding ResultDirectory}" Style="{StaticResource SecondaryTextStyle}" IsTextSelectionEnabled="True"/>
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <Button Content="打开文件" Click="OpenFile_Click" IsEnabled="{Binding CanOpenFile}"/>
+                    <Button Content="打开目录" Click="OpenFolder_Click" IsEnabled="{Binding CanOpenFolder}"/>
+                </StackPanel>
+            </StackPanel>
+            <Button Content="打开目录" Click="OpenFolder_Click" Visibility="{Binding EmptyOutputFolderVisibility}" IsEnabled="{Binding CanOpenFolder}"/>
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <Button Content="重试失败项" Click="Retry_Click" Style="{StaticResource AccentButtonStyle}" Visibility="{Binding RetryVisibility}" IsEnabled="{Binding CanRetry}" AutomationProperties.AutomationId="RetryButton"/>
+                <Button Content="返回下载设置" Click="Collapse_Click" IsEnabled="{Binding CanChoose}"/>
+            </StackPanel>
         </StackPanel>
-        <StackPanel Orientation="Horizontal" Spacing="12">
-            <Button Content="重试失败项" Click="Retry_Click" IsEnabled="{Binding CanRetry}"/>
-            <Button Content="收起结果" Click="Collapse_Click"/>
-        </StackPanel>
-    </StackPanel>
+    </Border>
 </UserControl>

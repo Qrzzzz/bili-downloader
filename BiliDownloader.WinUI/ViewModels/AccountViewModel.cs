@@ -14,15 +14,26 @@ public sealed class AccountViewModel(ApplicationSession session) : ViewModelBase
     private int imageRevision;
     private bool refreshing;
     private BackendEvent? pendingImage, pendingState;
+    private string statusCode = "none";
     public bool SafeMode { get; set; }
     public string Status { get => status; set => Set(ref status, value); }
     public string QrStatus { get => qrStatus; set => Set(ref qrStatus, value); }
-    public BitmapImage? QrImage { get => qrImage; private set => Set(ref qrImage, value); }
+    public BitmapImage? QrImage { get => qrImage; private set { if (Set(ref qrImage, value)) Refresh(); } }
+    public bool HasCredentials => statusCode != "none";
+    public string StatusTitle => statusCode switch { "verified" => "已登录", "none" => "未登录", "invalid" => "登录态不可用", _ => "登录态待验证" };
+    public Visibility LoginVisibility => statusCode == "verified" || IsLoggingIn ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility ManageVisibility => HasCredentials && !IsLoggingIn ? Visibility.Visible : Visibility.Collapsed;
     public bool CanLogin => session.Available && !SafeMode;
-    public bool CanManage => session.Available;
+    public bool CanManage => session.Available && HasCredentials;
     public bool IsLoggingIn => session.Busy && session.ActiveMethod == "auth.qr.start";
-    public bool CanRefresh => IsLoggingIn && !refreshing;
+    public bool CanRefresh => IsLoggingIn && !refreshing && !session.CancelRequested && !session.Closing;
+    public bool CanCancel => IsLoggingIn && session.CanCancel;
+    public bool IsQrLoading => IsLoggingIn && QrImage is null;
     public Visibility QrVisibility => IsLoggingIn ? Visibility.Visible : Visibility.Collapsed;
+    public void ApplyStatus(LoginStatus value)
+    {
+        statusCode = value.Code; Status = value.Text; Refresh(); session.Download.Refresh();
+    }
     public void ClearQr() { imageRevision++; refreshing = true; pendingImage = pendingState = null; QrImage = null; QrStatus = "正在刷新二维码…"; Refresh(); }
     public void CancelRefresh() { refreshing = false; pendingImage = pendingState = null; Refresh(); }
     public void ExpectGeneration(int minimum)
@@ -36,11 +47,12 @@ public sealed class AccountViewModel(ApplicationSession session) : ViewModelBase
 
     public async Task LoginAsync()
     {
+        if (!CanLogin) return;
         generation = 0; imageRevision++; CancelRefresh(); QrImage = null; QrStatus = "正在生成二维码…";
         System.Text.Json.JsonElement result;
         try { result = await session.RunAsync("auth.qr.start", new { consent = true }); }
         finally { imageRevision++; CancelRefresh(); QrImage = null; }
-        Status = Protocol.Read<LoginStatus>(result.GetProperty("status")).Text;
+        ApplyStatus(Protocol.Read<LoginStatus>(result.GetProperty("status")));
         string code = result.GetProperty("code").GetString()!;
         string text = code == "success" ? "登录成功，凭据已安全保存在本机。" : result.GetProperty("friendly").GetString() ?? "扫码已结束。";
         session.Shell.Notify(text, code == "success" ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
@@ -49,15 +61,21 @@ public sealed class AccountViewModel(ApplicationSession session) : ViewModelBase
     }
     public async Task ValidateAsync()
     {
+        if (!CanManage) return;
         Status = "正在验证登录状态…";
-        var result = Protocol.Read<LoginStatus>(await session.RunAsync("session.validate"));
-        Status = result.Text;
-        if (result.Code is "invalid" or "none") session.Download.Invalidate();
+        try
+        {
+            var result = Protocol.Read<LoginStatus>(await session.RunAsync("session.validate"));
+            ApplyStatus(result);
+            if (result.Code is "invalid" or "none") session.Download.Invalidate();
+        }
+        catch { Status = "验证未完成，请稍后重试。"; throw; }
     }
     public async Task ClearAsync()
     {
+        if (!CanManage) return;
         var result = await session.RunAsync("session.clear");
-        Status = Protocol.Read<LoginStatus>(result.GetProperty("status")).Text;
+        ApplyStatus(Protocol.Read<LoginStatus>(result.GetProperty("status")));
         bool ok = result.GetProperty("ok").GetBoolean();
         session.Shell.Notify(ok ? "本机登录态已清除。" : "部分登录态未能清除，请查看诊断。", ok ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
         session.Download.Invalidate();

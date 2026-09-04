@@ -2,52 +2,107 @@
       xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
       xmlns:views="using:BiliDownloader.WinUI.Controls"
-      Loaded="Page_Loaded" Unloaded="Page_Unloaded">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-        <StackPanel Spacing="20" Padding="24" MaxWidth="1080" HorizontalAlignment="Stretch">
-            <TextBlock Text="下载" Style="{ThemeResource TitleTextBlockStyle}"/>
-            <TextBox x:Name="InputBox" Header="视频链接或 BV / av 号" PlaceholderText="https://www.bilibili.com/video/…"
-                     Text="{Binding Input, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" KeyDown="Input_KeyDown"
-                     AutomationProperties.AutomationId="VideoInput"/>
-            <StackPanel Orientation="Horizontal" Spacing="12">
-                <Button Content="解析" Click="Parse_Click" IsEnabled="{Binding CanParse}" AutomationProperties.AutomationId="ParseButton"/>
-                <ComboBox SelectedIndex="{Binding CredentialIndex, Mode=TwoWay}" IsEnabled="{Binding CanChoose}" AutomationProperties.Name="访问方式">
-                    <ComboBoxItem Content="使用本机登录态"/><ComboBoxItem Content="匿名访问"/>
-                </ComboBox>
-            </StackPanel>
-            <StackPanel Visibility="{Binding VideoVisibility}" Spacing="16">
-                <Image Source="{Binding Thumbnail}" MaxHeight="200" Stretch="Uniform" HorizontalAlignment="Left" AutomationProperties.Name="视频封面"/>
-                <TextBlock Text="{Binding Title}" Style="{ThemeResource SubtitleTextBlockStyle}" TextWrapping="Wrap" IsTextSelectionEnabled="True"/>
-                <TextBlock Text="{Binding Metadata}" TextWrapping="Wrap"/>
-                <StackPanel Visibility="{Binding PartsVisibility}" Spacing="8">
-                    <TextBlock Text="选择分 P" Style="{ThemeResource BodyStrongTextBlockStyle}"/>
-                    <ListView x:Name="PartsList" ItemsSource="{Binding Parts}" DisplayMemberPath="Label" SelectionMode="Multiple"
-                              SelectionChanged="Parts_SelectionChanged" IsEnabled="{Binding CanChoose}" MaxHeight="240" AutomationProperties.Name="分 P 列表"/>
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <Button Content="全选" Click="SelectAll_Click" IsEnabled="{Binding CanChoose}"/><Button Content="清空选择" Click="SelectNone_Click" IsEnabled="{Binding CanChoose}"/>
+      Loaded="Page_Loaded" Unloaded="Page_Unloaded" SizeChanged="Page_SizeChanged">
+    <Grid>
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup>
+                <VisualState x:Name="Narrow"/>
+                <VisualState x:Name="Wide">
+                    <VisualState.Setters>
+                        <Setter Target="FormatField.(Grid.Row)" Value="0"/>
+                        <Setter Target="FormatField.(Grid.Column)" Value="2"/>
+                        <Setter Target="FormatColumn.Width" Value="*"/>
+                        <Setter Target="FormatGap.Width" Value="16"/>
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
+        <ScrollViewer x:Name="PageScroll" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+            <StackPanel Style="{StaticResource PageContentStyle}" Width="{Binding ViewportWidth, ElementName=PageScroll}">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="下载" Style="{ThemeResource TitleTextBlockStyle}"/>
+                    <TextBlock Text="粘贴视频链接，选择规格，保存到本机。" Style="{StaticResource SecondaryTextStyle}"/>
+                </StackPanel>
+                <Border Style="{StaticResource SurfaceCardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <TextBox x:Name="InputBox" Header="视频链接或 BV / av 号" PlaceholderText="https://www.bilibili.com/video/…"
+                                     Text="{Binding Input, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" KeyDown="Input_KeyDown"
+                                     IsEnabled="{Binding CanEditInput}" AutomationProperties.AutomationId="VideoInput"/>
+                            <Button Grid.Column="1" Content="解析" Click="Parse_Click" VerticalAlignment="Bottom"
+                                    Style="{StaticResource AccentButtonStyle}" IsEnabled="{Binding CanParse}" AutomationProperties.AutomationId="ParseButton"/>
+                        </Grid>
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <TextBlock Text="访问方式" VerticalAlignment="Center"/>
+                            <ComboBox SelectedIndex="{Binding CredentialIndex, Mode=TwoWay}" IsEnabled="{Binding CanChoose}"
+                                      AutomationProperties.Name="访问方式" AutomationProperties.AutomationId="CredentialMode">
+                                <ComboBoxItem Content="使用本机登录态"/><ComboBoxItem Content="匿名访问"/>
+                            </ComboBox>
+                        </StackPanel>
+                        <TextBlock Text="{Binding AccessHint}" Style="{StaticResource SecondaryTextStyle}"/>
                     </StackPanel>
-                </StackPanel>
-                <ComboBox Header="下载内容" SelectedIndex="{Binding ModeIndex, Mode=TwoWay}" IsEnabled="{Binding CanChoose}" HorizontalAlignment="Stretch">
-                    <ComboBoxItem Content="音视频（MP4）"/><ComboBoxItem Content="仅音频（MP3，192 kbps）"/>
-                </ComboBox>
-                <ComboBox Header="画质" ItemsSource="{Binding Formats}" DisplayMemberPath="Label" SelectedItem="{Binding SelectedFormat, Mode=TwoWay}"
-                          Visibility="{Binding FormatVisibility}" IsEnabled="{Binding CanChoose}" HorizontalAlignment="Stretch"/>
-                <TextBox Header="保存目录" Text="{Binding DownloadDirectory, Mode=TwoWay}" IsEnabled="{Binding CanChoose}" AutomationProperties.AutomationId="DownloadDirectory"/>
-                <StackPanel Orientation="Horizontal" Spacing="12">
-                    <Button Content="选择目录" Click="Browse_Click" IsEnabled="{Binding CanChoose}"/>
-                    <Button Content="开始下载" Click="Download_Click" IsEnabled="{Binding CanDownload}" AutomationProperties.AutomationId="DownloadButton"/>
-                </StackPanel>
+                </Border>
+                <TextBlock Text="{Binding OtherTaskStatus}" Visibility="{Binding OtherTaskVisibility}" Style="{StaticResource SecondaryTextStyle}"/>
+                <Border x:Name="VideoCard" Visibility="{Binding VideoVisibility}" Style="{StaticResource SurfaceCardStyle}">
+                    <StackPanel Spacing="16">
+                        <Grid ColumnSpacing="{Binding ThumbnailSpacing}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <Image Source="{Binding Thumbnail}" Visibility="{Binding ThumbnailVisibility}" Width="144" Height="90"
+                                   Stretch="Uniform" VerticalAlignment="Top" AutomationProperties.Name="视频封面"/>
+                            <StackPanel Grid.Column="1" Spacing="8">
+                                <TextBlock Text="{Binding Title}" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" IsTextSelectionEnabled="True"/>
+                                <TextBlock Text="{Binding Metadata}" Style="{StaticResource SecondaryTextStyle}"/>
+                            </StackPanel>
+                        </Grid>
+                        <Expander Header="{Binding SelectionSummary}" Visibility="{Binding PartsVisibility}" HorizontalAlignment="Stretch">
+                            <StackPanel Spacing="8">
+                                <ListView x:Name="PartsList" ItemsSource="{Binding Parts}" SelectionMode="Multiple"
+                                          SelectionChanged="Parts_SelectionChanged" IsEnabled="{Binding CanChoose}" MaxHeight="220"
+                                          AutomationProperties.Name="分 P 列表" AutomationProperties.AutomationId="PartsList">
+                                    <ListView.ItemTemplate><DataTemplate><TextBlock Text="{Binding Label}" TextWrapping="Wrap"/></DataTemplate></ListView.ItemTemplate>
+                                </ListView>
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <Button Content="全选" Click="SelectAll_Click" IsEnabled="{Binding CanChoose}"/>
+                                    <Button Content="清空选择" Click="SelectNone_Click" IsEnabled="{Binding CanChoose}"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Expander>
+                        <Grid RowSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition x:Name="FormatGap" Width="0"/><ColumnDefinition x:Name="FormatColumn" Width="0"/></Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                            <ComboBox x:Name="ModeField" Header="下载内容" SelectedIndex="{Binding ModeIndex, Mode=TwoWay}" IsEnabled="{Binding CanChoose}"
+                                      HorizontalAlignment="Stretch" AutomationProperties.AutomationId="DownloadMode">
+                                <ComboBoxItem Content="音视频（MP4）"/><ComboBoxItem Content="仅音频（MP3，192 kbps）"/>
+                            </ComboBox>
+                            <ComboBox x:Name="FormatField" Grid.Row="1" Header="画质" ItemsSource="{Binding Formats}" DisplayMemberPath="Label"
+                                      SelectedItem="{Binding SelectedFormat, Mode=TwoWay}" Visibility="{Binding FormatVisibility}"
+                                      IsEnabled="{Binding CanChoose}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="VideoFormat"/>
+                        </Grid>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <TextBox Header="保存目录" Text="{Binding DownloadDirectory, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding CanChoose}" AutomationProperties.AutomationId="DownloadDirectory"/>
+                            <Button Grid.Column="1" Content="浏览…" Click="Browse_Click" IsEnabled="{Binding CanChoose}" VerticalAlignment="Bottom" AutomationProperties.Name="选择下载目录"/>
+                        </Grid>
+                        <Button Content="开始下载" Click="Download_Click" Style="{StaticResource AccentButtonStyle}" IsEnabled="{Binding CanDownload}"
+                                HorizontalAlignment="Right" AutomationProperties.AutomationId="DownloadButton"/>
+                    </StackPanel>
+                </Border>
+                <Border x:Name="ProgressCard" Style="{StaticResource SurfaceCardStyle}" Visibility="{Binding ProgressVisibility}">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Style="{ThemeResource BodyStrongTextBlockStyle}" AutomationProperties.LiveSetting="Polite"/>
+                        <TextBlock Text="{Binding Title}" TextWrapping="Wrap" Visibility="{Binding ActiveTitleVisibility}" Style="{StaticResource SecondaryTextStyle}"/>
+                        <ProgressBar Value="{Binding Percent}" IsIndeterminate="{Binding IsIndeterminate}" AutomationProperties.Name="任务进度" AutomationProperties.AutomationId="TaskProgress"/>
+                        <TextBlock Text="{Binding Metrics}" TextWrapping="Wrap" Visibility="{Binding MetricsVisibility}"/>
+                        <Button Content="{Binding CancelText}" Click="Cancel_Click" IsEnabled="{Binding CanCancel}" AutomationProperties.AutomationId="CancelButton"/>
+                    </StackPanel>
+                </Border>
+                <views:DownloadResultView x:Name="ResultCard" Visibility="{Binding ResultVisibility}" AutomationProperties.AutomationId="DownloadResult"/>
+                <Expander Header="任务日志" HorizontalAlignment="Stretch" Visibility="{Binding LogsVisibility}">
+                    <TextBox Text="{Binding Logs}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="240" AutomationProperties.Name="脱敏任务日志"/>
+                </Expander>
             </StackPanel>
-            <StackPanel Spacing="12" Visibility="{Binding ProgressVisibility}">
-                <TextBlock Text="{Binding Status}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
-                <ProgressBar Value="{Binding Percent}" IsIndeterminate="{Binding IsIndeterminate}" AutomationProperties.Name="下载进度"/>
-                <TextBlock Text="{Binding Metrics}" TextWrapping="Wrap"/>
-                <Button Content="取消当前任务" Click="Cancel_Click" IsEnabled="{Binding CanCancel}" AutomationProperties.AutomationId="CancelButton"/>
-            </StackPanel>
-            <views:DownloadResultView Visibility="{Binding ResultVisibility}"/>
-            <Expander Header="任务日志" HorizontalAlignment="Stretch">
-                <TextBox Text="{Binding Logs}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="240" AutomationProperties.Name="脱敏任务日志"/>
-            </Expander>
-        </StackPanel>
-    </ScrollViewer>
+        </ScrollViewer>
+    </Grid>
 </Page>
