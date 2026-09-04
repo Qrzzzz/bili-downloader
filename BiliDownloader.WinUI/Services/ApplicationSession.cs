@@ -8,7 +8,7 @@ namespace BiliDownloader.WinUI.Services;
 
 public sealed class ApplicationSession : ViewModelBase
 {
-    public BackendClient Client { get; } = new();
+    public BackendClient Client { get; }
     public ShellViewModel Shell { get; } = new();
     public DownloadViewModel Download { get; }
     public AccountViewModel Account { get; }
@@ -18,14 +18,16 @@ public sealed class ApplicationSession : ViewModelBase
     public bool Busy { get; private set; }
     public bool Closing { get; private set; }
     public bool Available => Connected && !Busy && !Closing;
-    public bool CanCancel => Busy && !Closing && operationId is not null;
+    public bool CancelRequested { get; private set; }
+    public bool CanCancel => Busy && !Closing && !CancelRequested && operationId is not null;
     public bool CanNavigate => !Closing;
     public string? ActiveMethod { get; private set; }
     private string? operationId;
     public event Action<string>? ThemeRequested;
 
-    public ApplicationSession()
+    public ApplicationSession(BackendClient? client = null)
     {
+        Client = client ?? new BackendClient();
         Download = new DownloadViewModel(this);
         Account = new AccountViewModel(this);
         Settings = new SettingsViewModel(this);
@@ -45,9 +47,10 @@ public sealed class ApplicationSession : ViewModelBase
             if (hello.ProtocolVersion != Protocol.Version || hello.BackendVersion != App.AppVersion) throw new InvalidDataException("前后端版本不一致。");
             Connected = true;
             ApplySettings(hello.Settings);
-            Account.Status = hello.Status.Text;
+            Account.ApplyStatus(hello.Status);
             Account.SafeMode = hello.SafeMode;
-            Shell.Notify(hello.SafeMode ? "上次运行异常退出，已进入安全模式。正常关闭并重新打开后可扫码登录。" : "粘贴 Bilibili 链接、BV 或 av 号开始。", hello.SafeMode ? InfoBarSeverity.Warning : InfoBarSeverity.Informational);
+            if (hello.SafeMode) Shell.Notify("上次运行异常退出，已进入安全模式。正常关闭并重新打开后可扫码登录。", InfoBarSeverity.Warning);
+            else Shell.IsOpen = false;
             foreach (var text in hello.ConfigDiagnostics) Download.AppendLog(text);
             Changed();
             if (!hello.SafeMode && hello.Status.Code is not "none") await Account.ValidateAsync();
@@ -58,12 +61,12 @@ public sealed class ApplicationSession : ViewModelBase
     public async Task<JsonElement> RunAsync(string method, object? parameters = null)
     {
         if (!Available) throw new InvalidOperationException("请等待当前任务结束。");
-        Busy = true; ActiveMethod = method; Changed();
+        Busy = true; CancelRequested = false; ActiveMethod = method; Changed();
         try
         {
             return await Client.RunAsync(method, parameters, id => Dispatcher.TryEnqueue(() => { operationId = id; Changed(); }));
         }
-        finally { Busy = false; operationId = null; ActiveMethod = null; Changed(); }
+        finally { Busy = false; CancelRequested = false; operationId = null; ActiveMethod = null; Changed(); }
     }
 
     public async Task ExecuteAsync(Func<Task> action)
@@ -84,11 +87,22 @@ public sealed class ApplicationSession : ViewModelBase
 
     public async Task CancelAsync()
     {
-        if (operationId is null) return;
-        var result = await Client.RequestAsync("operation.cancel", new { operation_id = operationId });
+        if (!CanCancel) return;
+        string? cancelledOperation = operationId;
+        CancelRequested = true; Changed();
+        JsonElement result;
+        try { result = await Client.RequestAsync("operation.cancel", new { operation_id = cancelledOperation }); }
+        catch
+        {
+            if (operationId == cancelledOperation) { CancelRequested = false; Changed(); }
+            throw;
+        }
+        if (operationId != cancelledOperation || Closing) return;
         string message = result.TryGetProperty("waiting_for_postprocessing", out var waiting) && waiting.GetBoolean()
             ? "已请求取消，正在等待当前文件合并或转码安全结束…" : "已请求取消，正在等待任务安全结束…";
-        Download.Status = message; Shell.Notify(message, InfoBarSeverity.Warning);
+        Download.Status = message;
+        if (Account.IsLoggingIn) Account.QrStatus = message;
+        Shell.Notify(message, InfoBarSeverity.Warning);
     }
 
     public async Task RefreshQrAsync()
@@ -105,11 +119,13 @@ public sealed class ApplicationSession : ViewModelBase
         }
     }
 
-    public void ApplySettings(AppSettings settings)
+    public void PreviewTheme(string value) => ThemeRequested?.Invoke(value);
+
+    public void ApplySettings(AppSettings settings, bool discardDraft = false)
     {
-        Settings.Load(settings);
+        Settings.Load(settings, discardDraft);
         Download.DownloadDirectory = settings.DownloadDir;
-        ThemeRequested?.Invoke(settings.Theme);
+        PreviewTheme(Settings.CurrentTheme);
     }
 
     public void Changed()

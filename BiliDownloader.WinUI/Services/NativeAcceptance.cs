@@ -1,14 +1,12 @@
-using System.Text.Json;
 using System.Reflection;
+using System.Text.Json;
+using BiliDownloader.WinUI.Models;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
-using Windows.Graphics.Imaging;
-using Windows.Storage;
-using System.Runtime.InteropServices.WindowsRuntime;
 
 namespace BiliDownloader.WinUI.Services;
 
@@ -18,54 +16,173 @@ public static class NativeAcceptance
     {
         string output = Environment.GetEnvironmentVariable("BILI_ACCEPTANCE_OUTPUT") ?? Path.Combine(Path.GetTempPath(), "bili-winui-acceptance");
         Directory.CreateDirectory(output);
+        string[] stateChecks = [];
+        var snapshots = new List<object>();
+        var uiChecks = new List<string>();
         var controls = new List<object>();
-        void Visit(DependencyObject node)
+        IEnumerable<FrameworkElement> Elements(DependencyObject node)
         {
-            if (node is FrameworkElement element)
+            if (node is FrameworkElement element) yield return element;
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++)
+                foreach (var child in Elements(VisualTreeHelper.GetChild(node, i))) yield return child;
+        }
+        bool Visible(FrameworkElement element)
+        {
+            for (DependencyObject? node = element; node is not null; node = VisualTreeHelper.GetParent(node))
+                if (node is UIElement ui && ui.Visibility == Visibility.Collapsed) return false;
+            return element.ActualWidth > 0 && element.ActualHeight > 0;
+        }
+        void Check(bool ok, string name)
+        {
+            if (!ok) throw new InvalidOperationException("Native UI acceptance: " + name);
+            uiChecks.Add(name);
+        }
+        async Task Snapshot(string name, bool fixture)
+        {
+            root.UpdateLayout();
+            await Task.Delay(250);
+            var items = new List<object>();
+            foreach (var element in Elements(root))
             {
                 var peer = FrameworkElementAutomationPeer.CreatePeerForElement(element);
-                if (peer is not null) controls.Add(new { type = element.GetType().FullName, automation_id = AutomationProperties.GetAutomationId(element), name = peer.GetName(), control_type = peer.GetAutomationControlType().ToString() });
+                var origin = element.TransformToVisual(root).TransformPoint(new Windows.Foundation.Point());
+                string id = AutomationProperties.GetAutomationId(element);
+                if (Visible(element) && !string.IsNullOrEmpty(id) && id != "GlobalStatus")
+                    Check(origin.X >= -1 && origin.X + element.ActualWidth <= root.ActualWidth + 1, name + "/" + id + "_fits_horizontally");
+                if (peer is not null)
+                    items.Add(new { type = element.GetType().FullName, element_name = element.Name, automation_id = id,
+                        name = peer.GetName(), control_type = peer.GetAutomationControlType().ToString(),
+                        x = origin.X, y = origin.Y, width = element.ActualWidth, height = element.ActualHeight, visible = Visible(element) });
             }
-            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++) Visit(VisualTreeHelper.GetChild(node, i));
+            int windows = NativeWindowCapture.VisibleWindowCount();
+            Check(windows == 1, name + "/single_native_window");
+            await NativeWindowCapture.CaptureAsync(window, Path.Combine(output, name + ".png"));
+            snapshots.Add(new { name, fixture, theme = root.ActualTheme.ToString(), width = root.ActualWidth, height = root.ActualHeight, visible_window_count = windows, controls = items });
+            controls.AddRange(items);
         }
-        await Task.Delay(300);
-        App.Session.Download.Input = "invalid";
-        await App.Session.ExecuteAsync(App.Session.Download.ParseAsync);
-        bool invalidInputHandled = App.Session.Shell.Severity == InfoBarSeverity.Error && !App.Session.Download.CanDownload;
-        App.Session.Download.Input = "";
-        App.Session.Shell.Notify("原生验收：跨页状态保留");
-        Visit(root);
+        async Task InvokeButton(string content)
+        {
+            var button = Elements(frame).OfType<Button>().First(b => b.Content as string == content);
+            var peer = new ButtonAutomationPeer(button);
+            ((IInvokeProvider)peer.GetPattern(PatternInterface.Invoke)).Invoke();
+            await Task.Delay(50);
+        }
+        void ScrollTop()
+        {
+            Elements(frame).OfType<ScrollViewer>().First(s => s.Name == "PageScroll").ChangeView(null, 0, null, true);
+        }
+
+        if (Environment.GetCommandLineArgs().Contains("--ui-regression"))
+            stateChecks = await FrontendStateAcceptance.RunAsync(root.DispatcherQueue, async (fixtureModel, name) =>
+            {
+                var page = (Page)frame.Content;
+                object originalContext = page.DataContext;
+                try { page.DataContext = fixtureModel; ScrollTop(); await Snapshot(name, true); }
+                finally { page.DataContext = originalContext; }
+            });
+
+        var session = App.Session;
+        var model = session.Download;
+        ElementTheme originalTheme = root.RequestedTheme;
+        var initialSize = window.AppWindow.Size;
         var themes = new List<string>();
-        ElementTheme original = root.RequestedTheme;
+        await Task.Delay(250);
         foreach (var theme in new[] { ElementTheme.Light, ElementTheme.Dark })
         {
             root.RequestedTheme = theme;
-            await Task.Delay(150);
             themes.Add(root.ActualTheme.ToString());
-            var bitmap = new RenderTargetBitmap();
-            await bitmap.RenderAsync(root);
-            var pixels = await bitmap.GetPixelsAsync();
-            var file = await StorageFile.GetFileFromPathAsync(CreateFile(Path.Combine(output, $"download-{theme.ToString().ToLowerInvariant()}.png")));
-            using var stream = await file.OpenAsync(FileAccessMode.ReadWrite);
-            var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
-            encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied, (uint)bitmap.PixelWidth, (uint)bitmap.PixelHeight, 96, 96, pixels.ToArray());
-            await encoder.FlushAsync();
+            await Snapshot("download-" + theme.ToString().ToLowerInvariant(), false);
         }
-        root.RequestedTheme = original;
+        root.RequestedTheme = ElementTheme.Light;
+        model.Input = "invalid";
+        await session.ExecuteAsync(model.ParseAsync);
+        bool invalidInputHandled = session.Shell.Severity == InfoBarSeverity.Error && !model.CanDownload;
+        await Snapshot("input-error", false);
+        model.Input = "";
+        session.Shell.Notify("原生验收：跨页状态保留");
         navigation.SelectedItem = navigation.SettingsItem;
-        await Task.Delay(100);
+        await Task.Delay(250);
         string? settingsPage = frame.Content?.GetType().FullName;
-        bool statusPreserved = App.Session.Shell.Message == "原生验收：跨页状态保留";
+        session.Settings.DownloadDirectory = Path.Combine(output, "draft-downloads");
+        session.Settings.ThemeIndex = 2;
         navigation.SelectedItem = navigation.MenuItems[1];
-        await Task.Delay(100);
+        await Task.Delay(250);
         string? accountPage = frame.Content?.GetType().FullName;
+        bool statusPreserved = session.Shell.Message == "原生验收：跨页状态保留";
+        session.Shell.IsOpen = false;
+        await Snapshot("account-dark", false);
+        navigation.SelectedItem = navigation.SettingsItem;
+        await Task.Delay(250);
+        Check(session.Settings.HasChanges && session.Settings.DownloadDirectory.EndsWith("draft-downloads"), "settings_draft_survives_real_navigation");
+        await Snapshot("settings-draft-dark", false);
+        session.ApplySettings(Protocol.Read<AppSettings>(await session.Client.RequestAsync("settings.get")), discardDraft: true);
+        root.RequestedTheme = ElementTheme.Light;
+        await Snapshot("settings-light", false);
         navigation.SelectedItem = navigation.MenuItems[0];
-        var initialSize = window.AppWindow.Size;
+        await Task.Delay(250);
+        model.Input = "BV1nativeFixture";
+        var video = new VideoInfo("native-fixture", 1, "原生界面验收示例：长标题与多分 P 的下载流程", "示例 UP 主", 3723, "BV1nativeFixture", 1, false,
+            [new(1, "第一部分：准备与开始", 123, "p1"), new(2, "第二部分：较长的中文分 P 标题也应该完整显示并可选择", 3600, "p2")],
+            [new("0", "最佳可用画质", null, "per_part"), new("1", "1080p", 1080, "per_part")]);
+        model.ApplyVideo(video);
+        ScrollTop();
+        await Snapshot("parsed-light", true);
+        var partsExpander = Elements(frame).OfType<Expander>().First(e => e.Header as string == model.SelectionSummary);
+        partsExpander.IsExpanded = true;
+        await Task.Delay(150);
+        await InvokeButton("全选");
+        Check(model.SelectedParts.SetEquals([1, 2]), "native_select_all");
+        await InvokeButton("清空选择");
+        Check(model.SelectedParts.Count == 0 && !model.CanDownload, "native_clear_selection_disables_download");
+        await InvokeButton("全选");
         window.AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(640 * root.XamlRoot.RasterizationScale), (int)(480 * root.XamlRoot.RasterizationScale)));
-        await Task.Delay(200);
+        await Task.Delay(300);
         string narrowNavigationMode = navigation.DisplayMode.ToString();
+        ScrollTop();
+        await Snapshot("parsed-narrow", true);
+        partsExpander.IsExpanded = false;
+        model.ModeIndex = 1;
+        var downloadButton = Elements(frame).First(e => AutomationProperties.GetAutomationId(e) == "DownloadButton");
+        downloadButton.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 1 });
+        await Snapshot("mp3-narrow", true);
+        Check(model.FormatVisibility == Visibility.Collapsed, "native_mp3_quality_hidden");
+
+        string sampleFile = Path.Combine(output, "示例文件.mp4");
+        await File.WriteAllBytesAsync(sampleFile, []);
+        model.ApplyResult(new BatchResult("native-single", "completed", [sampleFile], false, [new(1, "第一部分", "completed", [sampleFile], null)], output));
+        await Snapshot("result-single-narrow", true);
+        Check(model.DetailVisibility == Visibility.Collapsed && model.OutputPickerVisibility == Visibility.Collapsed && model.CanOpenFile, "native_compact_single_file_result");
         window.AppWindow.Resize(initialSize);
-        var evidence = new { version = App.AppVersion, backend_connected = App.Session.Connected,
+        await Task.Delay(250);
+        root.RequestedTheme = ElementTheme.Dark;
+        await Snapshot("result-single-dark", true);
+        string otherFile = Path.Combine(output, "第二个示例文件.mp3");
+        await File.WriteAllBytesAsync(otherFile, []);
+        model.ApplyResult(new BatchResult("native-partial", "partial", [sampleFile, otherFile], true,
+            [new(1, "第一部分", "completed", [sampleFile, otherFile], null),
+             new(2, "第二部分", "failed", [], new("timeout", "网络超时，请稍后重试。", true, "UI fixture"))], output));
+        await Snapshot("result-partial-dark", true);
+        Check(model.DetailVisibility == Visibility.Visible && model.OutputPickerVisibility == Visibility.Visible && model.CanRetry, "native_partial_details_and_retry");
+        var picker = Elements(frame).OfType<ComboBox>().First(e => AutomationProperties.GetAutomationId(e) == "OutputPicker");
+        picker.SelectedIndex = 1;
+        await Task.Delay(50);
+        Check(model.SelectedOutput == otherFile && model.SelectedOutputName == "第二个示例文件.mp3", "native_filename_selection_preserves_full_path");
+        root.RequestedTheme = ElementTheme.Light;
+        model.ApplyResult(new BatchResult("native-failed", "failed", [], true, [new(1, "第一部分", "failed", [], new("platform_412", "平台暂时拒绝请求（HTTP 412），请稍后重试。", true, "UI fixture"))], output));
+        await Snapshot("result-failed-light", true);
+        Check(model.OutputVisibility == Visibility.Collapsed && model.DetailVisibility == Visibility.Visible, "native_failed_result_without_empty_files");
+        model.ApplyResult(new BatchResult("native-cancelled", "cancelled", [], false, [new(1, "第一部分", "cancelled", [], null)], output));
+        await Snapshot("result-cancelled-light", true);
+        Check(model.RetryVisibility == Visibility.Collapsed, "native_cancelled_result_no_false_retry");
+        model.CollapseResult();
+        Check(model.VideoVisibility == Visibility.Visible, "native_return_to_download_options");
+        window.AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(640 * root.XamlRoot.RasterizationScale), (int)(480 * root.XamlRoot.RasterizationScale)));
+        navigation.SelectedItem = navigation.MenuItems[1];
+        await Snapshot("account-narrow", false);
+        navigation.SelectedItem = navigation.SettingsItem;
+        await Snapshot("settings-narrow", false);
+        window.AppWindow.Resize(initialSize);
+        var evidence = new { version = App.AppVersion, backend_connected = session.Connected,
             git_commit = typeof(App).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "GitCommit")?.Value,
             build_dirty = typeof(App).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "BuildDirty")?.Value,
             window_type = window.GetType().BaseType?.FullName, backdrop_type = window.SystemBackdrop?.GetType().FullName,
@@ -73,9 +190,10 @@ public static class NativeAcceptance
             extends_content_into_titlebar = window.ExtendsContentIntoTitleBar, settings_page = settingsPage,
             account_page = accountPage, invalid_input_handled = invalidInputHandled, status_preserved = statusPreserved,
             narrow_navigation_mode = narrowNavigationMode, caption_theme = window.AppWindow.TitleBar.PreferredTheme.ToString(),
-            rasterization_scale = root.XamlRoot.RasterizationScale, themes, controls };
+            rasterization_scale = root.XamlRoot.RasterizationScale, themes, controls, state_checks = stateChecks,
+            ui_checks = uiChecks, snapshots };
         await File.WriteAllTextAsync(Path.Combine(output, "native-evidence.json"), JsonSerializer.Serialize(evidence, new JsonSerializerOptions { WriteIndented = true }));
-        if (!App.Session.Connected || !invalidInputHandled || !statusPreserved || narrowNavigationMode == "Expanded") Environment.ExitCode = 2;
+        root.RequestedTheme = originalTheme;
+        if (!session.Connected || !invalidInputHandled || !statusPreserved || narrowNavigationMode == "Expanded") Environment.ExitCode = 2;
     }
-    private static string CreateFile(string path) { File.WriteAllBytes(path, []); return path; }
 }
