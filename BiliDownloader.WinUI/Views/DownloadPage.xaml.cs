@@ -1,0 +1,44 @@
+using System.ComponentModel;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Navigation;
+using BiliDownloader.WinUI.Models;
+using BiliDownloader.WinUI.Services;
+using BiliDownloader.WinUI.ViewModels;
+using Windows.System;
+
+namespace BiliDownloader.WinUI.Views;
+
+public sealed partial class DownloadPage : Page
+{
+    private DownloadViewModel Model => App.Session.Download;
+    private bool updatingSelection;
+    public DownloadPage() { InitializeComponent(); DataContext = Model; NavigationCacheMode = NavigationCacheMode.Required; }
+    private void Page_Loaded(object sender, RoutedEventArgs e) { Model.PropertyChanged += ModelChanged; SyncSelection(); InputBox.Focus(FocusState.Programmatic); }
+    private void Page_Unloaded(object sender, RoutedEventArgs e) => Model.PropertyChanged -= ModelChanged;
+    private void ModelChanged(object? sender, PropertyChangedEventArgs e) { if (string.IsNullOrEmpty(e.PropertyName)) SyncSelection(); }
+    private void SyncSelection()
+    {
+        if (updatingSelection) return;
+        updatingSelection = true;
+        foreach (var part in Model.Parts)
+        {
+            if (Model.SelectedParts.Contains(part.Index) && !PartsList.SelectedItems.Contains(part)) PartsList.SelectedItems.Add(part);
+            if (!Model.SelectedParts.Contains(part.Index) && PartsList.SelectedItems.Contains(part)) PartsList.SelectedItems.Remove(part);
+        }
+        updatingSelection = false;
+    }
+    private void Parts_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (updatingSelection) return;
+        Model.SelectedParts.Clear(); foreach (VideoPart p in PartsList.SelectedItems) Model.SelectedParts.Add(p.Index); Model.Refresh();
+    }
+    private async void Parse_Click(object sender, RoutedEventArgs e) => await App.Session.ExecuteAsync(Model.ParseAsync);
+    private async void Input_KeyDown(object sender, KeyRoutedEventArgs e) { if (e.Key == VirtualKey.Enter && Model.CanParse) { e.Handled = true; await App.Session.ExecuteAsync(Model.ParseAsync); } }
+    private async void Browse_Click(object sender, RoutedEventArgs e) => await App.Session.ExecuteAsync(async () => { var path = await WindowsShellService.PickFolderAsync(); if (path is not null) Model.DownloadDirectory = path; });
+    private async void Download_Click(object sender, RoutedEventArgs e) => await App.Session.ExecuteAsync(() => Model.DownloadAsync());
+    private async void Cancel_Click(object sender, RoutedEventArgs e) => await App.Session.ExecuteAsync(App.Session.CancelAsync);
+    private void SelectAll_Click(object sender, RoutedEventArgs e) => PartsList.SelectAll();
+    private void SelectNone_Click(object sender, RoutedEventArgs e) => PartsList.SelectedItems.Clear();
+}

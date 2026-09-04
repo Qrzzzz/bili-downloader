@@ -1,0 +1,28 @@
+<Window x:Class="BiliDownloader.WinUI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:Microsoft.UI.Xaml.Controls"
+        Title="Bili Downloader Lite">
+    <Window.SystemBackdrop><MicaBackdrop /></Window.SystemBackdrop>
+    <Grid x:Name="Root" Loaded="Root_Loaded" Language="zh-CN">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <controls:TitleBar x:Name="AppTitleBar" Title="Bili Downloader Lite" Subtitle="2.5"
+                           IsPaneToggleButtonVisible="True" PaneToggleRequested="TitleBar_PaneToggleRequested" />
+        <controls:NavigationView x:Name="Navigation" Grid.Row="1" PaneDisplayMode="Auto"
+                                 IsEnabled="{Binding CanNavigate}"
+                                 IsSettingsVisible="True" IsBackButtonVisible="Collapsed"
+                                 IsPaneToggleButtonVisible="False" SelectionChanged="Navigation_SelectionChanged">
+            <controls:NavigationView.MenuItems>
+                <controls:NavigationViewItem Content="下载" Tag="download" Icon="Download" AutomationProperties.AutomationId="NavDownload"/>
+                <controls:NavigationViewItem Content="账号" Tag="account" Icon="Contact" AutomationProperties.AutomationId="NavAccount"/>
+            </controls:NavigationView.MenuItems>
+            <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <controls:InfoBar Margin="24,8,24,0" IsOpen="{Binding Shell.IsOpen, Mode=TwoWay}"
+                                  Message="{Binding Shell.Message}" Severity="{Binding Shell.Severity}"
+                                  AutomationProperties.AutomationId="GlobalStatus" AutomationProperties.LiveSetting="Polite" />
+                <Frame x:Name="ContentFrame" Grid.Row="1" />
+            </Grid>
+        </controls:NavigationView>
+    </Grid>
+</Window>

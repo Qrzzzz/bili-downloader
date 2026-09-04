@@ -40,7 +40,7 @@ def _version_resource(
     built_at: str,
 ) -> str:
     comments = f"Git commit {commit}; dirty={str(dirty).lower()}; built_at={built_at}"
-    original_filename = f"BiliDownloader.v{version}.exe"
+    original_filename = "BiliDownloader.Backend.exe"
     return f"""# UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
@@ -59,7 +59,7 @@ VSVersionInfo(
         '040904B0',
         [
           StringStruct('CompanyName', 'Bili Downloader Lite contributors'),
-          StringStruct('FileDescription', 'Bili Downloader Lite desktop application'),
+          StringStruct('FileDescription', 'Bili Downloader Lite Python backend'),
           StringStruct('FileVersion', {version!r}),
           StringStruct('InternalName', 'BiliDownloader'),
           StringStruct('LegalCopyright', 'MIT License'),

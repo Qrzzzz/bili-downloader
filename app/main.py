@@ -8,12 +8,8 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.crash import acquire_running_lock, install_exception_hooks, log_current_exception, release_running_lock
-
-
-def main(safe_mode: bool = False) -> int:
-    parser = argparse.ArgumentParser(description="Bili Downloader Lite")
-    parser.add_argument("--self-test", action="store_true", help="打开主界面后自动退出，用于构建验证")
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Bili Downloader Lite Python backend (WinUI owns the UI)")
     parser.add_argument("--parse-test", metavar="URL", help=argparse.SUPPRESS)
     parser.add_argument("--parse-output", metavar="PATH", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -55,21 +51,9 @@ def main(safe_mode: bool = False) -> int:
         output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return exit_code
 
-    from app.ui_main import run_app
-
-    return run_app(self_test=args.self_test, safe_mode=safe_mode)
+    from app.backend.__main__ import main as backend_main
+    return backend_main()
 
 
 if __name__ == "__main__":
-    install_exception_hooks()
-    detected_previous_crash = acquire_running_lock()
-    try:
-        exit_code = main(safe_mode=detected_previous_crash)
-    except SystemExit:
-        release_running_lock()
-        raise
-    except Exception:
-        log_current_exception("fatal main exception")
-        raise
-    release_running_lock()
-    raise SystemExit(exit_code)
+    raise SystemExit(main())

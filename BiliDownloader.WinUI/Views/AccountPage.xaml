@@ -1,0 +1,26 @@
+<Page x:Class="BiliDownloader.WinUI.Views.AccountPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Spacing="20" Padding="24" MaxWidth="960" HorizontalAlignment="Stretch">
+            <TextBlock Text="账号" Style="{ThemeResource TitleTextBlockStyle}"/>
+            <TextBlock Text="{Binding Status}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <Button Content="扫码登录" Click="Login_Click" IsEnabled="{Binding CanLogin}" AutomationProperties.AutomationId="LoginButton"/>
+                <Button Content="验证登录态" Click="Validate_Click" IsEnabled="{Binding CanManage}"/>
+            </StackPanel>
+            <StackPanel Visibility="{Binding QrVisibility}" Spacing="12">
+                <Image Source="{Binding QrImage}" Width="256" Height="256" Stretch="Uniform" HorizontalAlignment="Left" AutomationProperties.Name="请使用 Bilibili App 扫描的登录二维码"/>
+                <TextBlock Text="{Binding QrStatus}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <Button Content="刷新二维码" Click="Refresh_Click" IsEnabled="{Binding CanRefresh}"/>
+                    <Button Content="取消登录" Click="Cancel_Click" IsEnabled="{Binding IsLoggingIn}"/>
+                </StackPanel>
+            </StackPanel>
+            <Button Content="退出并清除本机登录态" Click="Clear_Click" IsEnabled="{Binding CanManage}"/>
+            <TextBlock Text="登录与隐私" Style="{ThemeResource SubtitleTextBlockStyle}"/>
+            <TextBlock Text="二维码在应用内生成，不读取浏览器 Cookie，不要求输入账号密码。手机确认后，应用会验证凭据，再使用 Windows DPAPI 加密保存在当前 Windows 用户的本机目录。" TextWrapping="Wrap"/>
+            <TextBlock Text="匿名访问不会读取已保存的凭据。应用不收集遥测，不上传链接、账号或日志。请仅下载你有权访问和保存的内容；登录不会绕过会员、付费、版权或平台限制。" TextWrapping="Wrap"/>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

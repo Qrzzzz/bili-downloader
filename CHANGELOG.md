@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.5] - 2026-09-04
+
+### Windows App SDK / WinUI 3 架构迁移
+
+- 新增 C#/.NET 10 WinUI solution；官方 Window、MicaBackdrop、TitleBar、NavigationView、Frame、Page 与 InfoBar 承担窗口和页面结构。
+- Python 下载、登录与诊断逻辑通过无 Qt 的 services/backend 提供 IPC v1；移除 PySide6 UI、QThread/Signal glue 与 Qt 依赖。
+- 任务快照、失败重试、扫码刷新代次、取消及关闭等待由后端统一管理，前端采用应用级状态与独立 ViewModel。
+- 分发改为自包含 Windows x64 目录 ZIP，联合审计 WinUI 与 Python 文件，SBOM 包含 NuGet、Python、.NET 运行时和实际文件摘要。
+- 原生运行、协议回归、依赖审计与外部验收范围记录在 `docs/validation/v2.5.md`，发行资产从干净的标签提交构建。
+
+## 2.4 — Windows 风格界面重写（未发布的前序候选）
+
+- 以标题栏、侧边导航和内容区重组主窗口，分为下载、账号与设置三页；切换页面保留任务、进度和内嵌结果。
+- 新增跟随系统、浅色、深色主题及持久化偏好，高对比度模式优先采用系统配色；旧配置与保存目录保持兼容。
+- 解析错误、输入校验和任务结果使用内嵌提示；非下载页可通过提示返回任务，窄窗口自动收起导航文字。
+- 保留分 P、MP4 / MP3、失败重试、任务详情与安全关闭等待；解析或下载期间禁用账号状态变更。
+- 继续使用 Python / PySide6，保留原生系统窗口控件和实色背景，不新增运行时依赖。
+- 简化 CI 与验收：PR/main 运行确定性回归，正式成品检查集中在 Release，公网探测仅手动运行，人工验收按相关变更触发。
+
 ## [2.3] - 2026-09-04
 
 ### 主窗口内嵌下载结果

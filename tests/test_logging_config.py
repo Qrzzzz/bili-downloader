@@ -109,9 +109,9 @@ def test_ytdlp_adapter_emits_once_when_ui_sink_is_present(session_modules: Simpl
     logger_module = session_modules.logger
     signal = RecordingSignal()
     raw_logger = RecordingLogger()
-    emitter = SimpleNamespace(message=signal)
+    emitter = signal.emit
 
-    logger_module.YtdlpQtLogger(emitter=emitter, logger=raw_logger).info("single message")
+    logger_module.YtdlpLogger(emitter=emitter, logger=raw_logger).info("single message")
 
     assert signal.values == ["single message"]
     assert raw_logger.calls == []
@@ -189,7 +189,7 @@ def test_config_atomic_save_retains_previous_file_on_replace_failure(
     path = config.config_path()
     previous = path.read_bytes()
     payload = json.loads(previous.decode("utf-8"))
-    assert payload == {"download_dir": str(first_dir.resolve()), "schema_version": config.CONFIG_SCHEMA_VERSION}
+    assert payload == {"download_dir": str(first_dir.resolve()), "schema_version": config.CONFIG_SCHEMA_VERSION, "theme": "system"}
 
     with monkeypatch.context() as scoped:
         scoped.setattr(config.os, "replace", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("fault")))
