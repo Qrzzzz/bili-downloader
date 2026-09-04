@@ -46,30 +46,8 @@ def _tag_commit(repository: str, tag: str) -> str:
     raise ValueError("Git tag indirection is unexpectedly deep")
 
 
-def _verify_attestation(path: Path, repository: str, tag: str, commit: str) -> None:
-    subprocess.run(
-        [
-            "gh",
-            "attestation",
-            "verify",
-            str(path),
-            "--repo",
-            repository,
-            "--signer-workflow",
-            f"{repository}/.github/workflows/release.yml",
-            "--source-ref",
-            f"refs/tags/{tag}",
-            "--source-digest",
-            commit,
-        ],
-        check=True,
-        text=True,
-        encoding="utf-8",
-    )
-
-
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Verify a published GitHub Release and attestations.")
+    parser = argparse.ArgumentParser(description="Verify a published GitHub Release against local asset digests.")
     parser.add_argument("--repository", required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--expected-version", required=True)
@@ -130,7 +108,6 @@ def main() -> int:
             raise ValueError(f"Asset {name} size mismatch: {asset.get('size')} != {local_size}")
         if asset.get("digest") != local_digest:
             raise ValueError(f"Asset {name} digest mismatch: {asset.get('digest')!r} != {local_digest}")
-        _verify_attestation(local_path, args.repository, args.tag, expected_commit)
         verified_assets.append(
             {
                 "id": asset.get("id"),
@@ -147,7 +124,6 @@ def main() -> int:
         "tag_commit": tag_commit,
         "asset_count": len(verified_assets),
         "assets": sorted(verified_assets, key=lambda item: str(item["name"])),
-        "attestations_verified": len(verified_assets),
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

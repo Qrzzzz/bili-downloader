@@ -1,6 +1,12 @@
 # Maintainer Notes
 
-## v2.3 候选发布边界
+## 当前 CI 与验收策略
+
+- 当前检查范围以 [发布检查清单](./RELEASE_CHECKLIST.md) 为准；下面的版本小节记录已发布版本的行为边界。
+- PR/main 只执行轻量的确定性回归；最终 EXE 构建、package smoke 和归档审计集中在 Release。不要另设重复的独立重建或逐项手工确认门槛。
+- 真实扫码、下载、界面截图和许可证复核按相关改动触发；公网探测仅手动运行。无关变更不要求重复人工验收。
+
+## v2.3 已发布记录
 
 - 版本严格为源码 `2.3`、标签 `v2.3`、成品 `BiliDownloader.v2.3.exe`、Release 标题 `Bili Downloader Lite v2.3`；不允许多一级版本。
 - v2.3 必须从已发布的 v2.2 提交 `b2d9d478acc90d63a64823cc6be47045940469ab` 发展；已公开标签和 Release 不得移动、覆盖或删除。
@@ -21,7 +27,7 @@
 
 - 版本严格为源码 `2.1`、标签 `v2.1`、成品 `BiliDownloader.v2.1.exe`、Release 标题 `Bili Downloader Lite v2.1`；不允许多一级版本。
 - 已公开 `v1.1`、`v1.2`、`v1.3`、`v1.4` 与 `v2.0` 是不可改写历史，不得移动、删除或重置标签。v2.1 必须从已发布的 v2.0 提交 `ffb1cfd6e40c067ab84b6e385f307b7e217e9841` 发展。
-- `quality.yml` 只运行确定性检查，不访问 Bilibili 实时网络。`public-smoke.yml` 仅定时/手动运行匿名解析和二维码首次等待态检查；HTTP 412 必须失败留证。
+- `quality.yml` 只运行确定性检查，不访问 Bilibili 实时网络。`public-smoke.yml` 现仅手动运行匿名解析和二维码首次等待态检查；HTTP 412 必须失败留证。
 - `release.yml` 只由精确 `v2.1` 触发，并绑定 tag/source/commit/PE/asset/digest/attestation。不得从分支 push 触发发布。
 - 构建固定 Windows x64 + Python 3.13；`build.ps1` 每次重建 `build\.venv`，只从哈希锁安装 wheel。
 - 不设 EXE 体积阈值。删除浏览器自动化依赖后的自然缩小是预期结果，禁止填充无用内容。
@@ -57,7 +63,7 @@
 
 ## 归档与仓库禁入项
 
-源码、锁、构建环境、PyInstaller CArchive 和内嵌 PYZ 都要复核以下内容为零：
+提交内容不包含以下本机数据或产物；最终 EXE 的 PyInstaller CArchive 和内嵌 PYZ 由归档审计检查。不要求每版人工重复扫描全部源码、锁和构建环境：
 
 - Playwright Python 包、driver/Node、`ms-playwright`、Chromium/Chrome/Edge runtime、Electron executable/runtime。
 - 浏览器 profile、session/凭据、`storage_state.json`、`cookies.txt`、`session.dat`、日志。
@@ -66,9 +72,9 @@
 
 历史 CHANGELOG 事实、迁移测试和旧残留清理字符串不应被文本搜索误判为运行时打包内容。
 
-## 发布前人工 Gate
+## 按改动触发的人工验收
 
-- 使用真实 Bilibili App 扫描应用内二维码，验证已扫码待确认、成功、过期/刷新、取消/关闭、连续重开和应用退出。
-- 扫码后复核登录解析/下载、退出登录和旧 v1.2 凭据直接可读。该 Gate 需用户参与，自动测试不得伪造通过。
-- 核对第三方许可证/notice，尤其是 PySide6/Qt、yt-dlp、Segno、PyInstaller 和由用户自行提供的 FFmpeg。
-- 记录 EXE 实际 bytes/MiB、SHA-256 与 Authenticode 状态；本机无签名证书不阻断候选构建，但必须如实报告。
+- 登录协议、界面或凭据相关变更才需要真实手机扫码，验证受影响的确认、过期/刷新、取消/关闭和重开流程；涉及迁移时检查旧凭据可读。自动测试不得伪造人工通过。
+- 下载及外置 FFmpeg 相关变更才需要真实解析/下载验证；界面变更才需要相应截图与交互验收。
+- 首次分发、依赖或分发方式变化时复核对应许可证/notice；依赖变化或出现新安全公告时执行漏洞审计，不要求每个无关补丁重复复核全部依赖。
+- EXE 大小、SHA-256 已由产物审计自动记录；无签名证书和体积变化不构成额外门槛，不宣称未完成的 Authenticode 签名。
