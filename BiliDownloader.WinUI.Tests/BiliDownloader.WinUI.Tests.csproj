@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../BiliDownloader.WinUI/Models/Protocol.cs" Link="Models/Protocol.cs" />
+    <Compile Include="../BiliDownloader.WinUI/Services/BackendClient.cs" Link="Services/BackendClient.cs" />
+    <Compile Include="../BiliDownloader.WinUI/Services/BackendProcessHost.cs" Link="Services/BackendProcessHost.cs" />
+    <Compile Include="../BiliDownloader.WinUI/Services/FrontendLog.cs" Link="Services/FrontendLog.cs" />
+  </ItemGroup>
+</Project>

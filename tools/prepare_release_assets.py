@@ -24,7 +24,7 @@ def main() -> int:
 
     directory = args.directory.resolve()
     names = [
-        f"BiliDownloader.v{args.version}.exe",
+        f"BiliDownloader.v{args.version}.win-x64.zip",
         f"BiliDownloader.v{args.version}.sbom.json",
     ]
     missing = [name for name in names if not (directory / name).is_file()]

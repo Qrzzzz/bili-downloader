@@ -11,24 +11,24 @@ from types import SimpleNamespace
 import pytest
 
 
-def test_release_version_is_2_3_and_windows_compatible() -> None:
+def test_release_version_is_2_5_and_windows_compatible() -> None:
     app = importlib.import_module("app")
     version_tool = importlib.import_module("tools.write_version_info")
 
     assert app.__app_name__ == "Bili Downloader Lite"
-    assert app.__version__ == "2.3"
-    assert version_tool._numeric_version(app.__version__) == (2, 3, 0, 0)
+    assert app.__version__ == "2.5"
+    assert version_tool._numeric_version(app.__version__) == (2, 5, 0, 0)
     resource = version_tool._version_resource(
         app.__version__,
-        (2, 3, 0, 0),
+        (2, 5, 0, 0),
         "a" * 40,
         False,
         "2026-07-12T00:00:00Z",
     )
     assert "StringStruct('ProductName', 'Bili Downloader Lite')" in resource
-    assert "StringStruct('OriginalFilename', 'BiliDownloader.v2.3.exe')" in resource
-    assert "StringStruct('FileVersion', '2.3')" in resource
-    assert "StringStruct('ProductVersion', '2.3')" in resource
+    assert "StringStruct('OriginalFilename', 'BiliDownloader.Backend.exe')" in resource
+    assert "StringStruct('FileVersion', '2.5')" in resource
+    assert "StringStruct('ProductVersion', '2.5')" in resource
 
 
 @pytest.mark.parametrize("version", ["1", "1.2.0", "v1.2", "1.2rc1", "1.2.3.4"])
@@ -42,7 +42,7 @@ def test_release_version_rejects_non_two_level_forms(version: str) -> None:
 def test_native_qr_build_has_no_browser_runtime_or_smoke_entrypoint() -> None:
     root = Path(__file__).resolve().parents[1]
     build_script = (root / "build.ps1").read_text(encoding="utf-8")
-    spec = (root / "BiliDownloader.spec").read_text(encoding="utf-8")
+    spec = (root / "BiliDownloader.Backend.spec").read_text(encoding="utf-8")
     runtime_input = (root / "requirements.in").read_text(encoding="utf-8").lower()
     runtime_lock = (root / "requirements.txt").read_text(encoding="utf-8").lower()
     main = (root / "app" / "main.py").read_text(encoding="utf-8").lower()
@@ -74,6 +74,9 @@ def test_native_qr_build_has_no_browser_runtime_or_smoke_entrypoint() -> None:
         "profile\\storage_state.json",
         "logs\\app.log",
         "icuuc.dll",
+        "PySide6.QtCore",
+        "backend-runtime/Qt6Widgets.dll",
+        "shiboken6/Shiboken.pyd",
     ],
 )
 def test_artifact_audit_rejects_prohibited_members(member: str) -> None:
@@ -89,6 +92,17 @@ def test_dependency_locks_are_pinned_and_hashed_for_approved_target() -> None:
     lock_tool.verify_pair(root / "requirements.in", root / "requirements.txt")
     lock_tool.verify_pair(root / "requirements-dev.in", root / "requirements-dev.txt")
     lock_tool.verify_pair(root / "requirements-sbom.in", root / "requirements-sbom.txt")
+
+
+def test_artifact_audit_rejects_missing_xaml_resource_index() -> None:
+    audit = importlib.import_module("tools.audit_release_artifact")
+    package = {name: None for name in (
+        "BiliDownloader.v2.5.exe", "BiliDownloader.v2.5.dll", "Assets/AppIcon.ico",
+        "BiliDownloader.Backend.exe", "Microsoft.ui.xaml.dll", "build-info.json",
+        "backend-runtime/build-info.json",
+    )}
+    with pytest.raises(ValueError, match=r"Missing native package files:.*BiliDownloader.v2.5.pri"):
+        audit._audit_contents(package, lambda _: b"", Path("unused.exe"), "2.5", None, False)
 
 
 def test_workflows_pin_actions_and_keep_public_network_out_of_quality() -> None:
@@ -113,10 +127,10 @@ def test_workflows_pin_actions_and_keep_public_network_out_of_quality() -> None:
     assert "public_qr_smoke.py" in public_smoke
 
     release = workflows["release.yml"]
-    assert "tags:\n      - v2.3" in release
-    assert "RELEASE_TITLE: Bili Downloader Lite v2.3" in release
-    assert "BiliDownloader.v2.3.exe" in release
-    assert 'docs/releases/v2.3.md' in release
+    assert "tags:\n      - v2.5" in release
+    assert "RELEASE_TITLE: Bili Downloader Lite v2.5" in release
+    assert "BiliDownloader.v2.5.win-x64.zip" in release
+    assert 'docs/releases/v2.5.md' in release
     assert "attestations: write" in release
     assert "id-token: write" in release
 
@@ -139,7 +153,7 @@ def test_published_release_matches_verified_local_assets(
 ) -> None:
     verifier = importlib.import_module("tools.verify_github_release")
     commit = "a" * 40
-    asset_names = ["BiliDownloader.v2.3.exe", "BiliDownloader.v2.3.sbom.json", "SHA256SUMS"]
+    asset_names = ["BiliDownloader.v2.5.win-x64.zip", "BiliDownloader.v2.5.sbom.json", "SHA256SUMS"]
     assets = []
     for name in asset_names:
         data = f"test asset {name}".encode()
@@ -151,8 +165,8 @@ def test_published_release_matches_verified_local_assets(
             "digest": f"sha256:{hashlib.sha256(data).hexdigest()}",
         })
     release = {
-        "tag_name": "v2.3",
-        "name": "Bili Downloader Lite v2.3",
+        "tag_name": "v2.5",
+        "name": "Bili Downloader Lite v2.5",
         "draft": False,
         "prerelease": False,
         "published_at": "2026-09-04T00:00:00Z",
@@ -165,17 +179,17 @@ def test_published_release_matches_verified_local_assets(
     remote_commit = "b" * 40 if mismatch == "commit" else commit
 
     def fake_gh_json(*args):
-        if args == ("api", "repos/example/project/releases/tags/v2.3"):
+        if args == ("api", "repos/example/project/releases/tags/v2.5"):
             return release
-        if args == ("api", "repos/example/project/git/ref/tags/v2.3"):
+        if args == ("api", "repos/example/project/git/ref/tags/v2.5"):
             return {"object": {"type": "commit", "sha": remote_commit}}
         raise AssertionError(f"Unexpected GitHub request: {args}")
 
     monkeypatch.setattr(verifier, "_gh_json", fake_gh_json)
     monkeypatch.setattr(sys, "argv", [
         "verify_github_release.py", "--repository", "example/project",
-        "--tag", "v2.3", "--expected-version", "2.3",
-        "--expected-commit", commit, "--expected-title", "Bili Downloader Lite v2.3",
+        "--tag", "v2.5", "--expected-version", "2.5",
+        "--expected-commit", commit, "--expected-title", "Bili Downloader Lite v2.5",
         "--asset-directory", str(tmp_path),
     ])
     if error is not None:

@@ -19,7 +19,7 @@ from yt_dlp.utils import DownloadCancelled
 
 from .config import AppConfig
 from .cookies import CredentialMode, cookiefile_lease
-from .logger import LogEmitter, YtdlpQtLogger, redact_sensitive
+from .logger import LogSink, YtdlpLogger, redact_sensitive
 from .video_urls import BV_RE, ResolvedVideoUrl, canonicalize_video_url, validate_redirect_hop
 from .utils import (
     AppError,
@@ -186,7 +186,7 @@ THUMBNAIL_HOST_DOMAINS = ("hdslb.com", "biliimg.com", "bilibili.com")
 
 def base_ydl_options(
     config: AppConfig,
-    emitter: LogEmitter | None = None,
+    emitter: LogSink | None = None,
     cookiefile: Path | None = None,
     ffmpeg_path: str | None = None,
 ) -> dict[str, Any]:
@@ -194,7 +194,7 @@ def base_ydl_options(
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": False,
-        "logger": YtdlpQtLogger(emitter),
+        "logger": YtdlpLogger(emitter),
         "windowsfilenames": True,
         "noprogress": True,
         "socket_timeout": 20,
@@ -393,7 +393,7 @@ def _require_info(value: Any) -> dict[str, Any]:
 def parse_video_info(
     url: str,
     config: AppConfig,
-    emitter: LogEmitter | None = None,
+    emitter: LogSink | None = None,
     credential_mode: CredentialMode | str = CredentialMode.SAVED,
 ) -> VideoInfoResult:
     resolved = resolve_bilibili_url(url)
@@ -696,7 +696,7 @@ def prepare_download_plan(
     config: AppConfig,
     format_selector: str,
     *,
-    emitter: LogEmitter | None = None,
+    emitter: LogSink | None = None,
     cookiefile: Path | None = None,
     controller: DownloadController | None = None,
     mode: DownloadMode = DownloadMode.AUDIO_VIDEO,
@@ -864,7 +864,7 @@ def download_videos(
     download_dir: str,
     format_selector: str,
     progress_hook: ProgressHook,
-    emitter: LogEmitter | None = None,
+    emitter: LogSink | None = None,
     controller: DownloadController | None = None,
     credential_mode: CredentialMode | str = CredentialMode.SAVED,
     mode: DownloadMode = DownloadMode.AUDIO_VIDEO,
@@ -946,7 +946,7 @@ def download_videos(
                     opts["merge_output_format"] = "mp4"
                 try:
                     if emitter:
-                        emitter.message.emit(f"开始下载 P{part.index}：{sanitize_windows_filename(part.title)}")
+                        emitter(f"开始下载 P{part.index}：{sanitize_windows_filename(part.title)}")
                     with YoutubeDL(opts) as ydl:
                         info = _require_info(ydl.extract_info(part.url, download=True))
                     files = _existing_output_paths(info, captured)

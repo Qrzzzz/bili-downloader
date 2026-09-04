@@ -1,0 +1,19 @@
+<Project>
+  <PropertyGroup>
+    <Version>2.5</Version>
+    <AssemblyVersion>2.5.0.0</AssemblyVersion>
+    <FileVersion>2.5.0.0</FileVersion>
+    <Product>Bili Downloader Lite</Product>
+    <Copyright>Qrzzzz and contributors</Copyright>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <Deterministic>true</Deterministic>
+    <InformationalVersion>$(Version)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+    <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="GitCommit" Value="$(SourceRevisionId)" />
+    <AssemblyMetadata Include="BuildDirty" Value="$(BuildDirty)" />
+  </ItemGroup>
+</Project>

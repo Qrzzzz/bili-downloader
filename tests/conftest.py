@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import importlib
-import importlib.util
 import logging
 import sys
-import types
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,54 +16,6 @@ class IsolatedPaths:
     local: Path
     roaming: Path
     home: Path
-
-
-class _BoundSignal:
-    def __init__(self) -> None:
-        self.callbacks: list[object] = []
-
-    def connect(self, callback: object) -> None:
-        self.callbacks.append(callback)
-
-    def emit(self, *args: object) -> None:
-        for callback in tuple(self.callbacks):
-            callback(*args)  # type: ignore[operator]
-
-
-class _SignalDescriptor:
-    def __init__(self, *_types: object) -> None:
-        self.key = f"_test_signal_{id(self)}"
-
-    def __get__(self, instance: object, owner: type[object]) -> object:
-        if instance is None:
-            return self
-        namespace = vars(instance)
-        return namespace.setdefault(self.key, _BoundSignal())
-
-
-class _QObject:
-    def __init__(self, *_args: object, **_kwargs: object) -> None:
-        pass
-
-
-def _install_qtcore_stub_if_needed() -> None:
-    if "PySide6.QtCore" in sys.modules:
-        return
-    try:
-        available = importlib.util.find_spec("PySide6") is not None
-    except (ImportError, ValueError):
-        available = False
-    if available:
-        return
-
-    qtcore = types.ModuleType("PySide6.QtCore")
-    qtcore.QObject = _QObject  # type: ignore[attr-defined]
-    qtcore.Signal = _SignalDescriptor  # type: ignore[attr-defined]
-    package = types.ModuleType("PySide6")
-    package.__path__ = []  # type: ignore[attr-defined]
-    package.QtCore = qtcore  # type: ignore[attr-defined]
-    sys.modules["PySide6"] = package
-    sys.modules["PySide6.QtCore"] = qtcore
 
 
 def _purge_app_modules() -> None:
@@ -103,7 +53,6 @@ def isolated_app_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("APPDATA", str(roaming))
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("HOME", str(home))
-    _install_qtcore_stub_if_needed()
     _close_app_log_handlers()
     _purge_app_modules()
 
