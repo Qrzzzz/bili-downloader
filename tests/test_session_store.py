@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,21 +10,37 @@ import threading
 import time
 
 import pytest
+import requests
+from requests.adapters import BaseAdapter
 
 
-class FakeResponse:
+class FakeResponse(requests.Response):
     def __init__(self, payload: object, status_code: int = 200) -> None:
+        super().__init__()
         self.payload = payload
         self.status_code = status_code
-
-    def raise_for_status(self) -> None:
-        if self.status_code >= 400:
-            raise RuntimeError(f"HTTP {self.status_code}")
+        self.raw = io.BytesIO()
+        self._content = b"{}"
 
     def json(self) -> object:
         if isinstance(self.payload, Exception):
             raise self.payload
         return copy.deepcopy(self.payload)
+
+
+def _mock_nav(monkeypatch: pytest.MonkeyPatch, handler: object) -> None:
+    """Keep transaction scenarios above the real Requests preparation boundary."""
+    class Adapter(BaseAdapter):
+        def send(self, request: requests.PreparedRequest, **kwargs: object) -> requests.Response:
+            response = handler(request.url, cookies=request._cookies, **kwargs)
+            response.request, response.url = request, request.url
+            return response
+
+        def close(self) -> None:
+            pass
+
+    adapter = Adapter()
+    monkeypatch.setattr(requests.Session, "get_adapter", lambda *_args, **_kwargs: adapter)
 
 def _replace_cookie_values(cookies: object, suffix: str) -> list[dict[str, object]]:
     result = copy.deepcopy(cookies)
@@ -36,9 +53,8 @@ def _replace_cookie_values(cookies: object, suffix: str) -> list[dict[str, objec
 
 def test_status_none_does_not_touch_network(session_modules: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
     cookies = session_modules.cookies
-    monkeypatch.setattr(
-        cookies.requests,
-        "get",
+    _mock_nav(
+        monkeypatch,
         lambda *_args, **_kwargs: pytest.fail("no credentials must not trigger a network request"),
     )
 
@@ -61,7 +77,7 @@ def test_local_pending_then_server_verified(
         captured.update(kwargs)
         return FakeResponse({"code": 0, "data": {"isLogin": True}})
 
-    monkeypatch.setattr(cookies.requests, "get", verified)
+    _mock_nav(monkeypatch, verified)
     status = cookies.validate_saved_session()
 
     assert pending.code == "local_pending" and pending.generation
@@ -84,13 +100,12 @@ def test_offline_and_revoked_states_preserve_canonical_credentials(
     def offline(*_args: object, **_kwargs: object) -> object:
         raise cookies.requests.ConnectionError("synthetic offline")
 
-    monkeypatch.setattr(cookies.requests, "get", offline)
+    _mock_nav(monkeypatch, offline)
     assert cookies.validate_saved_session().code == "offline"
     assert path.read_bytes() == before
 
-    monkeypatch.setattr(
-        cookies.requests,
-        "get",
+    _mock_nav(
+        monkeypatch,
         lambda *_args, **_kwargs: FakeResponse({"code": -101, "data": {"isLogin": False}}),
     )
     assert cookies.validate_saved_session().code == "invalid"
@@ -108,9 +123,8 @@ def test_expired_credentials_are_normal_invalid_state_not_corruption(
     path = cookies.canonical_session_path()
     before = path.read_bytes()
     monkeypatch.setattr(cookies.time, "time", lambda: 4_200_000_000)
-    monkeypatch.setattr(
-        cookies.requests,
-        "get",
+    _mock_nav(
+        monkeypatch,
         lambda *_args, **_kwargs: pytest.fail("expired local credentials must not hit the network"),
     )
 
@@ -189,7 +203,7 @@ def test_candidate_is_filtered_verified_before_commit_and_then_atomically_saved(
         observed.update(kwargs)
         return FakeResponse({"code": 0, "data": {"isLogin": True}})
 
-    monkeypatch.setattr(cookies.requests, "get", verified)
+    _mock_nav(monkeypatch, verified)
     status = cookies.validate_and_commit_candidate_cookies(candidate)
 
     assert status.code == "verified" and status.generation
@@ -222,7 +236,7 @@ def test_candidate_validation_failures_preserve_existing_valid_session(
     path = cookies.canonical_session_path()
     before = path.read_bytes()
     replacement = _replace_cookie_values(synthetic_credentials["cookies"], "candidate")
-    monkeypatch.setattr(cookies.requests, "get", remote)
+    _mock_nav(monkeypatch, remote)
 
     status = cookies.validate_and_commit_candidate_cookies(replacement)
 
@@ -241,9 +255,8 @@ def test_candidate_offline_and_cancel_after_validation_preserve_existing_session
     before = path.read_bytes()
     replacement = _replace_cookie_values(synthetic_credentials["cookies"], "candidate")
 
-    monkeypatch.setattr(
-        cookies.requests,
-        "get",
+    _mock_nav(
+        monkeypatch,
         lambda *_args, **_kwargs: (_ for _ in ()).throw(cookies.requests.Timeout("offline")),
     )
     assert cookies.validate_and_commit_candidate_cookies(replacement).code == "offline"
@@ -255,7 +268,7 @@ def test_candidate_offline_and_cancel_after_validation_preserve_existing_session
         state["cancelled"] = True
         return FakeResponse({"code": 0, "data": {"isLogin": True}})
 
-    monkeypatch.setattr(cookies.requests, "get", verified_then_cancel)
+    _mock_nav(monkeypatch, verified_then_cancel)
     status = cookies.validate_and_commit_candidate_cookies(
         replacement,
         cancelled=lambda: state["cancelled"],
@@ -281,9 +294,8 @@ def test_candidate_cookie_field_type_errors_fail_closed(
     bad_candidate: object,
 ) -> None:
     cookies = session_modules.cookies
-    monkeypatch.setattr(
-        cookies.requests,
-        "get",
+    _mock_nav(
+        monkeypatch,
         lambda *_args, **_kwargs: pytest.fail("invalid candidates must not reach NAV"),
     )
     assert cookies.validate_and_commit_candidate_cookies(bad_candidate).code == "invalid"
@@ -326,7 +338,7 @@ def test_stale_remote_result_cannot_overwrite_new_generation(
         cookies._store_cookies_for_tests(replacement)
         return FakeResponse({"code": 0, "data": {"isLogin": True}})
 
-    monkeypatch.setattr(cookies.requests, "get", update_during_validation)
+    _mock_nav(monkeypatch, update_during_validation)
     status = cookies.validate_saved_session()
 
     assert status.code == "local_pending"

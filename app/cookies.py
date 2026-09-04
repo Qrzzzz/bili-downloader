@@ -14,8 +14,10 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
+from http.cookiejar import DefaultCookiePolicy
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Iterable, Iterator
+from urllib.parse import urlsplit
 
 import requests
 
@@ -838,28 +840,75 @@ def describe_login_status() -> LoginStatus:
         return LoginStatus("invalid", "本地登录凭据已损坏或失效")
 
 
+def _validate_nav_endpoint(url: str) -> None:
+    """NAV is a single credential-bearing endpoint, not a redirectable URL."""
+    if not isinstance(url, str) or any(char.isspace() for char in url) or "\\" in url:
+        raise ValueError("Unexpected NAV endpoint")
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "api.bilibili.com"
+        or parsed.port not in {None, 443}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path != "/x/web-interface/nav"
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("Unexpected NAV endpoint")
+
+
+def _nav_cookie_jar(cookies: Iterable[dict[str, Any]]) -> requests.cookies.RequestsCookieJar:
+    jar = requests.cookies.RequestsCookieJar(policy=DefaultCookiePolicy(
+        strict_ns_domain=DefaultCookiePolicy.DomainStrictNonDomain,
+    ))
+    for item in filter_bilibili_cookies(cookies):
+        expires = item.get("expires")
+        cookie = requests.cookies.create_cookie(
+            name=item["name"], value=item["value"], domain=item["domain"], path=item["path"],
+            secure=item["secure"], expires=int(expires) if expires and expires > 0 else None,
+            rest={"HttpOnly": item["httpOnly"]},
+        )
+        # The canonical schema uses a leading dot for domain cookies, as does
+        # the existing Netscape lease. Keep host-only cookies host-only too.
+        cookie.domain_specified = item["domain"].startswith(".")
+        jar.set_cookie(cookie)
+    return jar
+
+
 def _remote_validate_cookies(
     cookies: Iterable[dict[str, Any]],
     generation: str | None = None,
 ) -> LoginStatus:
-    cookie_map = {cookie["name"]: cookie["value"] for cookie in cookies}
     try:
-        response = requests.get(
+        _validate_nav_endpoint(NAV_API_URL)
+        # Request.prepare preserves the jar's strict policy. Session.prepare_request
+        # would merge it into a new jar with the permissive default cookie policy.
+        request = requests.Request(
+            "GET",
             NAV_API_URL,
-            cookies=cookie_map,
+            cookies=_nav_cookie_jar(cookies),
             headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/"},
-            timeout=(2.5, 4.0),
-        )
-        if response.status_code == 401:
-            return LoginStatus("invalid", "登录凭据已失效，请重新扫码登录", generation)
-        if response.status_code == 412:
-            return LoginStatus(
-                "platform_412",
-                "Bilibili 返回 HTTP 412，属于外部平台限制，本地凭据未更改",
-                generation,
-            )
-        response.raise_for_status()
-        payload = response.json()
+        ).prepare()
+        # Check the prepared target immediately before the actual send. Never
+        # follow even an official redirect with candidate or saved credentials.
+        _validate_nav_endpoint(request.url)
+        with requests.Session() as session:
+            settings = session.merge_environment_settings(request.url, {}, None, None, None)
+            with session.send(request, timeout=(2.5, 4.0), allow_redirects=False, **settings) as response:
+                _validate_nav_endpoint(response.url)
+                if response.history or 300 <= response.status_code < 400:
+                    raise ValueError("Unexpected NAV redirect")
+                if response.status_code == 401:
+                    return LoginStatus("invalid", "登录凭据已失效，请重新扫码登录", generation)
+                if response.status_code == 412:
+                    return LoginStatus(
+                        "platform_412",
+                        "Bilibili 返回 HTTP 412，属于外部平台限制，本地凭据未更改",
+                        generation,
+                    )
+                response.raise_for_status()
+                payload = response.json()
     except (requests.Timeout, requests.ConnectionError):
         return LoginStatus("offline", "当前离线或网络超时，无法验证本地登录凭据", generation)
     # requests.JSONDecodeError also derives from RequestException.  Parse

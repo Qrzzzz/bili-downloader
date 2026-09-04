@@ -6,7 +6,7 @@
     <Window.SystemBackdrop><MicaBackdrop /></Window.SystemBackdrop>
     <Grid x:Name="Root" Loaded="Root_Loaded" Language="zh-CN">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-        <controls:TitleBar x:Name="AppTitleBar" Title="Bili Downloader Lite" Subtitle="2.6"
+        <controls:TitleBar x:Name="AppTitleBar" Title="Bili Downloader Lite" Subtitle="2.7"
                            IsPaneToggleButtonVisible="True" PaneToggleRequested="TitleBar_PaneToggleRequested" />
         <controls:NavigationView x:Name="Navigation" Grid.Row="1" PaneDisplayMode="Auto"
                                  OpenPaneLength="208" CompactPaneLength="48"

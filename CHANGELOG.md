@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.7] - 2026-09-05
+
+- #12：NAV 验证保留 Cookie 作用域，在请求发送前及响应处理时限制官方 HTTPS 端点，拒绝重定向和异常来源；保留登录态验证、失败分类与 DPAPI 原子提交。
+- #13：统一所有生产 yt-dlp 实例的 FFmpeg 位置及上下文，覆盖解析、预检、MP4/MP3、ffprobe 和库内部无下载器参数的探测回退；没有可用 FFmpeg 时继续支持解析。
+- 增加真实 Requests 内存传输和锁定版 yt-dlp 子进程边界回归；同步 2.7 版本与发布说明。实际验收进度见 `docs/validation/v2.7.md`，不包含 #14—#19。
+
 ## [2.6] - 2026-09-04
 
 ### WinUI 3 整体打磨

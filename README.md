@@ -9,7 +9,7 @@
 <p>
   <strong>导航</strong><br/>
   <a href="https://github.com/Qrzzzz/bili-downloader/releases/latest">下载最新版</a> ·
-  <a href="./docs/releases/v2.6.md">v2.6 发布说明</a> ·
+  <a href="./docs/releases/v2.7.md">v2.7 发布说明</a> ·
   <a href="#主要功能">主要功能</a> ·
   <a href="#从源码运行">从源码运行</a> ·
   <a href="./SECURITY.md">安全策略</a> ·
@@ -32,15 +32,15 @@
 
 ## 📦 下载与使用
 
-**v2.6** 对 WinUI 3 界面做整体打磨，改善窗口布局、任务反馈、结果展示和设置草稿。见 [发布说明](./docs/releases/v2.6.md) 和 [验收记录](./docs/validation/v2.6.md)。
+**v2.7** 修复 NAV 登录验证凭据边界与 FFmpeg 执行位置约束。见 [发布说明](./docs/releases/v2.7.md) 和 [验证记录及待人工项](./docs/validation/v2.7.md)。
 
-Windows x64 版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest) 获取。v2.6 使用 WinUI 3，发行资产为：
+Windows x64 版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest) 获取。v2.7 使用 WinUI 3，发行资产为：
 
-* 完整应用包：`BiliDownloader.v2.6.win-x64.zip`
-* 软件物料清单：`BiliDownloader.v2.6.sbom.json`
+* 完整应用包：`BiliDownloader.v2.7.win-x64.zip`
+* 软件物料清单：`BiliDownloader.v2.7.sbom.json`
 * 校验文件：`SHA256SUMS`
 
-完整解压 ZIP 后运行其中的 `BiliDownloader.v2.6.exe`，保留相邻的后端 EXE 和运行库。包中包含 .NET、Windows App SDK 和 Python 运行时，无需另装这些运行环境。下载前请自行准备合法来源的 `ffmpeg.exe`，并选择以下任一方式放置：
+完整解压 ZIP 后运行其中的 `BiliDownloader.v2.7.exe`，保留相邻的后端 EXE 和运行库。包中包含 .NET、Windows App SDK 和 Python 运行时，无需另装这些运行环境。下载前请自行准备合法来源的 `ffmpeg.exe`，并选择以下任一方式放置：
 
 1. 放入主程序相邻的 `tools\ffmpeg.exe`。
 2. 将 FFmpeg 所在的绝对目录加入系统 `PATH`。
@@ -63,12 +63,12 @@ Windows x64 版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-downlo
 * Python 后端移除 Qt 依赖，通过版本化 JSONL 管道提供解析、下载、取消、扫码、凭据和诊断服务。
 * 保留 yt-dlp、Bilibili URL 校验、二维码协议、DPAPI、FFmpeg 管理、失败分类和日志逻辑。详见 [架构说明](./docs/architecture/v2.5-winui.md)。
 
-### v2.6 更新重点
+### v2.7 安全边界修复
 
-* 下载规格根据窗口宽度重排，统一三个页面的间距和原生卡片层次。
-* 下载中保护链接与任务状态；区分解析、下载、转码、取消及其他页面的忙碌状态。
-* 结果按文件名展示，保留逐 P 详情和失败重试，隐藏无文件时的空选择器。
-* 账号操作跟随真实登录状态；切页保留设置草稿，外观可即时预览。
+* 登录验证保留 Cookie 的域、路径、Secure 和有效期；只请求官方 HTTPS NAV 端点，拒绝重定向及异常响应来源。
+* 解析、格式预检、MP4 合并和 MP3 转换使用同一套外置 FFmpeg 位置规则，覆盖 ffprobe 及库内部回退。
+* 没有可用 FFmpeg 时仍可解析；实际下载保留“缺失”和“不可用”分类。界面、IPC、配置和 DPAPI 存储格式兼容。
+* v2.6 界面打磨记录保留在 [历史发布说明](./docs/releases/v2.6.md)。
 
 <a id="主要功能"></a>
 
@@ -155,10 +155,10 @@ dotnet run --project BiliDownloader.WinUI.Tests
 
 # 构建自包含目录与 ZIP 候选包
 .\build.ps1 -Clean
-.\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v2.6.win-x64\BiliDownloader.v2.6.exe
+.\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v2.7.win-x64\BiliDownloader.v2.7.exe
 ```
 
-输出为 `dist\BiliDownloader.v2.6.win-x64\` 与同名 ZIP。`build.ps1` 重新创建 `build\.venv`，使用哈希锁与 NuGet locked restore。`python -m app.main` 是兼容后端入口，UI 入口已迁移至 WinUI 工程。
+当前源码构建输出为 `dist\BiliDownloader.v2.7.win-x64\` 与同名 ZIP；未提交构建会保留 dirty 标记。`build.ps1` 重新创建 `build\.venv`，使用哈希锁与 NuGet locked restore。`python -m app.main` 是兼容后端入口，UI 入口已迁移至 WinUI 工程。
 
 PR/main CI 执行 Python 回归、WinUI 编译和 C# 管道测试，纯 Markdown 变更跳过。正式打包集中在 Release，校验前后端版本、原生启动、包内容及联合 SBOM，再生成摘要和来源证明。真实扫码、下载、DPI、读屏和窗口交互的外部验收单独记录。详见 [发布检查清单](./RELEASE_CHECKLIST.md) 与 [维护者说明](./MAINTAINER_NOTES.md)。
 

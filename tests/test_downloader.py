@@ -93,6 +93,7 @@ def downloader(isolated_app_environment: object, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(module.requests, "get", unexpected_network)
     monkeypatch.setattr(module, "YoutubeDL", unexpected_ytdlp)
     monkeypatch.setattr(module, "require_ffmpeg", lambda: "X:/synthetic/ffmpeg.exe")
+    monkeypatch.setattr(module, "find_ffmpeg", lambda: None)
     monkeypatch.setattr(
         module,
         "cookiefile_lease",

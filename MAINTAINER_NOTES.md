@@ -6,6 +6,15 @@
 - PR/main 执行 Python 回归、真实 WinUI 编译和 C# 管道测试；最终目录/ZIP 组包、package smoke 和归档审计集中在 Release。
 - 真实扫码、下载、界面截图和许可证复核按相关改动触发；公网探测仅手动运行。无关变更不要求重复人工验收。
 
+## v2.7 发布边界
+
+- 基线 `ef57a570a236b02f070d94f94adb989e86883ed5`，仅处理 #12 与 #13。源码、程序集、窗口版本和发行约束为 2.7 / v2.7；#14—#19 不在本轮范围。
+- NAV 在 PreparedRequest 发送前及响应处理时限制精确官方 HTTPS 端点；所有 3xx 均拒绝，不跟随官方或外域跳转。CookieJar 保留域、路径、Secure、有效期和同名不同作用域 Cookie；主机 Cookie 采用严格策略。失败保留旧 canonical session，schema 和 DPAPI 原子提交协议不变。
+- 三处生产 yt-dlp 调用统一经过 `_youtube_dl`。除显式 `ffmpeg_location` 外，还用锁定版库的 `FFmpegPostProcessor._ffmpeg_location` ContextVar 约束不带 downloader 的内部探测；退出（含异常）必须 reset，不能用进程全局 monkeypatch 或改 PATH 实现。
+- FFmpeg 仍由现有 `utils.probe_ffmpeg` 从相邻 tools、资源 tools、绝对 PATH 选择。未找到可用程序时显式使用空 location；在锁定的 yt-dlp 2026.8.19 中它关闭 ffmpeg/ffprobe，不得改回 None 或某个可被创建的“占位文件”路径。FFprobe 只沿已选 FFmpeg 所在目录解析，缺失/不可用时的音频探测回退仍用已选绝对 FFmpeg 路径。
+- 升级 yt-dlp 前必须重跑 `test_ffmpeg_boundary.py`，验证默认格式处理、无 downloader 回退、FFmpegFD、合并、转码和 ffprobe 的真实执行边界。下载前通过的路径直接传入预检和逐 P 下载；不自动安装、捆绑 FFmpeg。
+- [发布说明](./docs/releases/v2.7.md) 与 [验收记录](./docs/validation/v2.7.md) 区分确定性回归、真实服务器结果和待人工项。合成产物、首次等待扫码状态及本地 dirty 包均不是正式发布或真实下载验收证据。
+
 ## v2.6 发布边界
 
 - 从 v2.5 的 `c16dac1685e1127ebff230b29ba35deb2388575b` 开始，先审查后打磨 WinUI 3；[审查记录](./docs/architecture/v2.6-winui-review.md) 与 [验收记录](./docs/validation/v2.6.md) 分别记录发现和证据。
