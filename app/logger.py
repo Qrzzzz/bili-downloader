@@ -7,7 +7,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
-from PySide6.QtCore import QObject, Signal
+from typing import Callable
 
 from .config import logs_dir
 
@@ -93,34 +93,33 @@ class RedactingFormatter(logging.Formatter):
         return redact_sensitive(super().format(safe_record))
 
 
-class LogEmitter(QObject):
-    message = Signal(str)
+LogSink = Callable[[str], None]
 
 
-class QtLogHandler(logging.Handler):
-    def __init__(self, emitter: LogEmitter) -> None:
+class CallbackLogHandler(logging.Handler):
+    def __init__(self, emitter: LogSink) -> None:
         super().__init__()
         self.emitter = emitter
 
-    def set_emitter(self, emitter: LogEmitter) -> None:
+    def set_emitter(self, emitter: LogSink) -> None:
         self.emitter = emitter
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            self.emitter.message.emit(self.format(record))
+            self.emitter(self.format(record))
         except RuntimeError:
             pass
 
 
-class YtdlpQtLogger:
-    def __init__(self, emitter: LogEmitter | None = None, logger: logging.Logger | None = None) -> None:
+class YtdlpLogger:
+    def __init__(self, emitter: LogSink | None = None, logger: logging.Logger | None = None) -> None:
         self.emitter = emitter
         self.logger = logger or logging.getLogger("bili_downloader.ytdlp")
 
     def _emit(self, level: int, message: str) -> None:
         message = redact_sensitive(message)
         if self.emitter is not None:
-            self.emitter.message.emit(message)
+            self.emitter(message)
         else:
             self.logger.log(level, message)
 
@@ -140,7 +139,7 @@ class YtdlpQtLogger:
         self._emit(logging.ERROR, f"错误：{message}")
 
 
-def setup_logging(emitter: LogEmitter | None = None) -> logging.Logger:
+def setup_logging(emitter: LogSink | None = None) -> logging.Logger:
     logger = logging.getLogger("bili_downloader")
     logger.setLevel(logging.INFO)
     logger.propagate = False
@@ -182,17 +181,17 @@ def setup_logging(emitter: LogEmitter | None = None) -> logging.Logger:
             handler.close()
     file_handler.setFormatter(formatter)
 
-    qt_handlers = [handler for handler in logger.handlers if isinstance(handler, QtLogHandler)]
-    qt_handler = qt_handlers[0] if qt_handlers else None
+    callback_handlers = [handler for handler in logger.handlers if isinstance(handler, CallbackLogHandler)]
+    callback_handler = callback_handlers[0] if callback_handlers else None
     if emitter is not None:
-        if qt_handler is None:
-            qt_handler = QtLogHandler(emitter)
-            logger.addHandler(qt_handler)
+        if callback_handler is None:
+            callback_handler = CallbackLogHandler(emitter)
+            logger.addHandler(callback_handler)
         else:
-            qt_handler.set_emitter(emitter)
-    if qt_handler is not None:
-        qt_handler.setFormatter(formatter)
-        for handler in qt_handlers[1:]:
+            callback_handler.set_emitter(emitter)
+    if callback_handler is not None:
+        callback_handler.setFormatter(formatter)
+        for handler in callback_handlers[1:]:
             logger.removeHandler(handler)
             handler.close()
 

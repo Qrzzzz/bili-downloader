@@ -106,7 +106,8 @@ def test_generate_and_known_poll_status_contract(code: int, expected: auth_qr.Qr
     assert session.calls[0][1]["timeout"] == auth_qr.REQUEST_TIMEOUT
     assert session.calls[1][1]["timeout"] == auth_qr.REQUEST_TIMEOUT
     assert session.calls[1][1]["params"] == {"qrcode_key": "synthetic-secret-key"}
-    assert session.headers["User-Agent"].startswith("BiliDownloaderLite/2.3 ")
+    from app import __version__
+    assert session.headers["User-Agent"].startswith(f"BiliDownloaderLite/{__version__} ")
 
 
 @pytest.mark.parametrize(

@@ -70,6 +70,7 @@ def validate_download_dir(value: Any) -> str:
 class AppConfig:
     download_dir: str = field(default_factory=_default_download_dir)
     schema_version: int = CONFIG_SCHEMA_VERSION
+    theme: str = "system"
 
     def __post_init__(self) -> None:
         if isinstance(self.schema_version, bool) or not isinstance(self.schema_version, int):
@@ -77,6 +78,8 @@ class AppConfig:
         if self.schema_version != CONFIG_SCHEMA_VERSION:
             raise ConfigValidationError(f"不支持的配置版本：{self.schema_version}。")
         self.download_dir = validate_download_dir(self.download_dir)
+        if self.theme not in ("system", "light", "dark"):
+            raise ConfigValidationError("主题必须为跟随系统、浅色或深色。")
 
 
 def app_data_dir() -> Path:
@@ -170,14 +173,20 @@ def load_config() -> AppConfig:
         if schema == 0:
             diagnostics.append("检测到旧版无版本号配置，已按当前 schema 迁移。")
 
-        unknown = sorted(set(data) - {"schema_version", "download_dir"})
+        unknown = sorted(set(data) - {"schema_version", "download_dir", "theme"})
         if unknown:
             diagnostics.append("已忽略未知配置项：" + "、".join(unknown))
+
+        theme = data.get("theme", "system")
+        if theme not in ("system", "light", "dark"):
+            theme = "system"
+            diagnostics.append("主题配置无效，已恢复为跟随系统。")
 
         try:
             config = AppConfig(
                 schema_version=CONFIG_SCHEMA_VERSION,
                 download_dir=data.get("download_dir", _default_download_dir()),
+                theme=theme,
             )
         except ConfigValidationError as exc:
             return _fallback(diagnostics, f"配置字段无效：{exc} 已使用默认配置。")

@@ -66,7 +66,7 @@ def main() -> int:
 
     asset_directory = args.asset_directory.resolve()
     expected_names = {
-        f"BiliDownloader.v{args.expected_version}.exe",
+        f"BiliDownloader.v{args.expected_version}.win-x64.zip",
         f"BiliDownloader.v{args.expected_version}.sbom.json",
         "SHA256SUMS",
     }

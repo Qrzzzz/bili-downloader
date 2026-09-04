@@ -1,102 +1,57 @@
 param(
     [Parameter(Mandatory = $true)][string]$Executable,
-    [ValidateRange(5, 300)][int]$TimeoutSeconds = 60
+    [ValidateRange(5, 300)][int]$TimeoutSeconds = 60,
+    [string]$OutputDirectory = "build\package-smoke"
 )
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-
-$executablePath = (Resolve-Path -LiteralPath $Executable -ErrorAction Stop).Path
-if (-not (Test-Path -LiteralPath $executablePath -PathType Leaf)) {
-    throw "Packaged executable does not exist: $executablePath"
+$executablePath = (Resolve-Path -LiteralPath $Executable).Path
+$package = Split-Path -Parent $executablePath
+$metadata = Get-Content -LiteralPath (Join-Path $package "build-info.json") -Raw | ConvertFrom-Json
+$version = $metadata.version
+$frontendVersion = (Get-Item -LiteralPath $executablePath).VersionInfo
+$backendVersion = (Get-Item -LiteralPath (Join-Path $package "BiliDownloader.Backend.exe")).VersionInfo
+if ($frontendVersion.FileVersion -ne "$version.0.0" -or $frontendVersion.ProductVersion -ne $version -or
+    $backendVersion.FileVersion -ne $version -or $backendVersion.OriginalFilename -ne "BiliDownloader.Backend.exe") {
+    throw "Packaged frontend/backend PE versions differ."
 }
-
-$versionInfo = (Get-Item -LiteralPath $executablePath).VersionInfo
-if ([string]::IsNullOrWhiteSpace($versionInfo.FileVersion) -or
-    [string]::IsNullOrWhiteSpace($versionInfo.ProductVersion) -or
-    [string]::IsNullOrWhiteSpace($versionInfo.Comments)) {
-    throw "Packaged executable is missing traceable version metadata: $executablePath"
-}
-$expectedFilename = "BiliDownloader.v$($versionInfo.FileVersion).exe"
-if ([System.IO.Path]::GetFileName($executablePath) -cne $expectedFilename) {
-    throw "Packaged executable must be named '$expectedFilename': $executablePath"
-}
-
-function Stop-ProcessTree {
-    param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process)
-
-    $Process.Refresh()
-    if ($Process.HasExited) {
-        return
-    }
-    $taskkill = Join-Path $env:SystemRoot "System32\taskkill.exe"
-    & $taskkill /PID $Process.Id /T /F | Out-Null
-    $exitCode = $LASTEXITCODE
-    $Process.Refresh()
-    if ($exitCode -ne 0 -and -not $Process.HasExited) {
-        throw "Failed to stop timed-out process tree $($Process.Id); taskkill exited $exitCode."
-    }
-}
-
-function Invoke-SmokeProcess {
-    param(
-        [Parameter(Mandatory = $true)][string]$Label,
-        [Parameter(Mandatory = $true)][string[]]$ArgumentList
-    )
-
-    $process = Start-Process -FilePath $executablePath -ArgumentList $ArgumentList -PassThru -WindowStyle Hidden
+if ([IO.Path]::GetFileName($executablePath) -cne "BiliDownloader.v$version.exe") { throw "Unexpected frontend name." }
+if (-not $backendVersion.Comments.Contains($metadata.git_commit)) { throw "Backend build commit differs." }
+$output = [IO.Path]::GetFullPath($OutputDirectory)
+New-Item -ItemType Directory -Force -Path $output | Out-Null
+$profile = Join-Path $output ("profile-" + [guid]::NewGuid().ToString("N"))
+$names = @("APPDATA", "LOCALAPPDATA", "BILI_BACKEND_PYTHON", "BILI_BACKEND_SOURCE", "BILI_ACCEPTANCE_OUTPUT")
+$previous = @{}
+foreach ($name in $names) { $previous[$name] = [Environment]::GetEnvironmentVariable($name, "Process") }
+try {
+    $env:APPDATA = Join-Path $profile "Roaming"
+    $env:LOCALAPPDATA = Join-Path $profile "Local"
+    $env:BILI_ACCEPTANCE_OUTPUT = $output
+    $env:BILI_BACKEND_PYTHON = $null
+    $env:BILI_BACKEND_SOURCE = $null
+    New-Item -ItemType Directory -Force -Path $env:APPDATA,$env:LOCALAPPDATA | Out-Null
+    $startedAt = [DateTime]::UtcNow
+    $process = Start-Process -FilePath $executablePath -ArgumentList "--self-test" -PassThru -WindowStyle Hidden
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-        Stop-ProcessTree -Process $process
-        throw "$Label timed out after $TimeoutSeconds seconds."
+        throw "Native package smoke timed out; PID $($process.Id). Evidence preserved in $output."
     }
     $process.Refresh()
-    if ($process.ExitCode -ne 0) {
-        throw "$Label failed with exit code $($process.ExitCode)."
-    }
-}
-
-$tempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
-$smokeRoot = [System.IO.Path]::GetFullPath((Join-Path $tempBase ("bili-package-smoke-" + [guid]::NewGuid().ToString("N"))))
-if (-not $smokeRoot.StartsWith($tempBase, [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "Refusing to create smoke directory outside the system temporary directory: $smokeRoot"
-}
-
-$environmentNames = @(
-    "APPDATA",
-    "LOCALAPPDATA",
-    "USERPROFILE",
-    "QT_QPA_PLATFORM",
-    "PYTHONUTF8"
-)
-$previousEnvironment = @{}
-foreach ($name in $environmentNames) {
-    $previousEnvironment[$name] = [System.Environment]::GetEnvironmentVariable($name, "Process")
-}
-
-try {
-    $appdata = Join-Path $smokeRoot "AppData\Roaming"
-    $localappdata = Join-Path $smokeRoot "AppData\Local"
-    $profile = Join-Path $smokeRoot "UserProfile"
-    New-Item -ItemType Directory -Force -Path $appdata, $localappdata, $profile | Out-Null
-    $env:APPDATA = $appdata
-    $env:LOCALAPPDATA = $localappdata
-    $env:USERPROFILE = $profile
-    $env:QT_QPA_PLATFORM = "offscreen"
-    $env:PYTHONUTF8 = "1"
-
-    Invoke-SmokeProcess -Label "Packaged --self-test" -ArgumentList @("--self-test")
-    Write-Host "Package smoke passed: $executablePath"
-    Write-Host "Version: $($versionInfo.ProductVersion)"
+    if ($process.ExitCode -ne 0) { throw "Native package smoke failed with exit code $($process.ExitCode)." }
+    $evidencePath = Join-Path $output "native-evidence.json"
+    if ((Get-Item -LiteralPath $evidencePath).LastWriteTimeUtc -lt $startedAt) { throw "Native evidence is stale." }
+    $evidence = Get-Content -LiteralPath $evidencePath -Raw | ConvertFrom-Json
+    if (-not $evidence.backend_connected -or -not $evidence.extends_content_into_titlebar -or
+        $evidence.window_type -ne "Microsoft.UI.Xaml.Window" -or
+        $evidence.titlebar_type -ne "Microsoft.UI.Xaml.Controls.TitleBar" -or
+        $evidence.navigation_type -ne "Microsoft.UI.Xaml.Controls.NavigationView" -or
+        $evidence.backdrop_type -ne "Microsoft.UI.Xaml.Media.MicaBackdrop" -or
+        $evidence.settings_page -ne "BiliDownloader.WinUI.Views.SettingsPage") { throw "Native structure verification failed." }
+    if ($evidence.themes -notcontains "Light" -or $evidence.themes -notcontains "Dark") { throw "Theme verification failed." }
+    if (@($evidence.controls | Where-Object { $_.type -eq "Microsoft.UI.Xaml.Controls.InfoBar" }).Count -eq 0) { throw "InfoBar is missing." }
+    if ($evidence.git_commit -ne $metadata.git_commit -or $evidence.build_dirty -ne $metadata.dirty.ToString().ToLowerInvariant()) { throw "WinUI assembly build identity differs from package." }
+    Write-Host "Native package smoke passed: $executablePath"
+    Write-Host "Evidence: $evidencePath"
 }
 finally {
-    foreach ($name in $environmentNames) {
-        [System.Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
-    }
-    if (Test-Path -LiteralPath $smokeRoot) {
-        $resolvedSmokeRoot = [System.IO.Path]::GetFullPath($smokeRoot)
-        if (-not $resolvedSmokeRoot.StartsWith($tempBase, [System.StringComparison]::OrdinalIgnoreCase)) {
-            throw "Refusing to remove smoke directory outside the system temporary directory: $resolvedSmokeRoot"
-        }
-        Remove-Item -LiteralPath $resolvedSmokeRoot -Recurse -Force
-    }
+    foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $previous[$name], "Process") }
 }

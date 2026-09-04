@@ -1,9 +1,9 @@
-name: Release v2.3
+name: Release v2.5
 
 on:
   push:
     tags:
-      - v2.3
+      - v2.5
 
 permissions:
   contents: read
@@ -22,11 +22,10 @@ jobs:
       attestations: write
     env:
       PYTHONUTF8: "1"
-      QT_QPA_PLATFORM: offscreen
-      RELEASE_VERSION: "2.3"
-      RELEASE_TAG: v2.3
-      RELEASE_TITLE: Bili Downloader Lite v2.3
-      RELEASE_ASSET: BiliDownloader.v2.3.exe
+      RELEASE_VERSION: "2.5"
+      RELEASE_TAG: v2.5
+      RELEASE_TITLE: Bili Downloader Lite v2.5
+      RELEASE_ASSET: BiliDownloader.v2.5.win-x64.zip
       GH_TOKEN: ${{ github.token }}
 
     steps:
@@ -44,16 +43,21 @@ jobs:
             requirements.txt
             requirements-sbom.txt
 
-      - name: Build exact release executable from a clean environment
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Build exact native package from a clean environment
         shell: powershell
         timeout-minutes: 20
-        run: .\build.ps1 -Clean -OneFile -RequireClean -ExpectedCommit $env:GITHUB_SHA -ExpectedTag $env:RELEASE_TAG
+        run: .\build.ps1 -Clean -RequireClean -ExpectedCommit $env:GITHUB_SHA -ExpectedTag $env:RELEASE_TAG
 
       - name: Verify package behavior
         shell: powershell
         timeout-minutes: 4
         run: |
-          $artifact = Join-Path "dist" $env:RELEASE_ASSET
+          $artifact = "dist/BiliDownloader.v$env:RELEASE_VERSION.win-x64/BiliDownloader.v$env:RELEASE_VERSION.exe"
           .\tools\package_smoke.ps1 -Executable $artifact
 
       - name: Measure and audit bundled contents
@@ -72,8 +76,10 @@ jobs:
           & $sbomPython -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-sbom.txt
           if ($LASTEXITCODE -ne 0) { throw "SBOM tool installation failed with exit code $LASTEXITCODE" }
           $sbom = Join-Path "dist" "BiliDownloader.v$env:RELEASE_VERSION.sbom.json"
-          & $sbomPython -m cyclonedx_py requirements requirements.txt --mc-type application --output-reproducible --output-format JSON --output-file $sbom
+          & $sbomPython -m cyclonedx_py requirements requirements.txt --mc-type application --output-reproducible --output-format JSON --output-file build/python.sbom.json
           if ($LASTEXITCODE -ne 0) { throw "SBOM generation failed with exit code $LASTEXITCODE" }
+          .\build\.venv\Scripts\python.exe tools/generate_windows_sbom.py --python-sbom build/python.sbom.json --assets BiliDownloader.WinUI/obj/project.assets.json --package "dist/BiliDownloader.v$env:RELEASE_VERSION.win-x64" --version $env:RELEASE_VERSION --output $sbom
+          if ($LASTEXITCODE -ne 0) { throw "Combined Windows SBOM generation failed" }
           python tools/prepare_release_assets.py --version $env:RELEASE_VERSION --directory dist
           if ($LASTEXITCODE -ne 0) { throw "checksum generation failed with exit code $LASTEXITCODE" }
 
@@ -82,15 +88,15 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
-            dist/BiliDownloader.v2.3.exe
-            dist/BiliDownloader.v2.3.sbom.json
+            dist/BiliDownloader.v2.5.win-x64.zip
+            dist/BiliDownloader.v2.5.sbom.json
             dist/SHA256SUMS
 
       - name: Verify attestations before publication
         shell: powershell
         run: |
           gh attestation verify "dist/$env:RELEASE_ASSET" --repo $env:GITHUB_REPOSITORY --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref $env:GITHUB_REF --source-digest $env:GITHUB_SHA
-          if ($LASTEXITCODE -ne 0) { throw "EXE attestation verification failed with exit code $LASTEXITCODE" }
+          if ($LASTEXITCODE -ne 0) { throw "ZIP attestation verification failed with exit code $LASTEXITCODE" }
           gh attestation verify "dist/BiliDownloader.v$env:RELEASE_VERSION.sbom.json" --repo $env:GITHUB_REPOSITORY --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref $env:GITHUB_REF --source-digest $env:GITHUB_SHA
           if ($LASTEXITCODE -ne 0) { throw "SBOM attestation verification failed with exit code $LASTEXITCODE" }
           gh attestation verify "dist/SHA256SUMS" --repo $env:GITHUB_REPOSITORY --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref $env:GITHUB_REF --source-digest $env:GITHUB_SHA
@@ -99,7 +105,7 @@ jobs:
       - name: Publish GitHub Release
         shell: powershell
         run: |
-          gh release create $env:RELEASE_TAG "dist/$env:RELEASE_ASSET" "dist/BiliDownloader.v$env:RELEASE_VERSION.sbom.json" "dist/SHA256SUMS" --verify-tag --title $env:RELEASE_TITLE --notes-file "docs/releases/v2.3.md" --latest
+          gh release create $env:RELEASE_TAG "dist/$env:RELEASE_ASSET" "dist/BiliDownloader.v$env:RELEASE_VERSION.sbom.json" "dist/SHA256SUMS" --verify-tag --title $env:RELEASE_TITLE --notes-file "docs/releases/v2.5.md" --latest
           if ($LASTEXITCODE -ne 0) { throw "GitHub Release creation failed with exit code $LASTEXITCODE" }
 
       # These are the same local files verified above; API digests bind the

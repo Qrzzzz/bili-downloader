@@ -3,8 +3,27 @@
 ## 当前 CI 与验收策略
 
 - 当前检查范围以 [发布检查清单](./RELEASE_CHECKLIST.md) 为准；下面的版本小节记录已发布版本的行为边界。
-- PR/main 只执行轻量的确定性回归；最终 EXE 构建、package smoke 和归档审计集中在 Release。不要另设重复的独立重建或逐项手工确认门槛。
+- PR/main 执行 Python 回归、真实 WinUI 编译和 C# 管道测试；最终目录/ZIP 组包、package smoke 和归档审计集中在 Release。
 - 真实扫码、下载、界面截图和许可证复核按相关改动触发；公网探测仅手动运行。无关变更不要求重复人工验收。
+
+## v2.5 发布边界
+
+- 应用版本 2.5，标签 v2.5，包名 `BiliDownloader.v2.5.win-x64.zip`。正式资产由 Release 工作流从精确标签的干净提交构建；带 dirty 元数据的本地候选包不可作为发行资产。
+- [架构说明](./docs/architecture/v2.5-winui.md) 和 [IPC v1](./docs/architecture/ipc-v1.md) 是前后端边界。UI 必须调用真实 WinUI API，不接受 Qt 或 WebView 替代。
+- `MainWindow` 只持有 shell/lifecycle；应用级 ViewModel 保留跨页状态；Python backend 持有任务快照、凭据代次和取消控制器。
+- 配置及 DPAPI 存储兼容；下载/登录协议不随 UI 重写。后端 stdout 只发送受限 JSONL，日志走脱敏回调/文件/stderr。
+- 原生窗口、手机 QR、受平台允许的实际下载和辅助技术验收见 [本地验收记录](./docs/validation/v2.5.md)，与模拟或静态证据分开。
+- 发行包必须完整解压。前后端 EXE 相邻，Python 库位于 backend-runtime，FFmpeg 搜索规则沿用现有 utils；无需用户另装 .NET、Windows App SDK 或 Python。
+
+## v2.4 前序候选记录（未发布）
+
+- 从已发布 v2.3 的提交 `511773e64ab8b3b190afb0d839db09665773f518` 开发；当前为本地候选，尚未提交、打标签或发布。
+- 版本严格为源码 `2.4`、未来标签 `v2.4`、成品 `BiliDownloader.v2.4.exe`；本地未提交构建必须保留 dirty 标记，不能当作正式 Release 证据。
+- `app/ui/` 负责窗口、页面与配色，`MainWindow` 继续拥有解析、下载、登录和关闭生命周期；页面切换不能新建或销毁任务控制器。
+- 下载、账号和设置页常驻同一个窗口；状态提示跨页保留，结果仍是主窗口子控件，关闭等待期仍以 `closing` 为最高优先级。
+- `AppConfig.theme` 是可选字段，配置 schema 仍为 1；旧目录可读，未知主题回退为 system，修改目录不得重置主题。
+- Windows 窗口使用 Qt 扩展客户区并保留系统窗口控件；背景采用稳定实色回退，不宣称实现 Mica 或迁移到 WinUI 3。
+- 自动回归覆盖导航、主题、提示、结果和生命周期；真实手机扫码及原生标题栏交互由本轮 UI 人工验收覆盖。沿用上方精简后的 CI 策略，不恢复已移除的重复 Gate。
 
 ## v2.3 已发布记录
 
@@ -48,13 +67,13 @@
 - `playwright-profile` 和 `login-cache` 只是历史残留清理名称，不是运行时依赖。临时 Netscape lease 只在全局 session 锁内创建和销毁，使用期由各自 owner marker 的跨进程活动锁保护；不得重新让全局锁覆盖网络解析或下载。匿名模式不得读取凭据。
 - canonical 已存在时也必须先解密并验证结构，再清理精确的旧明文目标；canonical 损坏时不得清理旧明文。过期 lease、原子临时文件和历史隔离目录必须同时满足应用目录、精确命名/owner marker 与保守年龄条件。
 
-## v2.0 界面与生命周期边界（v2.3 继续保留）
+## v2.0 界面与生命周期边界（v2.5 继续保留）
 
 - 主窗口按任务阶段渐进披露：初始链接入口、解析后视频与选项、下载进度与取消、最终结果；日志、诊断和隐私说明保留但默认不抢占主流程。
 - 单 P 隐藏选集，多 P 保留选择摘要与列表。单 P 且只有一个成功输出时可使用紧凑结果区；多输出、多 P、失败、取消与重试继续使用完整明细表。v2.3 起结果区内嵌在主窗口，不再弹出独立结果窗口。
 - `closing` 是最高优先级终态；下载期间不得启动新解析或让迟到解析回调隐藏取消入口。修改 URL 必须立即撤销旧下载目标，但不得中断已经开始的任务。
 
-## v1.4 稳定性边界（v2.3 继续保留）
+## v1.4 稳定性边界（v2.5 继续保留）
 
 - FFmpeg 查找顺序固定为 EXE 相邻 `tools\ffmpeg.exe`、PyInstaller 资源目录同布局、绝对 PATH；不搜索当前工作目录，不下载、不捆绑、不安装，也不修改系统 PATH。
 - b23 只手工处理 301/302/303/307/308；每跳请求前验证官方 HTTPS 主机、无 userinfo、无异常端口，限制跳数和循环。最终必须是受支持的 bilibili.com BV/av 视频 URL。
@@ -63,9 +82,10 @@
 
 ## 归档与仓库禁入项
 
-提交内容不包含以下本机数据或产物；最终 EXE 的 PyInstaller CArchive 和内嵌 PYZ 由归档审计检查。不要求每版人工重复扫描全部源码、锁和构建环境：
+提交内容不包含以下本机数据或产物；最终目录/ZIP、Python 后端 CArchive 和内嵌 PYZ 由归档审计共同检查：
 
 - Playwright Python 包、driver/Node、`ms-playwright`、Chromium/Chrome/Edge runtime、Electron executable/runtime。
+- PySide6、Shiboken、PyQt 和 Qt Widgets。Windows App SDK 自带的互操作库按实际依赖与许可证记录，不误报为浏览器运行时。
 - 浏览器 profile、session/凭据、`storage_state.json`、`cookies.txt`、`session.dat`、日志。
 - `ffmpeg.exe`、`ffprobe.exe`、下载文件、测试视频、`.venv/`、`build/`、`dist/`、`__pycache__/`。
 - 本机绝对路径、用户名、账号信息、token 和用户配置。
