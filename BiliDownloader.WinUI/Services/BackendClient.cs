@@ -14,6 +14,7 @@ public sealed class BackendClient(Func<Process>? startProcess = null, TimeSpan? 
         public TaskCompletionSource<JsonElement> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<bool> Acknowledged { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
+    private sealed record Terminal(JsonElement Result, ErrorInfo? Error, bool Cancelled);
     private readonly ConcurrentDictionary<string, Pending> pending = new();
     private readonly ConcurrentDictionary<string, Pending> operations = new();
     private readonly ConcurrentDictionary<string, long> sequences = new();
@@ -111,6 +112,34 @@ public sealed class BackendClient(Func<Process>? startProcess = null, TimeSpan? 
         }
     }
 
+    private static string RequiredString(JsonElement value, string property)
+    {
+        if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty(property, out var item) ||
+            item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()))
+            throw new InvalidDataException($"后端终态缺少有效的 {property} 字段。");
+        return item.GetString()!;
+    }
+
+    private static Terminal ReadTerminal(string name, JsonElement data)
+    {
+        if (data.ValueKind != JsonValueKind.Object || !data.TryGetProperty("result", out var result) ||
+            result.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("后端终态缺少有效的 result 对象。");
+        _ = RequiredString(data, "method");
+        if (name == "operation.cancelled") return new(result.Clone(), null, true);
+        if (name == "operation.completed") return new(result.Clone(), null, false);
+        if (!result.TryGetProperty("error", out var error) || error.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("后端失败终态缺少有效的 error 对象。");
+        string code = RequiredString(error, "code");
+        string message = RequiredString(error, "message");
+        if (!error.TryGetProperty("retryable", out var retryable) ||
+            retryable.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            throw new InvalidDataException("后端失败终态缺少有效的 retryable 字段。");
+        if (!error.TryGetProperty("detail", out var detail) || detail.ValueKind != JsonValueKind.String)
+            throw new InvalidDataException("后端失败终态缺少有效的 detail 字段。");
+        return new(result.Clone(), new ErrorInfo(code, message, retryable.GetBoolean(), detail.GetString()!), false);
+    }
+
     private void Handle(JsonElement message)
     {
         if (message.GetProperty("v").GetInt32() != Protocol.Version) throw new InvalidDataException("不兼容的后端协议。");
@@ -120,22 +149,22 @@ public sealed class BackendClient(Func<Process>? startProcess = null, TimeSpan? 
             if (id is null || !pending.TryRemove(id, out var call)) return;
             try
             {
-            if (!message.GetProperty("ok").GetBoolean())
-            {
-                call.Completion.TrySetException(new BackendException(Protocol.Read<ErrorInfo>(message.GetProperty("error"))));
+                if (!message.GetProperty("ok").GetBoolean())
+                {
+                    call.Completion.TrySetException(new BackendException(Protocol.Read<ErrorInfo>(message.GetProperty("error"))));
+                    call.Acknowledged.TrySetResult(true);
+                    return;
+                }
+                var result = message.GetProperty("result").Clone();
+                if (call.IsOperation)
+                {
+                    string operationId = result.GetProperty("operation_id").GetString()!;
+                    operations[operationId] = call;
+                    call.Accepted?.Invoke(operationId);
+                }
+                else call.Completion.TrySetResult(result);
                 call.Acknowledged.TrySetResult(true);
                 return;
-            }
-            var result = message.GetProperty("result").Clone();
-            if (call.IsOperation)
-            {
-                string operationId = result.GetProperty("operation_id").GetString()!;
-                operations[operationId] = call;
-                call.Accepted?.Invoke(operationId);
-            }
-            else call.Completion.TrySetResult(result);
-            call.Acknowledged.TrySetResult(true);
-            return;
             }
             catch (Exception ex)
             {
@@ -149,19 +178,20 @@ public sealed class BackendClient(Func<Process>? startProcess = null, TimeSpan? 
         string name = message.GetProperty("event").GetString()!;
         if (name == "shutdown.ready") return;
         // Ignore stale events from completed operations. Only accepted operations own state.
-        if (!operations.ContainsKey(op)) return;
+        if (!operations.TryGetValue(op, out _)) return;
         long seq = message.GetProperty("seq").GetInt64();
         if (seq <= 0 || sequences.TryGetValue(op, out var previous) && seq <= previous) throw new InvalidDataException("后端事件顺序异常。");
-        sequences[op] = seq;
         var data = message.GetProperty("data").Clone();
+        bool isTerminal = name is "operation.completed" or "operation.failed" or "operation.cancelled";
+        Terminal? terminal = isTerminal ? ReadTerminal(name, data) : null;
+        sequences[op] = seq;
         Event?.Invoke(new BackendEvent(op, seq, name, data));
-        if (name is "operation.completed" or "operation.failed" or "operation.cancelled" && operations.TryRemove(op, out var operation))
+        if (terminal is not null && operations.TryRemove(op, out var operation))
         {
             sequences.TryRemove(op, out _);
-            var result = data.GetProperty("result");
-            if (name == "operation.failed") operation.Completion.TrySetException(new BackendException(Protocol.Read<ErrorInfo>(result.GetProperty("error"))));
-            else if (name == "operation.cancelled") operation.Completion.TrySetCanceled();
-            else operation.Completion.TrySetResult(result.Clone());
+            if (terminal.Error is not null) operation.Completion.TrySetException(new BackendException(terminal.Error));
+            else if (terminal.Cancelled) operation.Completion.TrySetCanceled();
+            else operation.Completion.TrySetResult(terminal.Result);
         }
     }
 

@@ -12,24 +12,24 @@ from types import SimpleNamespace
 import pytest
 
 
-def test_release_version_is_2_7_and_windows_compatible() -> None:
+def test_release_version_is_2_8_and_windows_compatible() -> None:
     app = importlib.import_module("app")
     version_tool = importlib.import_module("tools.write_version_info")
 
     assert app.__app_name__ == "Bili Downloader Lite"
-    assert app.__version__ == "2.7"
-    assert version_tool._numeric_version(app.__version__) == (2, 7, 0, 0)
+    assert app.__version__ == "2.8"
+    assert version_tool._numeric_version(app.__version__) == (2, 8, 0, 0)
     resource = version_tool._version_resource(
         app.__version__,
-        (2, 7, 0, 0),
+        (2, 8, 0, 0),
         "a" * 40,
         False,
         "2026-07-12T00:00:00Z",
     )
     assert "StringStruct('ProductName', 'Bili Downloader Lite')" in resource
     assert "StringStruct('OriginalFilename', 'BiliDownloader.Backend.exe')" in resource
-    assert "StringStruct('FileVersion', '2.7')" in resource
-    assert "StringStruct('ProductVersion', '2.7')" in resource
+    assert "StringStruct('FileVersion', '2.8')" in resource
+    assert "StringStruct('ProductVersion', '2.8')" in resource
     root = Path(__file__).resolve().parents[1]
     props = ET.parse(root / "Directory.Build.props").getroot()
     assert props.findtext(".//Version") == app.__version__
@@ -111,12 +111,12 @@ def test_dependency_locks_are_pinned_and_hashed_for_approved_target() -> None:
 def test_artifact_audit_rejects_missing_xaml_resource_index() -> None:
     audit = importlib.import_module("tools.audit_release_artifact")
     package = {name: None for name in (
-        "BiliDownloader.v2.7.exe", "BiliDownloader.v2.7.dll", "Assets/AppIcon.ico",
+        "BiliDownloader.v2.8.exe", "BiliDownloader.v2.8.dll", "Assets/AppIcon.ico",
         "BiliDownloader.Backend.exe", "Microsoft.ui.xaml.dll", "build-info.json",
         "backend-runtime/build-info.json",
     )}
-    with pytest.raises(ValueError, match=r"Missing native package files:.*BiliDownloader.v2.7.pri"):
-        audit._audit_contents(package, lambda _: b"", Path("unused.exe"), "2.7", None, False)
+    with pytest.raises(ValueError, match=r"Missing native package files:.*BiliDownloader.v2.8.pri"):
+        audit._audit_contents(package, lambda _: b"", Path("unused.exe"), "2.8", None, False)
 
 
 def test_workflows_pin_actions_and_keep_public_network_out_of_quality() -> None:
@@ -141,10 +141,10 @@ def test_workflows_pin_actions_and_keep_public_network_out_of_quality() -> None:
     assert "public_qr_smoke.py" in public_smoke
 
     release = workflows["release.yml"]
-    assert "tags:\n      - v2.7" in release
-    assert "RELEASE_TITLE: Bili Downloader Lite v2.7" in release
-    assert "BiliDownloader.v2.7.win-x64.zip" in release
-    assert 'docs/releases/v2.7.md' in release
+    assert "tags:\n      - v2.8" in release
+    assert "RELEASE_TITLE: Bili Downloader Lite v2.8" in release
+    assert "BiliDownloader.v2.8.win-x64.zip" in release
+    assert 'docs/releases/v2.8.md' in release
     assert "attestations: write" in release
     assert "id-token: write" in release
 
@@ -167,7 +167,7 @@ def test_published_release_matches_verified_local_assets(
 ) -> None:
     verifier = importlib.import_module("tools.verify_github_release")
     commit = "a" * 40
-    asset_names = ["BiliDownloader.v2.7.win-x64.zip", "BiliDownloader.v2.7.sbom.json", "SHA256SUMS"]
+    asset_names = ["BiliDownloader.v2.8.win-x64.zip", "BiliDownloader.v2.8.sbom.json", "SHA256SUMS"]
     assets = []
     for name in asset_names:
         data = f"test asset {name}".encode()
@@ -179,8 +179,8 @@ def test_published_release_matches_verified_local_assets(
             "digest": f"sha256:{hashlib.sha256(data).hexdigest()}",
         })
     release = {
-        "tag_name": "v2.7",
-        "name": "Bili Downloader Lite v2.7",
+        "tag_name": "v2.8",
+        "name": "Bili Downloader Lite v2.8",
         "draft": False,
         "prerelease": False,
         "published_at": "2026-09-04T00:00:00Z",
@@ -193,17 +193,17 @@ def test_published_release_matches_verified_local_assets(
     remote_commit = "b" * 40 if mismatch == "commit" else commit
 
     def fake_gh_json(*args):
-        if args == ("api", "repos/example/project/releases/tags/v2.7"):
+        if args == ("api", "repos/example/project/releases/tags/v2.8"):
             return release
-        if args == ("api", "repos/example/project/git/ref/tags/v2.7"):
+        if args == ("api", "repos/example/project/git/ref/tags/v2.8"):
             return {"object": {"type": "commit", "sha": remote_commit}}
         raise AssertionError(f"Unexpected GitHub request: {args}")
 
     monkeypatch.setattr(verifier, "_gh_json", fake_gh_json)
     monkeypatch.setattr(sys, "argv", [
         "verify_github_release.py", "--repository", "example/project",
-        "--tag", "v2.7", "--expected-version", "2.7",
-        "--expected-commit", commit, "--expected-title", "Bili Downloader Lite v2.7",
+        "--tag", "v2.8", "--expected-version", "2.8",
+        "--expected-commit", commit, "--expected-title", "Bili Downloader Lite v2.8",
         "--asset-directory", str(tmp_path),
     ])
     if error is not None:

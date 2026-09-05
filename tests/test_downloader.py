@@ -64,18 +64,31 @@ class FakeYoutubeDL:
     def __exit__(self, *_args: object) -> None:
         return None
 
-    def extract_info(self, url: str, download: bool = False) -> dict[str, Any]:
+    def extract_info(
+        self,
+        url: str,
+        download: bool = False,
+        *,
+        process: bool = True,
+    ) -> dict[str, Any]:
         self.scenario.calls.append((url, download))
         if not download:
             if url not in self.scenario.formats_by_url:
                 raise AssertionError(f"unexpected preflight URL: {url}")
-            return {
+            info = {
                 "id": Path(url).name,
+                "title": Path(url).name,
+                "extractor_key": "Synthetic",
                 "formats": copy.deepcopy(self.scenario.formats_by_url[url]),
             }
+            return self.process_ie_result(info, download=False) if process else info
         if url not in self.scenario.download_actions:
             raise AssertionError(f"unexpected download URL: {url}")
         return self.scenario.download_actions[url](self, url)
+
+    def process_ie_result(self, info: dict[str, Any], download: bool = False) -> dict[str, Any]:
+        _ = download
+        return info
 
 
 @pytest.fixture
@@ -94,6 +107,7 @@ def downloader(isolated_app_environment: object, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(module, "YoutubeDL", unexpected_ytdlp)
     monkeypatch.setattr(module, "require_ffmpeg", lambda: "X:/synthetic/ffmpeg.exe")
     monkeypatch.setattr(module, "find_ffmpeg", lambda: None)
+    monkeypatch.setattr(module, "_matches_output_spec", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         module,
         "cookiefile_lease",
@@ -141,6 +155,13 @@ def _run_hooks(options: dict[str, Any], key: str, payload: object) -> None:
         hook(copy.deepcopy(payload))
 
 
+def _render_output_path(options: dict[str, Any], extension: str) -> Path:
+    template = options["outtmpl"]["default"]
+    placeholder = "\0PERCENT\0"
+    rendered = template.replace("%%", placeholder).replace("%(ext)s", extension).replace(placeholder, "%")
+    return Path(rendered)
+
+
 def _success_action(
     filename: str,
     *,
@@ -162,7 +183,7 @@ def _success_action(
             for status in ("started", "processing", "finished"):
                 _run_hooks(ydl.options, "postprocessor_hooks", {"status": status})
 
-        output = Path(ydl.options["paths"]["home"]) / filename
+        output = _render_output_path(ydl.options, Path(filename).suffix.lstrip(".") or "mp4")
         output.write_bytes(f"synthetic output for {url}".encode("utf-8"))
         _run_hooks(ydl.options, "post_hooks", str(output))
         return {
@@ -586,7 +607,7 @@ def test_audio_mp3_mode_uses_best_audio_and_ffmpeg_conversion(
         )
         _run_hooks(ydl.options, "postprocessor_hooks", {"status": "started"})
         assert controller.phase == "converting"
-        output = Path(ydl.options["paths"]["home"]) / "audio.mp3"
+        output = _render_output_path(ydl.options, "mp3")
         output.write_bytes(b"synthetic mp3")
         _run_hooks(ydl.options, "postprocessor_hooks", {"status": "finished"})
         _run_hooks(ydl.options, "post_hooks", str(output))
@@ -605,7 +626,9 @@ def test_audio_mp3_mode_uses_best_audio_and_ffmpeg_conversion(
         mode=downloader.DownloadMode.AUDIO_MP3,
     )
 
-    assert result.saved_files == (str(tmp_path / "output" / "audio.mp3"),)
+    assert len(result.saved_files) == 1
+    assert Path(result.saved_files[0]).suffix == ".mp3"
+    assert "[audio-mp3-192k]" in Path(result.saved_files[0]).stem
     assert any(event["phase"] == "converting" for event in events)
     assert scenario.options[0]["skip_download"] is True
     assert controller.phase == "finished"
@@ -784,7 +807,7 @@ def test_partial_failure_retains_completed_parts_and_real_saved_paths(
     assert [item.part.index for item in result.failed] == [2]
     assert len(result.saved_files) == 2
     assert all(Path(path).is_file() for path in result.saved_files)
-    assert {Path(path).name for path in result.saved_files} == {"p1-final.mp4", "p3-final.mp4"}
+    assert all("[video-mp4-1080p]" in Path(path).stem for path in result.saved_files)
 
 
 def test_retry_result_merge_preserves_order_and_replaces_only_retried_parts(
@@ -912,7 +935,7 @@ def test_cancel_during_merge_finishes_current_part_and_preserves_completed_files
         controller.cancel()
         _run_hooks(ydl.options, "postprocessor_hooks", {"status": "processing"})
         _run_hooks(ydl.options, "postprocessor_hooks", {"status": "finished"})
-        output = Path(ydl.options["paths"]["home"]) / "p2-merged.mp4"
+        output = _render_output_path(ydl.options, "mp4")
         output.write_bytes(f"synthetic merged output for {url}".encode("utf-8"))
         _run_hooks(ydl.options, "post_hooks", str(output))
         return {"id": "p2", "filepath": str(output)}
@@ -939,10 +962,8 @@ def test_cancel_during_merge_finishes_current_part_and_preserves_completed_files
         (2, downloader.PartDownloadStatus.COMPLETED),
         (3, downloader.PartDownloadStatus.CANCELLED),
     ]
-    assert {Path(path).name for path in result.saved_files} == {
-        "p1-complete.mp4",
-        "p2-merged.mp4",
-    }
+    assert len({Path(path).name for path in result.saved_files}) == 2
+    assert all("[video-mp4-1080p]" in Path(path).stem for path in result.saved_files)
     assert all(Path(path).is_file() for path in result.saved_files)
     assert (parts[2].url, True) not in scenario.calls
     assert controller.phase == "cancelled"
