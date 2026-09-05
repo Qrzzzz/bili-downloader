@@ -78,6 +78,11 @@ class CredentialMode(str, Enum):
     ANONYMOUS = "anonymous"
 
 
+class GenerationPolicy(Enum):
+    # Legacy direct callers may use the current session; backend tasks always bind it.
+    UNBOUND = "unbound"
+
+
 @dataclass(frozen=True)
 class LoginStatus:
     code: str
@@ -507,9 +512,13 @@ def _commit_cookies_locked(cookies: Iterable[dict[str, Any]]) -> SessionSnapshot
 
 def _load_snapshot_locked() -> SessionSnapshot | None:
     path = canonical_session_path()
-    if not path.exists():
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
         return None
-    return _decode_envelope(path.read_bytes())
+    except OSError as exc:
+        raise SessionSaveError("本地登录凭据无法读取") from exc
+    return _decode_envelope(data)
 
 
 def load_session_snapshot() -> SessionSnapshot | None:
@@ -970,11 +979,18 @@ def validate_saved_session() -> LoginStatus:
     if not cookies_indicate_logged_in(snapshot.cookies):
         return LoginStatus("invalid", "登录凭据已过期，请重新扫码登录", snapshot.generation)
     result = _remote_validate_cookies(snapshot.cookies, snapshot.generation)
+    return reconcile_login_status(result)
+
+
+def reconcile_login_status(result: LoginStatus) -> LoginStatus:
+    """Discard network results that no longer describe the canonical credentials."""
     try:
         current = load_session_snapshot()
     except SessionSaveError:
-        current = None
-    if current is not None and current.generation != snapshot.generation:
+        return LoginStatus("invalid", "本地登录凭据无法读取或已损坏，请重新验证")
+    if current is None:
+        return LoginStatus("none", "无本地登录凭据")
+    if current.generation != result.generation:
         return LoginStatus("local_pending", "登录凭据已更新，等待重新验证", current.generation)
     return result
 
@@ -1016,7 +1032,11 @@ def _remove_cookie_lease(
 
 
 @contextmanager
-def cookiefile_lease(mode: CredentialMode | str = CredentialMode.SAVED) -> Iterator[Path | None]:
+def cookiefile_lease(
+    mode: CredentialMode | str = CredentialMode.SAVED,
+    *,
+    expected_generation: str | None | GenerationPolicy = GenerationPolicy.UNBOUND,
+) -> Iterator[Path | None]:
     normalized_mode = CredentialMode(mode)
     if normalized_mode is CredentialMode.ANONYMOUS:
         yield None
@@ -1024,6 +1044,9 @@ def cookiefile_lease(mode: CredentialMode | str = CredentialMode.SAVED) -> Itera
 
     with _session_transaction():
         snapshot = _load_snapshot_locked()
+        current_generation = snapshot.generation if snapshot is not None else None
+        if expected_generation is not GenerationPolicy.UNBOUND and current_generation != expected_generation:
+            raise SessionSaveError("登录状态已改变，请重新解析后下载")
         if snapshot is not None:
             if not cookies_indicate_logged_in(snapshot.cookies):
                 raise SessionSaveError("登录态已失效或过期，请重新扫码登录")

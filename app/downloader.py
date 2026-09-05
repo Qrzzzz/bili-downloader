@@ -23,7 +23,7 @@ from yt_dlp.postprocessor.ffmpeg import FFmpegPostProcessor
 from yt_dlp.utils import DownloadCancelled
 
 from .config import AppConfig
-from .cookies import CredentialMode, cookiefile_lease
+from .cookies import CredentialMode, GenerationPolicy, cookiefile_lease
 from .logger import LogSink, YtdlpLogger, redact_sensitive
 from .video_urls import BV_RE, ResolvedVideoUrl, canonicalize_video_url, validate_redirect_hop
 from .utils import (
@@ -427,11 +427,12 @@ def parse_video_info(
     config: AppConfig,
     emitter: LogSink | None = None,
     credential_mode: CredentialMode | str = CredentialMode.SAVED,
+    expected_generation: str | None | GenerationPolicy = GenerationPolicy.UNBOUND,
 ) -> VideoInfoResult:
     resolved = resolve_bilibili_url(url)
     logging.getLogger("bili_downloader").info("开始解析：%s", resolved.canonical_url)
     view = _fetch_bilibili_view(resolved)
-    with cookiefile_lease(credential_mode) as cookiefile:
+    with cookiefile_lease(credential_mode, expected_generation=expected_generation) as cookiefile:
         with _youtube_dl(base_ydl_options(config, emitter, cookiefile)) as ydl:
             if view:
                 parts = _pages_to_parts(view)
@@ -1174,6 +1175,7 @@ def download_videos(
     controller: DownloadController | None = None,
     credential_mode: CredentialMode | str = CredentialMode.SAVED,
     mode: DownloadMode = DownloadMode.AUDIO_VIDEO,
+    expected_generation: str | None | GenerationPolicy = GenerationPolicy.UNBOUND,
 ) -> DownloadBatchResult:
     mode = DownloadMode(mode)
     controller = controller or DownloadController()
@@ -1186,7 +1188,7 @@ def download_videos(
     results: list[PartDownloadResult] = []
 
     try:
-        with cookiefile_lease(credential_mode) as cookiefile:
+        with cookiefile_lease(credential_mode, expected_generation=expected_generation) as cookiefile:
             plan = prepare_download_plan(
                 parts,
                 config,
