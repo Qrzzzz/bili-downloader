@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from app.config import AppConfig
-from app.cookies import CredentialMode
+from app.cookies import CredentialMode, GenerationPolicy
 from app.downloader import (
     DownloadBatchCancelled, DownloadBatchResult, DownloadController, DownloadMode,
     PartDownloadResult, PartDownloadStatus, VideoPart, download_videos,
@@ -24,6 +24,7 @@ class DownloadRequest:
     format_label: str
     credential_mode: CredentialMode
     mode: DownloadMode
+    expected_generation: str | None | GenerationPolicy = GenerationPolicy.UNBOUND
 
 
 def run_download(
@@ -38,6 +39,7 @@ def run_download(
         return download_videos(
             list(selected), request.config, request.download_dir, request.format_selector,
             progress, log, controller, request.credential_mode, request.mode,
+            expected_generation=request.expected_generation,
         )
     except DownloadBatchCancelled as exc:
         return exc.result
