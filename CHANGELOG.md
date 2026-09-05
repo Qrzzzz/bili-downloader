@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.8] - 2026-09-05
+
+- #14：为输出名加入模式/严格画质身份，并在复用前通过受控 FFprobe/FFmpeg 验证媒体；不匹配的同名文件保留并分配新名称，断点与失败重试沿用同一规格路径。
+- #15：仅标记真实 `BilibiliBaseIE` legacy durl 原始格式为 codec 未知的合流来源；同步修正 MP4/MP3 预检与大小估算，显式无音轨和严格高度缺失继续失败关闭。
+- #17：在发布终态事件和移除 operation 前校验完整结构；畸形 completed/failed/cancelled、非法序号及断连会让全部调用明确收尾，并扩充真实 Python 管道和 WinUI Busy/关闭回归。
+- 同步源码、程序集、manifest、窗口、测试和 Release 约束为 2.8 / v2.8；未升级依赖，未改动 #16、#18、#19。
+
 ## [2.7] - 2026-09-05
 
 - #12：NAV 验证保留 Cookie 作用域，在请求发送前及响应处理时限制官方 HTTPS 端点，拒绝重定向和异常来源；保留登录态验证、失败分类与 DPAPI 原子提交。

@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import logging
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
 from urllib.parse import parse_qs, urljoin, urlparse
@@ -160,6 +163,8 @@ class PlannedPart:
     part: VideoPart
     selector: str
     estimated_bytes: int | None = None
+    output_title: str = ""
+    output_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -185,6 +190,12 @@ THUMBNAIL_CONTENT_TYPES = {
     "image/bmp",
 }
 THUMBNAIL_HOST_DOMAINS = ("hdslb.com", "biliimg.com", "bilibili.com")
+BILIBILI_EXTRACTOR_KEY = "BiliBili"
+BILIBILI_DURL_MUXED = "__bili_downloader_durl_muxed"
+OUTPUT_TITLE_MAX_BYTES = 120
+OUTPUT_ID_MAX_BYTES = 48
+OUTPUT_COLLISION_LIMIT = 1000
+MEDIA_PROBE_TIMEOUT = 10.0
 
 
 def base_ydl_options(
@@ -652,6 +663,89 @@ def _selector_height(selector: str) -> int | None:
     return next(iter(heights), None)
 
 
+def _codec_is_none(fmt: dict[str, Any], key: str) -> bool:
+    value = fmt.get(key)
+    return isinstance(value, str) and value.strip().lower() == "none"
+
+
+def _codec_is_known(fmt: dict[str, Any], key: str) -> bool:
+    value = fmt.get(key)
+    return isinstance(value, str) and bool(value.strip()) and value.strip().lower() != "none"
+
+
+def _is_bilibili_durl_muxed(fmt: dict[str, Any]) -> bool:
+    return fmt.get(BILIBILI_DURL_MUXED) is True and not (
+        _codec_is_none(fmt, "vcodec") or _codec_is_none(fmt, "acodec")
+    )
+
+
+def _format_has_video(fmt: dict[str, Any]) -> bool:
+    return _codec_is_known(fmt, "vcodec") or _is_bilibili_durl_muxed(fmt)
+
+
+def _format_has_audio(fmt: dict[str, Any]) -> bool:
+    return _codec_is_known(fmt, "acodec") or _is_bilibili_durl_muxed(fmt)
+
+
+def _is_audio_only(fmt: dict[str, Any]) -> bool:
+    return _codec_is_none(fmt, "vcodec") and _codec_is_known(fmt, "acodec")
+
+
+def _is_muxed(fmt: dict[str, Any]) -> bool:
+    return _is_bilibili_durl_muxed(fmt) or (
+        _codec_is_known(fmt, "vcodec") and _codec_is_known(fmt, "acodec")
+    )
+
+
+def _is_raw_bilibili_durl_format(fmt: dict[str, Any]) -> bool:
+    """Recognize the narrow legacy durl shape emitted by BilibiliBaseIE.
+
+    DASH entries explicitly carry codec keys. A legacy durl entry carries a
+    quality/height/duration tuple but no codec or ext keys; yt-dlp determines
+    its muxed container from the direct URL during normalization.
+    """
+
+    quality = fmt.get("quality")
+    height = fmt.get("height")
+    duration = fmt.get("duration")
+    return (
+        "vcodec" not in fmt
+        and "acodec" not in fmt
+        and "ext" not in fmt
+        and isinstance(fmt.get("url"), str)
+        and bool(fmt["url"])
+        and isinstance(quality, int)
+        and not isinstance(quality, bool)
+        and quality > 0
+        and str(fmt.get("format_id") or "") == str(quality)
+        and isinstance(height, int)
+        and not isinstance(height, bool)
+        and height > 0
+        and isinstance(duration, (int, float))
+        and not isinstance(duration, bool)
+        and duration > 0
+        and bool(str(fmt.get("format_note") or "").strip())
+        and not fmt.get("manifest_url")
+    )
+
+
+def _mark_bilibili_durl_formats(info: dict[str, Any]) -> None:
+    if info.get("extractor_key") != BILIBILI_EXTRACTOR_KEY:
+        return
+    for fmt in info.get("formats") or []:
+        if isinstance(fmt, dict) and _is_raw_bilibili_durl_format(fmt):
+            fmt[BILIBILI_DURL_MUXED] = True
+
+
+def _extract_preflight_info(ydl: YoutubeDL, url: str) -> dict[str, Any]:
+    # Inspect the extractor's raw Bilibili format provenance before yt-dlp
+    # normalizes absent codec fields to None. Only the exact legacy durl shape
+    # is marked as muxed; other unknown-codec entries remain untrusted.
+    raw = _require_info(ydl.extract_info(url, download=False, process=False))
+    _mark_bilibili_durl_formats(raw)
+    return _require_info(ydl.process_ie_result(raw, download=False))
+
+
 def _available_heights(formats: list[dict[str, Any]]) -> tuple[int, ...]:
     return tuple(
         sorted(
@@ -659,7 +753,7 @@ def _available_heights(formats: list[dict[str, Any]]) -> tuple[int, ...]:
                 fmt["height"]
                 for fmt in formats
                 if isinstance(fmt, dict)
-                and fmt.get("vcodec") != "none"
+                and _format_has_video(fmt)
                 and isinstance(fmt.get("height"), int)
                 and not isinstance(fmt.get("height"), bool)
                 and fmt["height"] > 0
@@ -670,10 +764,10 @@ def _available_heights(formats: list[dict[str, Any]]) -> tuple[int, ...]:
 
 
 def _has_playable_height(formats: list[dict[str, Any]], height: int) -> bool:
-    video = [fmt for fmt in formats if fmt.get("vcodec") != "none" and fmt.get("height") == height]
-    audio = [fmt for fmt in formats if fmt.get("vcodec") == "none" and fmt.get("acodec") != "none"]
-    muxed = [fmt for fmt in video if fmt.get("acodec") not in {None, "none"}]
-    separate = [fmt for fmt in video if fmt.get("acodec") in {None, "none"}]
+    video = [fmt for fmt in formats if _format_has_video(fmt) and fmt.get("height") == height]
+    audio = [fmt for fmt in formats if _is_audio_only(fmt)]
+    muxed = [fmt for fmt in video if _is_muxed(fmt)]
+    separate = [fmt for fmt in video if not _format_has_audio(fmt)]
     return bool(muxed or (separate and audio))
 
 
@@ -683,9 +777,9 @@ def _has_playable_video(formats: list[dict[str, Any]]) -> bool:
 
 
 def _audio_formats(formats: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    with_audio = [fmt for fmt in formats if fmt.get("acodec") not in {None, "none"}]
-    audio_only = [fmt for fmt in with_audio if fmt.get("vcodec") == "none"]
-    return audio_only or with_audio
+    audio_only = [fmt for fmt in formats if _is_audio_only(fmt)]
+    muxed = [fmt for fmt in formats if _is_muxed(fmt)]
+    return audio_only or muxed
 
 
 def _format_size(fmt: dict[str, Any]) -> int:
@@ -698,17 +792,27 @@ def _estimate_part_size(
     height: int | None,
     mode: DownloadMode = DownloadMode.AUDIO_VIDEO,
 ) -> int | None:
-    audio = _audio_formats(formats)
-    if mode is DownloadMode.AUDIO_MP3:
-        estimate = max((_format_size(fmt) for fmt in audio), default=0)
-        return estimate or None
-    video = [
+    audio_only = [fmt for fmt in formats if _is_audio_only(fmt)]
+    muxed = [
         fmt for fmt in formats
-        if fmt.get("vcodec") != "none" and (height is None or fmt.get("height") == height)
+        if _is_muxed(fmt) and (height is None or fmt.get("height") == height)
     ]
-    video_size = max((_format_size(fmt) for fmt in video), default=0)
-    audio_size = max((_format_size(fmt) for fmt in audio), default=0)
-    estimate = video_size + audio_size
+    if mode is DownloadMode.AUDIO_MP3:
+        estimate = max((_format_size(fmt) for fmt in (audio_only or muxed)), default=0)
+        return estimate or None
+    separate_video = [
+        fmt for fmt in formats
+        if _format_has_video(fmt)
+        and not _is_muxed(fmt)
+        and (height is None or fmt.get("height") == height)
+    ]
+    muxed_size = max((_format_size(fmt) for fmt in muxed), default=0)
+    separate_size = max((_format_size(fmt) for fmt in separate_video), default=0)
+    if separate_size and audio_only:
+        separate_size += max((_format_size(fmt) for fmt in audio_only), default=0)
+    else:
+        separate_size = 0
+    estimate = max(muxed_size, separate_size)
     return estimate or None
 
 
@@ -743,7 +847,7 @@ def prepare_download_plan(
         for part in parts:
             if controller.cancelled:
                 raise DownloadCancelled("用户已取消下载")
-            info = _require_info(ydl.extract_info(part.url, download=False))
+            info = _extract_preflight_info(ydl, part.url)
             formats = [fmt for fmt in info.get("formats") or [] if isinstance(fmt, dict)]
             heights = _available_heights(formats)
             if mode is DownloadMode.AUDIO_MP3:
@@ -755,7 +859,15 @@ def prepare_download_plan(
             if not playable:
                 missing.append(MissingPartFormat(part, heights))
                 continue
-            planned.append(PlannedPart(part, strict_selector, _estimate_part_size(formats, requested_height, mode)))
+            planned.append(
+                PlannedPart(
+                    part,
+                    strict_selector,
+                    _estimate_part_size(formats, requested_height, mode),
+                    str(info.get("title") or part.title),
+                    str(info.get("id") or part.id),
+                )
+            )
     if missing:
         raise FormatPreflightError(requested_height, missing, mode)
     return DownloadPlan(tuple(planned), requested_height, mode)
@@ -860,6 +972,178 @@ class _ProgressAggregator:
         self.emit(ordinal, part, status, fraction, {"status": status})
 
 
+@dataclass(frozen=True)
+class _MediaMetadata:
+    containers: frozenset[str]
+    has_video: bool
+    video_heights: tuple[int, ...]
+    has_audio: bool
+
+
+def _truncate_filename_component(value: str, maximum_bytes: int) -> str:
+    cleaned = sanitize_windows_filename(value)
+    encoded = cleaned.encode("utf-8")
+    if len(encoded) <= maximum_bytes:
+        return cleaned
+    truncated = encoded[:maximum_bytes].decode("utf-8", errors="ignore").rstrip(" .")
+    return sanitize_windows_filename(truncated)
+
+
+def _output_spec_identity(plan: DownloadPlan, planned: PlannedPart) -> str:
+    if plan.mode is DownloadMode.AUDIO_MP3:
+        return "audio-mp3-192k"
+    if plan.requested_height is not None:
+        return f"video-mp4-{plan.requested_height}p"
+    if planned.selector in {"bestvideo+bestaudio/best", "bestvideo*+bestaudio/best"}:
+        return "video-mp4-best"
+    selector_id = sha256(planned.selector.encode("utf-8")).hexdigest()[:10]
+    return f"video-mp4-custom-{selector_id}"
+
+
+def _output_stem(planned: PlannedPart, plan: DownloadPlan, collision: int = 1) -> str:
+    title = _truncate_filename_component(planned.output_title or planned.part.title, OUTPUT_TITLE_MAX_BYTES)
+    raw_id = planned.output_id or planned.part.id
+    if not raw_id:
+        raw_id = sha256(planned.part.url.encode("utf-8")).hexdigest()[:12]
+    output_id = _truncate_filename_component(raw_id, OUTPUT_ID_MAX_BYTES)
+    identity = _output_spec_identity(plan, planned)
+    suffix = "" if collision == 1 else f"-{collision}"
+    return f"P{planned.part.index:03d}-{title}-{output_id}-[{identity}]{suffix}"
+
+
+def _run_media_probe(command: list[str]) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=MEDIA_PROBE_TIMEOUT,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+
+
+def _probe_media(path: Path, ffmpeg_path: str) -> _MediaMetadata | None:
+    selected_ffmpeg = Path(ffmpeg_path).resolve()
+    probe_name = "ffprobe.exe" if selected_ffmpeg.suffix.lower() == ".exe" else "ffprobe"
+    selected_ffprobe = selected_ffmpeg.with_name(probe_name)
+    if selected_ffprobe.is_file():
+        completed = _run_media_probe(
+            [
+                str(selected_ffprobe),
+                "-v",
+                "error",
+                "-show_entries",
+                "format=format_name:stream=codec_type,height",
+                "-of",
+                "json",
+                str(path),
+            ]
+        )
+        if completed is not None and completed.returncode == 0:
+            try:
+                payload = json.loads(completed.stdout)
+                streams = payload.get("streams") or []
+                if not isinstance(streams, list):
+                    raise TypeError("ffprobe streams must be a list")
+                heights = tuple(
+                    sorted(
+                        {
+                            stream["height"]
+                            for stream in streams
+                            if isinstance(stream, dict)
+                            and stream.get("codec_type") == "video"
+                            and isinstance(stream.get("height"), int)
+                            and not isinstance(stream.get("height"), bool)
+                            and stream["height"] > 0
+                        },
+                        reverse=True,
+                    )
+                )
+                format_name = str((payload.get("format") or {}).get("format_name") or "")
+                return _MediaMetadata(
+                    frozenset(name.strip().lower() for name in format_name.split(",") if name.strip()),
+                    any(isinstance(stream, dict) and stream.get("codec_type") == "video" for stream in streams),
+                    heights,
+                    any(isinstance(stream, dict) and stream.get("codec_type") == "audio" for stream in streams),
+                )
+            except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+                pass
+
+    completed = _run_media_probe(
+        [str(selected_ffmpeg), "-hide_banner", "-nostdin", "-i", str(path)]
+    )
+    if completed is None:
+        return None
+    output = "\n".join(part for part in (completed.stdout, completed.stderr) if part)
+    video_lines = [line for line in output.splitlines() if " Video: " in line]
+    heights = tuple(
+        sorted(
+            {
+                int(match.group(2))
+                for line in video_lines
+                for match in [re.search(r"\b(\d{2,5})x(\d{2,5})(?:[\s,]|$)", line)]
+                if match is not None
+            },
+            reverse=True,
+        )
+    )
+    container_match = re.search(r"(?m)^Input #\d+,\s*(.+?),\s+from\s", output)
+    containers = frozenset(
+        name.strip().lower()
+        for name in (container_match.group(1).split(",") if container_match else [])
+        if name.strip()
+    )
+    if not containers and not video_lines and " Audio: " not in output:
+        return None
+    return _MediaMetadata(containers, bool(video_lines), heights, " Audio: " in output)
+
+
+def _matches_output_spec(path: Path, plan: DownloadPlan, ffmpeg_path: str) -> bool:
+    metadata = _probe_media(path, ffmpeg_path)
+    if metadata is None:
+        return False
+    if plan.mode is DownloadMode.AUDIO_MP3:
+        return "mp3" in metadata.containers and metadata.has_audio and not metadata.has_video
+    mp4_containers = {"mov", "mp4", "m4a", "3gp", "3g2", "mj2"}
+    if not metadata.containers.intersection(mp4_containers):
+        return False
+    if not metadata.has_video or not metadata.has_audio:
+        return False
+    return plan.requested_height is None or plan.requested_height in metadata.video_heights
+
+
+def _choose_output_target(
+    target_dir: str,
+    planned: PlannedPart,
+    plan: DownloadPlan,
+    ffmpeg_path: str,
+    emitter: LogSink | None,
+) -> tuple[str, Path, bool]:
+    extension = "mp3" if plan.mode is DownloadMode.AUDIO_MP3 else "mp4"
+    for collision in range(1, OUTPUT_COLLISION_LIMIT + 1):
+        stem = _output_stem(planned, plan, collision)
+        final_path = Path(target_dir, f"{stem}.{extension}")
+        try:
+            exists = final_path.exists()
+            valid_existing = final_path.is_file() and _matches_output_spec(final_path, plan, ffmpeg_path)
+        except OSError:
+            exists = True
+            valid_existing = False
+        if not exists or valid_existing:
+            return stem, final_path, valid_existing
+        if emitter:
+            emitter(
+                f"P{planned.part.index} 的同名文件与当前规格不匹配；已保留原文件并选择新的输出名称。"
+            )
+    raise AppError(ErrorKind.OUTPUT_PERMISSION, "同一分 P 和规格的保留文件过多，无法分配安全输出名称。")
+
+
 def _existing_output_paths(info: dict[str, Any] | None, captured: Iterable[str]) -> tuple[str, ...]:
     candidates = list(captured)
     if isinstance(info, dict):
@@ -941,7 +1225,24 @@ def download_videos(
                 def final_path_hook(filename: str) -> None:
                     captured.append(filename)
 
-                outtmpl = os.path.join(target_dir, f"P{part.index:03d}-%(title).180B-%(id)s.%(ext)s")
+                output_stem, expected_output, reused_existing = _choose_output_target(
+                    target_dir,
+                    planned,
+                    plan,
+                    ffmpeg_path,
+                    emitter,
+                )
+                if reused_existing:
+                    existing_path = str(expected_output.resolve())
+                    if emitter:
+                        emitter(f"P{part.index} 已验证并复用相同规格的现有媒体。")
+                    results.append(
+                        PartDownloadResult(part, PartDownloadStatus.COMPLETED, (existing_path,))
+                    )
+                    progress.terminal(ordinal, part, "completed", complete=True)
+                    continue
+                escaped_stem = output_stem.replace("%", "%%")
+                outtmpl = os.path.join(target_dir, f"{escaped_stem}.%(ext)s")
                 opts = base_ydl_options(config, emitter, cookiefile, ffmpeg_path)
                 opts.update(
                     {
@@ -972,9 +1273,14 @@ def download_videos(
                         emitter(f"开始下载 P{part.index}：{sanitize_windows_filename(part.title)}")
                     with _youtube_dl(opts) as ydl:
                         info = _require_info(ydl.extract_info(part.url, download=True))
-                    files = _existing_output_paths(info, captured)
-                    if not files:
-                        raise RuntimeError("下载结束，但未找到最终输出文件。")
+                    reported_files = _existing_output_paths(info, captured)
+                    expected_path = expected_output.resolve()
+                    if str(expected_path) not in reported_files or not expected_path.is_file():
+                        raise RuntimeError("下载结束，但未捕获到当前规格的最终输出文件。")
+                    if not _matches_output_spec(expected_path, plan, ffmpeg_path):
+                        state = "已有" if reused_existing else "新生成"
+                        raise RuntimeError(f"{state}输出无法验证为当前请求的媒体规格。")
+                    files = (str(expected_path),)
                     results.append(PartDownloadResult(part, PartDownloadStatus.COMPLETED, files))
                     progress.terminal(ordinal, part, "completed", complete=True)
                 except DownloadCancelled:

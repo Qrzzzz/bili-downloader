@@ -3,6 +3,7 @@ using BiliDownloader.WinUI.Models;
 using BiliDownloader.WinUI.ViewModels;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 
 namespace BiliDownloader.WinUI.Services;
 
@@ -95,8 +96,20 @@ internal static class FrontendStateAcceptance
             Check(settings.HasChanges && settings.CanSave && preview == "dark", "failed_save_retains_draft_restores_saved_theme");
             session.Account.ApplyStatus(new LoginStatus("verified", "已验证", "fixture"));
             Check(session.Account.LoginVisibility == Visibility.Collapsed && session.Account.CanManage, "signed_in_actions");
-            await session.ShutdownAsync();
+            var terminalEvents = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            client.Event += e => { if (e.Name.StartsWith("operation.")) terminalEvents.Enqueue(e.Name); };
+            await session.ExecuteAsync(async () =>
+                await session.RunAsync("fixture.malformed_terminal")).WaitAsync(TimeSpan.FromSeconds(8));
+            await WaitUntil(() => !session.Connected);
+            Check(!session.Busy && session.ActiveMethod is null && !session.CancelRequested,
+                  "malformed_terminal_releases_busy_finally");
+            Check(!terminalEvents.Contains("operation.completed"),
+                  "malformed_terminal_does_not_update_ui_as_success");
+            Check(session.Shell.Severity == InfoBarSeverity.Error,
+                  "malformed_terminal_is_reported_as_protocol_failure");
+            await session.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8));
             Check(!session.CanNavigate && !model.CanEditInput && !model.CanDownload && !settings.CanSave, "closing_disables_interaction");
+            Check(!session.Busy, "malformed_terminal_shutdown_finishes");
             return checks.ToArray();
         }
         finally { if (!session.Closing) await session.ShutdownAsync(); }
