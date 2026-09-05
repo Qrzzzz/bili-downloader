@@ -136,17 +136,20 @@ try
     });
     await Test("malformed accepted terminal also faults an unacknowledged pending request", async () =>
     {
-        var c = Client("accepted_and_pending_malformed"); c.Start();
-        var accepted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        try
+        for (int attempt = 0; attempt < 20; attempt++)
         {
-            Task<JsonElement> operation = c.RunAsync("work", null, _ => accepted.TrySetResult(true));
-            await accepted.Task.WaitAsync(TimeSpan.FromSeconds(3));
-            Task<JsonElement> pending = c.RequestAsync("hold");
-            await Throws<InvalidDataException>(() => operation);
-            await Throws<InvalidDataException>(() => pending);
+            var c = Client("accepted_and_pending_malformed"); c.Start();
+            var accepted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            try
+            {
+                Task<JsonElement> operation = c.RunAsync("work", null, _ => accepted.TrySetResult(true));
+                await accepted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                Task<JsonElement> pending = c.RequestAsync("hold");
+                await Throws<InvalidDataException>(() => operation);
+                await Throws<InvalidDataException>(() => pending);
+            }
+            finally { await c.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8)); }
         }
-        finally { await c.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8)); }
     });
     await Test("duplicate and late terminal events are ignored", async () =>
     {

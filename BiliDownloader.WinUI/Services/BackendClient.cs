@@ -59,10 +59,17 @@ public sealed class BackendClient(Func<Process>? startProcess = null, TimeSpan? 
             await call.Acknowledged.Task.WaitAsync(responseTimeout ?? TimeSpan.FromSeconds(20));
             return await call.Completion.Task;
         }
-        catch (Exception ex) when (ex is TimeoutException or IOException)
+        catch (Exception ex) when (ex is TimeoutException or IOException or ObjectDisposedException)
         {
-            FailConnection(ex);
-            throw;
+            Exception failure = transportFailure ?? (ex is ObjectDisposedException
+                ? new IOException("后端连接已在写入请求时关闭。", ex)
+                : ex);
+            FailConnection(failure);
+            failure = transportFailure ?? failure;
+            pending.TryRemove(id, out _);
+            call.Acknowledged.TrySetResult(true);
+            call.Completion.TrySetException(failure);
+            return await call.Completion.Task;
         }
         catch { pending.TryRemove(id, out _); throw; }
     }
