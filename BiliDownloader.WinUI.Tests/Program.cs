@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Text.Json;
 using BiliDownloader.WinUI.Models;
 using BiliDownloader.WinUI.Services;
@@ -45,8 +46,8 @@ try
         var c = Client("real"); c.Start();
         try
         {
-            var hello = Protocol.Read<Hello>(await c.RequestAsync("hello", new { protocol_version = 1, frontend_version = "2.7" }));
-            Check(hello.BackendVersion == "2.7" && hello.ProtocolVersion == 1, "Version negotiation failed");
+            var hello = Protocol.Read<Hello>(await c.RequestAsync("hello", new { protocol_version = 1, frontend_version = "2.8" }));
+            Check(hello.BackendVersion == "2.8" && hello.ProtocolVersion == 1, "Version negotiation failed");
             Check(Directory.EnumerateDirectories(profile, "run-markers", SearchOption.AllDirectories).SelectMany(Directory.EnumerateFiles).Any(), "Backend did not acquire a running marker");
             string? operation = null;
             await Throws<BackendException>(() => c.RunAsync("parse.start", new { input = "invalid", credential_mode = "anonymous" }, id => operation = id));
@@ -70,6 +71,17 @@ try
         }
         finally { await c.ShutdownAsync(); }
     });
+    await Test("normal failed terminal completes exactly once with BackendException", async () =>
+    {
+        var c = Client("normal_failed"); var events = new ConcurrentQueue<string>();
+        c.Event += e => events.Enqueue(e.Name); c.Start();
+        try
+        {
+            await Throws<BackendException>(() => c.RunAsync("work", null, _ => { }));
+            Check(events.SequenceEqual(new[] { "operation.failed" }), "Valid failed terminal was not published exactly once");
+        }
+        finally { await c.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8)); }
+    });
     foreach (string scenario in new[] { "cancelled", "bad_sequence", "partial", "wrong_version", "malformed" })
         await Test(scenario, async () =>
         {
@@ -81,6 +93,95 @@ try
             }
             finally { await c.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8)); }
         });
+    foreach (string scenario in new[]
+    {
+        "terminal_completed_missing_result", "terminal_completed_wrong_result_type",
+        "terminal_failed_missing_error", "terminal_failed_wrong_error_type",
+        "terminal_failed_wrong_error_field_type", "terminal_cancelled_missing_result",
+        "terminal_cancelled_wrong_result_type", "invalid_seq"
+    })
+        await Test(scenario + " faults the accepted call without publishing a terminal event", async () =>
+        {
+            var c = Client(scenario); var events = new ConcurrentQueue<string>();
+            c.Event += e => events.Enqueue(e.Name); c.Start();
+            try
+            {
+                await Throws<InvalidDataException>(() => c.RunAsync("work", null, _ => { }));
+                Check(!events.Any(name => name.StartsWith("operation.")), "Malformed terminal reached the UI event surface");
+                await Throws<IOException>(() => c.RequestAsync("session.status"));
+            }
+            finally { await c.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8)); }
+        });
+    await Test("EOF after acceptance faults the operation and shutdown completes", async () =>
+    {
+        var c = Client("accepted_eof"); c.Start();
+        try { await Throws<IOException>(() => c.RunAsync("work", null, _ => { })); }
+        finally { await c.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8)); }
+    });
+    await Test("one malformed terminal faults every accepted operation", async () =>
+    {
+        var c = Client("multiple_accepted_malformed"); c.Start();
+        var acceptedOne = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var acceptedTwo = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            Task<JsonElement> one = c.RunAsync("work", new { ordinal = 1 }, _ => acceptedOne.TrySetResult(true));
+            await acceptedOne.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Task<JsonElement> two = c.RunAsync("work", new { ordinal = 2 }, _ => acceptedTwo.TrySetResult(true));
+            await acceptedTwo.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await Throws<InvalidDataException>(() => one);
+            await Throws<InvalidDataException>(() => two);
+        }
+        finally { await c.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8)); }
+    });
+    await Test("malformed accepted terminal also faults an unacknowledged pending request", async () =>
+    {
+        var c = Client("accepted_and_pending_malformed"); c.Start();
+        var accepted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            Task<JsonElement> operation = c.RunAsync("work", null, _ => accepted.TrySetResult(true));
+            await accepted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Task<JsonElement> pending = c.RequestAsync("hold");
+            await Throws<InvalidDataException>(() => operation);
+            await Throws<InvalidDataException>(() => pending);
+        }
+        finally { await c.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8)); }
+    });
+    await Test("duplicate and late terminal events are ignored", async () =>
+    {
+        var c = Client("duplicate_terminal"); var events = new ConcurrentQueue<string>();
+        c.Event += e => events.Enqueue(e.Name); c.Start();
+        try
+        {
+            var result = await c.RunAsync("work", null, _ => { });
+            Check(result.GetProperty("title").GetString() == "once", "Late terminal replaced the first result");
+            await Task.Delay(100);
+            Check(events.SequenceEqual(new[] { "operation.completed" }), "Duplicate or late event escaped stale filtering");
+        }
+        finally { await c.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8)); }
+    });
+    await Test("terminal cleanup permits a later operation to reuse the same opaque id and seq", async () =>
+    {
+        var c = Client("reuse_operation_id"); c.Start();
+        try
+        {
+            var first = await c.RunAsync("work", null, _ => { });
+            var second = await c.RunAsync("work", null, _ => { });
+            Check(first.GetProperty("ordinal").GetInt32() == 1 && second.GetProperty("ordinal").GetInt32() == 2,
+                  "Operation or sequence state was not cleaned after terminal completion");
+        }
+        finally { await c.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8)); }
+    });
+    await Test("shutdown with an accepted operation finishes both shutdown and the caller", async () =>
+    {
+        var c = Client("shutdown_with_accepted"); c.Start();
+        var accepted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<JsonElement> operation = c.RunAsync("work", null, _ => accepted.TrySetResult(true));
+        await accepted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        await c.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8));
+        await Throws<IOException>(() => operation);
+    });
     await Test("unacknowledged operation times out and drains through EOF", async () =>
     {
         var c = Client("unacknowledged", 0.2); c.Start();

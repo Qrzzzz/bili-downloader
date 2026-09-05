@@ -6,6 +6,15 @@
 - PR/main 执行 Python 回归、真实 WinUI 编译和 C# 管道测试；最终目录/ZIP 组包、package smoke 和归档审计集中在 Release。
 - 真实扫码、下载、界面截图和许可证复核按相关改动触发；公网探测仅手动运行。无关变更不要求重复人工验收。
 
+## v2.8 发布边界
+
+- 精确基线为已发布 v2.7 的 `e9986d5cf82ff82d6a92691201a6f8991cebb3c1`，开发分支为 `codex/v2.8`；仅处理开始时为 OPEN 的 #14、#15、#17。源码、程序集、窗口和发行约束同步为 2.8 / v2.8。
+- #14 的输出身份为 `video-mp4-<height>p`、`video-mp4-best` 或 `audio-mp3-192k`，置于清理、限长后的分 P/标题/来源 id 文件名中。相同规格沿同一路径断点续传或重试；完整已有文件只在受控的相邻 FFprobe（失败时回退已选绝对 FFmpeg）验证容器、音视频轨和严格高度后复用。不匹配文件不覆盖、不删除，改用带序号的新名称。
+- #15 只在 `BiliBili` 真实原始提取结果中，将具备 quality/height/duration 且没有 codec/ext 字段的窄 legacy durl 形状标记为合流。普通 codec 未知格式不因此通过；显式 `none`、纯视频、纯音频、DASH 配对和严格高度仍按各自契约分类。MP4/MP3 预检与大小估算共用该分类。
+- #17 在 sequence 状态、UI Event 和 operation 移除之前完整校验 completed/failed/cancelled 的 method/result/error 结构。任何协议异常由连接失败路径完成全部 pending/accepted Task；正常终态仍只完成一次，迟到/重复事件继续忽略，sequence 在正常终态清理。
+- [发布说明](./docs/releases/v2.8.md) 与 [验证记录](./docs/validation/v2.8.md) 必须区分真实锁定库/真实管道、合成媒体、外部下载和人工待验。打包脚本未改；本地 dirty 包不能称为正式资产。
+- #16 凭据代次、#18 扫码终态、#19 验证期间清除逻辑留给后续版本；配置 schema 1、IPC 1、DPAPI、Cookie/NAV 与 FFmpeg 选择边界不变。
+
 ## v2.7 发布边界
 
 - 基线 `ef57a570a236b02f070d94f94adb989e86883ed5`，仅处理 #12 与 #13。源码、程序集、窗口版本和发行约束为 2.7 / v2.7；#14—#19 不在本轮范围。

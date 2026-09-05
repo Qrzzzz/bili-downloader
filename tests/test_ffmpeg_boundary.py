@@ -61,9 +61,29 @@ def boundary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace
 
     def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
         commands.append(command)
-        assert Path(command[0]).is_absolute()
-        return SimpleNamespace(returncode=1 if Path(command[0]) in broken else 0,
-                               stdout="ffmpeg version 8.0", stderr="")
+        executable = Path(command[0])
+        assert executable.is_absolute()
+        assert executable.parent in {app_dir / "tools", resource_dir / "tools", path_dir}
+        if executable in broken:
+            return SimpleNamespace(returncode=1, stdout="", stderr="synthetic broken executable")
+        if "-show_entries" in command:
+            output = Path(command[-1])
+            if output.suffix.lower() == ".mp3":
+                payload = '{"format":{"format_name":"mp3"},"streams":[{"codec_type":"audio"}]}'
+            else:
+                payload = ('{"format":{"format_name":"mov,mp4,m4a,3gp,3g2,mj2"},'
+                           '"streams":[{"codec_type":"video","height":1080},{"codec_type":"audio"}]}')
+            return SimpleNamespace(returncode=0, stdout=payload, stderr="")
+        if "-i" in command:
+            output = Path(command[-1])
+            if output.suffix.lower() == ".mp3":
+                stderr = "Input #0, mp3, from fixture:\n  Stream #0:0: Audio: mp3"
+            else:
+                stderr = ("Input #0, mov,mp4,m4a,3gp,3g2,mj2, from fixture:\n"
+                          "  Stream #0:0: Video: h264, yuv420p, 1920x1080, 30 fps\n"
+                          "  Stream #0:1: Audio: aac")
+            return SimpleNamespace(returncode=1, stdout="", stderr=stderr)
+        return SimpleNamespace(returncode=0, stdout="ffmpeg version 8.0", stderr="")
 
     def popen_run(command: list[str], **_kwargs: object) -> tuple[str, str, int]:
         commands.append(command)
@@ -90,10 +110,19 @@ def boundary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace
             options.append(opts.copy())
             super().__init__(opts)
 
-        def extract_info(self, url: str, download: bool = True, **kwargs: object) -> dict:
+        def extract_info(
+            self,
+            url: str,
+            download: bool = True,
+            *,
+            process: bool = True,
+            **kwargs: object,
+        ) -> dict:
             # Replace extraction/network only, keeping the library's default
             # format selection, downloader dispatch and postprocessors.
-            return self.process_ie_result(copy.deepcopy(INFO), download=download)
+            _ = url, kwargs
+            info = copy.deepcopy(INFO)
+            return self.process_ie_result(info, download=download) if process else info
 
     def local_download(_fd: HttpFD, filename: str, info: dict) -> bool:
         Path(filename).write_bytes(b"synthetic transport bytes, not real downloaded media")

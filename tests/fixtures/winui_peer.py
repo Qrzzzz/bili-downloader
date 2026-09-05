@@ -37,9 +37,9 @@ for line in sys.stdin:
         else:
             settings = {**settings, **params}
             result = settings
-    elif method in {"parse.start", "download.start", "download.retry", "diagnostics.run"}:
+    elif method in {"parse.start", "download.start", "download.retry", "diagnostics.run", "fixture.malformed_terminal"}:
         counter += 1
-        active = {"id": f"ui-{counter}", "sequence": 0}
+        active = {"id": f"ui-{counter}", "sequence": 0, "method": method}
         result = {"operation_id": active["id"]}
     elif method == "operation.cancel":
         cancellations += 1
@@ -47,12 +47,14 @@ for line in sys.stdin:
     elif method == "fixture.progress":
         event("download.progress", params)
     elif method == "fixture.complete":
-        event("operation.completed", {"result": params})
+        event("operation.completed", {"method": active["method"], "result": params})
         active = None
     elif method == "fixture.cancel_count":
         result = {"count": cancellations}
     elif method == "shutdown":
         result = {"state": "draining"}
     send({"type": "response", "id": request["id"], "ok": error is None, **({"result": result} if error is None else {"error": error})})
+    if method == "fixture.malformed_terminal":
+        event("operation.completed", {"method": method})
     if method == "shutdown":
         break
