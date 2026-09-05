@@ -15,6 +15,7 @@ public sealed class AccountViewModel(ApplicationSession session) : ViewModelBase
     private bool refreshing;
     private BackendEvent? pendingImage, pendingState;
     private string statusCode = "none";
+    private string? credentialGeneration;
     public bool SafeMode { get; set; }
     public string Status { get => status; set => Set(ref status, value); }
     public string QrStatus { get => qrStatus; set => Set(ref qrStatus, value); }
@@ -32,6 +33,10 @@ public sealed class AccountViewModel(ApplicationSession session) : ViewModelBase
     public Visibility QrVisibility => IsLoggingIn ? Visibility.Visible : Visibility.Collapsed;
     public void ApplyStatus(LoginStatus value)
     {
+        if (value.Code is "none" or "invalid" ||
+            (credentialGeneration is not null && credentialGeneration != value.Generation))
+            session.Download.Invalidate();
+        credentialGeneration = value.Generation;
         statusCode = value.Code; Status = value.Text; Refresh(); session.Download.Refresh();
     }
     public void ClearQr() { imageRevision++; refreshing = true; pendingImage = pendingState = null; QrImage = null; QrStatus = "正在刷新二维码…"; Refresh(); }

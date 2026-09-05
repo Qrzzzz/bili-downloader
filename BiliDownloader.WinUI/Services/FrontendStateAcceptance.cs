@@ -96,6 +96,32 @@ internal static class FrontendStateAcceptance
             Check(settings.HasChanges && settings.CanSave && preview == "dark", "failed_save_retains_draft_restores_saved_theme");
             session.Account.ApplyStatus(new LoginStatus("verified", "已验证", "fixture"));
             Check(session.Account.LoginVisibility == Visibility.Collapsed && session.Account.CanManage, "signed_in_actions");
+            Task login = session.Account.LoginAsync(); await WaitUntil(() => session.CanCancel);
+            await CompleteAsync(new { code = "success", friendly = "", detail = "", status = new LoginStatus("verified", "已验证并保存", "qr-generation") });
+            await login;
+            Check(session.Account.StatusTitle == "已登录" && session.Account.LoginVisibility == Visibility.Collapsed &&
+                  session.Account.CanManage && session.Account.ManageVisibility == Visibility.Visible,
+                  "qr_terminal_immediately_shows_verified_account");
+            foreach (string code in new[] { "none", "invalid", "local_pending" })
+            {
+                session.Account.ApplyStatus(new LoginStatus("verified", "已验证", "old-generation"));
+                parse = model.ParseAsync(); await WaitUntil(() => session.CanCancel); await CompleteAsync(video); await parse;
+                Check(model.CanDownload, "account_" + code + "_starts_with_valid_parse");
+                model.ApplyResult(new BatchResult("account-retry", "failed", [], true,
+                    [new(1, "第一部分", "failed", [], new("timeout", "网络超时", true, ""))], source));
+                Check(model.CanRetry, "account_" + code + "_starts_with_retry");
+                Task validate = session.Account.ValidateAsync(); await WaitUntil(() => session.CanCancel);
+                await CompleteAsync(new LoginStatus(code, "凭据已改变", code == "local_pending" ? "new-generation" : null));
+                await validate;
+                Check(!model.CanDownload && !model.CanRetry && session.Account.StatusTitle != "已登录" &&
+                      session.Account.LoginVisibility == Visibility.Visible, "account_" + code + "_revokes_stale_parse");
+                Check(session.Account.CanManage == (code != "none"), "account_" + code + "_management_matches_credentials");
+            }
+            login = session.Account.LoginAsync(); await WaitUntil(() => session.CanCancel);
+            await CompleteAsync(new { code = "session_changed", friendly = "登录凭据已改变", detail = "", status = new LoginStatus("none", "无本地登录凭据", null) });
+            await login;
+            Check(session.Account.StatusTitle == "未登录" && !session.Account.CanManage && session.Shell.Severity == InfoBarSeverity.Warning,
+                  "stale_qr_terminal_never_shows_success");
             var terminalEvents = new System.Collections.Concurrent.ConcurrentQueue<string>();
             client.Event += e => { if (e.Name.StartsWith("operation.")) terminalEvents.Enqueue(e.Name); };
             await session.ExecuteAsync(async () =>

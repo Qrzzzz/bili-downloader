@@ -37,7 +37,7 @@ for line in sys.stdin:
         else:
             settings = {**settings, **params}
             result = settings
-    elif method in {"parse.start", "download.start", "download.retry", "diagnostics.run", "fixture.malformed_terminal"}:
+    elif method in {"parse.start", "download.start", "download.retry", "diagnostics.run", "auth.qr.start", "session.validate", "fixture.malformed_terminal"}:
         counter += 1
         active = {"id": f"ui-{counter}", "sequence": 0, "method": method}
         result = {"operation_id": active["id"]}

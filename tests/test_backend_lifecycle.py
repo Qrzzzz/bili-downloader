@@ -46,7 +46,7 @@ def test_global_failure_is_one_result_per_requested_part(tmp_path):
     parts = (VideoPart(1, "one", "url"), VideoPart(2, "two", "url"))
     request = service.DownloadRequest("url", "title", parts, AppConfig(), str(tmp_path), "bestaudio/best", "MP3", CredentialMode.ANONYMOUS, DownloadMode.AUDIO_MP3)
     with pytest.MonkeyPatch.context() as patch:
-        def fail(*args):
+        def fail(*args, **kwargs):
             raise AppError(ErrorKind.FFMPEG_MISSING, "test fixture")
         patch.setattr(service, "download_videos", fail)
         result = service.run_download(request, DownloadController(), lambda _: None, lambda _: None)

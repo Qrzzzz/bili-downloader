@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from app.auth_qr import QrLoginClient, QrLoginError, QrStatus, render_qr_png
-from app.cookies import SessionSaveError, validate_and_commit_candidate_cookies
+from app.cookies import LoginStatus, SessionSaveError, validate_and_commit_candidate_cookies
 from app.logger import redact_sensitive
 
 @dataclass(frozen=True)
@@ -16,6 +16,7 @@ class LoginOutcome:
     code: str
     friendly: str = ""
     detail: str = ""
+    status: LoginStatus | None = None
 
 
 class LoginWorkflow:
@@ -134,7 +135,7 @@ class LoginWorkflow:
                         continue
                     if validation.code == "verified":
                         self.notify("auth.qr.state", {"code": "verified", "text": "登录成功，凭据已验证并安全保存", "generation": self.generation})
-                        outcome = LoginOutcome("success")
+                        outcome = LoginOutcome("success", status=validation)
                     else:
                         outcome = self._validation_failure(validation.code, validation.text)
                     continue

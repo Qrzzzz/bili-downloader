@@ -11,7 +11,7 @@ from typing import BinaryIO, Callable
 
 from app import __version__
 from app.config import AppConfig, config_diagnostics, load_config, save_config
-from app.cookies import CredentialMode
+from app.cookies import CredentialMode, reconcile_login_status
 from app.diagnostics import check_latest_release, collect_diagnostics
 from app.downloader import DownloadBatchResult, DownloadController, DownloadMode, VideoInfoResult, fetch_thumbnail
 from app.logger import redact_sensitive
@@ -186,7 +186,7 @@ class Backend:
             generation = session_status()["generation"] if mode == CredentialMode.SAVED else None
 
             def parse() -> dict:
-                info = parse_video(value, config, mode, op.log)
+                info = parse_video(value, config, mode, op.log, generation)
                 parsed = ParsedVideo(uuid.uuid4().hex, revision, info, mode, generation)
                 with self.lock:
                     if op.cancelled.is_set() or revision != self.revision:
@@ -230,7 +230,7 @@ class Backend:
                 save_config(config)
                 self.config = config
                 request = DownloadRequest(parsed.info.source_url, parsed.info.title, parts, replace(config),
-                                          config.download_dir, selector, label, credential, mode)
+                                          config.download_dir, selector, label, credential, mode, parsed.generation)
                 batch_id, previous, revision, generation = uuid.uuid4().hex, None, self.revision, parsed.generation
             else:
                 fields(params, {"batch_id"}, {"batch_id"})
@@ -265,16 +265,25 @@ class Backend:
             def login() -> dict:
                 assert op.login is not None
                 outcome = op.login.run()
+                status = session_status()
                 if outcome.code == "success":
+                    if op.cancelled.is_set() or op.login._candidate_cancelled():
+                        outcome = replace(outcome, code="cancelled", friendly="扫码登录已取消或刷新。")
+                    elif outcome.status is not None and outcome.status.code == "verified" and outcome.status.generation:
+                        status = asdict(reconcile_login_status(outcome.status))
+                        if status["code"] != "verified":
+                            outcome = replace(outcome, code="session_changed", friendly="登录凭据已改变，请重新验证或扫码。")
+                    else:
+                        outcome = replace(outcome, code="failed", friendly="未收到有效的登录验证结果，请重新扫码。")
                     with self.lock:
                         self.invalidate()
-                return {**asdict(outcome), "status": session_status()}
+                return {**asdict(outcome), "status": status}
             work = login
         elif method == "session.validate":
             fields(params, set())
             def validate() -> dict:
                 result = validate_session()
-                if result["code"] in {"invalid", "none"}:
+                if result["code"] in {"invalid", "none", "local_pending"}:
                     with self.lock:
                         self.invalidate()
                 return result
