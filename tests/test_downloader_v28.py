@@ -115,7 +115,7 @@ def test_real_ytdlp_output_identity_separates_quality_and_reuses_same_spec(
         downloads.append((path, info["height"]))
         return True
 
-    def matches(path: Path, plan: Any, _ffmpeg: str) -> bool:
+    def matches(path: Path, plan: Any, _ffmpeg: str, _controller: Any = None) -> bool:
         expected = f"valid-mp4-{plan.requested_height}".encode()
         return path.is_file() and path.read_bytes() == expected
 
@@ -218,7 +218,7 @@ def test_verified_existing_mp3_is_reused_without_downloading_source_media(
     monkeypatch.setattr(
         module,
         "_matches_output_spec",
-        lambda path, candidate, _ffmpeg: (
+        lambda path, candidate, _ffmpeg, _controller=None: (
             candidate.mode is module.DownloadMode.AUDIO_MP3
             and path.is_file()
             and path.read_bytes() == original
@@ -270,7 +270,7 @@ def test_unrelated_same_identity_file_is_preserved_and_uses_collision_suffix(
     monkeypatch.setattr(
         module,
         "_matches_output_spec",
-        lambda path, plan, _ffmpeg: path.read_bytes() == f"valid-mp4-{plan.requested_height}".encode(),
+        lambda path, plan, _ffmpeg, _controller=None: path.read_bytes() == f"valid-mp4-{plan.requested_height}".encode(),
     )
     logs: list[str] = []
 

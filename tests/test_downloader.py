@@ -1043,16 +1043,16 @@ def test_insufficient_disk_space_is_classified_before_any_download(
     _install_scenario(downloader, monkeypatch, scenario)
     monkeypatch.setattr(downloader.shutil, "disk_usage", lambda _path: SimpleNamespace(free=0))
 
-    with pytest.raises(downloader.AppError) as caught:
-        downloader.download_videos(
-            parts,
-            _config(downloader, tmp_path),
-            str(tmp_path / "output"),
-            "bestvideo[height=1080]+bestaudio/best[height=1080]",
-            lambda _status: None,
-        )
+    result = downloader.download_videos(
+        parts,
+        _config(downloader, tmp_path),
+        str(tmp_path / "output"),
+        "bestvideo[height=1080]+bestaudio/best[height=1080]",
+        lambda _status: None,
+    )
 
-    assert caught.value.kind is downloader.ErrorKind.DISK_FULL
+    assert len(result.failed) == len(parts)
+    assert all(item.error.kind is downloader.ErrorKind.DISK_FULL for item in result.failed)
     assert scenario.calls == [(part.url, False) for part in parts]
 
 
