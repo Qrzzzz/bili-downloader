@@ -69,15 +69,18 @@ def boundary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace
         if "-show_entries" in command:
             output = Path(command[-1])
             if output.suffix.lower() == ".mp3":
-                payload = '{"format":{"format_name":"mp3"},"streams":[{"codec_type":"audio"}]}'
+                payload = '{"format":{"format_name":"mp3"},"streams":[{"codec_type":"audio","bit_rate":"192000"}]}'
             else:
                 payload = ('{"format":{"format_name":"mov,mp4,m4a,3gp,3g2,mj2"},'
                            '"streams":[{"codec_type":"video","height":1080},{"codec_type":"audio"}]}')
             return SimpleNamespace(returncode=0, stdout=payload, stderr="")
+        if "-xerror" in command:
+            assert "-err_detect" in command and "explode" in command
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
         if "-i" in command:
             output = Path(command[-1])
             if output.suffix.lower() == ".mp3":
-                stderr = "Input #0, mp3, from fixture:\n  Stream #0:0: Audio: mp3"
+                stderr = "Input #0, mp3, from fixture:\n  Stream #0:0: Audio: mp3, 44100 Hz, stereo, 192 kb/s"
             else:
                 stderr = ("Input #0, mov,mp4,m4a,3gp,3g2,mj2, from fixture:\n"
                           "  Stream #0:0: Video: h264, yuv420p, 1920x1080, 30 fps\n"
@@ -104,6 +107,27 @@ def boundary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace
 
     monkeypatch.setattr(utils.subprocess, "run", run)
     monkeypatch.setattr(Popen, "run", popen_run)
+
+    class ProbeProcess:
+        def __init__(self, command, *, stdout, stderr, **kwargs):
+            result = run(command, **kwargs)
+            stdout.write(result.stdout.encode())
+            stderr.write(result.stderr.encode())
+            self.returncode = result.returncode
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def wait(self, **kwargs):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(subprocess, "Popen", ProbeProcess)
 
     class LocalYoutubeDL(YoutubeDL):
         def __init__(self, opts: dict) -> None:
