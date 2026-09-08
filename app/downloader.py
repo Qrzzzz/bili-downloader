@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
@@ -196,6 +197,7 @@ OUTPUT_TITLE_MAX_BYTES = 120
 OUTPUT_ID_MAX_BYTES = 48
 OUTPUT_COLLISION_LIMIT = 1000
 MEDIA_PROBE_TIMEOUT = 10.0
+MEDIA_VERIFY_TIMEOUT = 300.0
 
 
 def base_ydl_options(
@@ -979,6 +981,7 @@ class _MediaMetadata:
     has_video: bool
     video_heights: tuple[int, ...]
     has_audio: bool
+    audio_bitrates: tuple[int, ...] = ()
 
 
 def _truncate_filename_component(value: str, maximum_bytes: int) -> str:
@@ -1012,24 +1015,51 @@ def _output_stem(planned: PlannedPart, plan: DownloadPlan, collision: int = 1) -
     return f"P{planned.part.index:03d}-{title}-{output_id}-[{identity}]{suffix}"
 
 
-def _run_media_probe(command: list[str]) -> subprocess.CompletedProcess[str] | None:
+def _run_media_probe(
+    command: list[str], controller: DownloadController | None = None,
+    *, timeout: float = MEDIA_PROBE_TIMEOUT,
+) -> subprocess.CompletedProcess[str] | None:
+    # File-backed output avoids accumulating decoder/probe output in memory.
+    # Decode verification uses -v fatal and -xerror, so corrupt input stops early.
     try:
-        return subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=MEDIA_PROBE_TIMEOUT,
-            check=False,
-            stdin=subprocess.DEVNULL,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
+        with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+            if controller and controller.cancelled:
+                raise DownloadCancelled("用户已取消媒体验证")
+            with subprocess.Popen(
+                command, stdout=stdout, stderr=stderr, stdin=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            ) as process:
+                deadline = time.monotonic() + timeout
+                try:
+                    while True:
+                        if controller and controller.cancelled:
+                            raise DownloadCancelled("用户已取消媒体验证")
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            return None
+                        try:
+                            process.wait(timeout=min(0.1, remaining))
+                            break
+                        except subprocess.TimeoutExpired:
+                            continue
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait()
+                stdout.seek(0)
+                stderr.seek(0)
+                return subprocess.CompletedProcess(
+                    command, process.returncode,
+                    stdout.read(65536).decode("utf-8", errors="replace"),
+                    stderr.read(65536).decode("utf-8", errors="replace"),
+                )
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None
 
 
-def _probe_media(path: Path, ffmpeg_path: str) -> _MediaMetadata | None:
+def _probe_media(
+    path: Path, ffmpeg_path: str, controller: DownloadController | None = None,
+) -> _MediaMetadata | None:
     selected_ffmpeg = Path(ffmpeg_path).resolve()
     probe_name = "ffprobe.exe" if selected_ffmpeg.suffix.lower() == ".exe" else "ffprobe"
     selected_ffprobe = selected_ffmpeg.with_name(probe_name)
@@ -1040,11 +1070,11 @@ def _probe_media(path: Path, ffmpeg_path: str) -> _MediaMetadata | None:
                 "-v",
                 "error",
                 "-show_entries",
-                "format=format_name:stream=codec_type,height",
+                "format=format_name:stream=codec_type,height,bit_rate",
                 "-of",
                 "json",
                 str(path),
-            ]
+            ], controller,
         )
         if completed is not None and completed.returncode == 0:
             try:
@@ -1072,12 +1102,14 @@ def _probe_media(path: Path, ffmpeg_path: str) -> _MediaMetadata | None:
                     any(isinstance(stream, dict) and stream.get("codec_type") == "video" for stream in streams),
                     heights,
                     any(isinstance(stream, dict) and stream.get("codec_type") == "audio" for stream in streams),
+                    tuple(int(stream.get("bit_rate") or 0) for stream in streams
+                          if isinstance(stream, dict) and stream.get("codec_type") == "audio"),
                 )
             except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
                 pass
 
     completed = _run_media_probe(
-        [str(selected_ffmpeg), "-hide_banner", "-nostdin", "-i", str(path)]
+        [str(selected_ffmpeg), "-hide_banner", "-nostdin", "-i", str(path)], controller,
     )
     if completed is None:
         return None
@@ -1102,21 +1134,45 @@ def _probe_media(path: Path, ffmpeg_path: str) -> _MediaMetadata | None:
     )
     if not containers and not video_lines and " Audio: " not in output:
         return None
-    return _MediaMetadata(containers, bool(video_lines), heights, " Audio: " in output)
+    audio_lines = [line for line in output.splitlines() if " Audio: " in line]
+    bitrates = tuple(
+        int(match.group(1)) * 1000 if match else 0
+        for line in audio_lines
+        for match in [re.search(r"\b(\d+) kb/s\b", line)]
+    )
+    return _MediaMetadata(containers, bool(video_lines), heights, bool(audio_lines), bitrates)
 
 
-def _matches_output_spec(path: Path, plan: DownloadPlan, ffmpeg_path: str) -> bool:
-    metadata = _probe_media(path, ffmpeg_path)
+def _matches_output_spec(
+    path: Path, plan: DownloadPlan, ffmpeg_path: str,
+    controller: DownloadController | None = None,
+) -> bool:
+    before = path.stat()
+    metadata = _probe_media(path, ffmpeg_path, controller)
     if metadata is None:
         return False
     if plan.mode is DownloadMode.AUDIO_MP3:
-        return "mp3" in metadata.containers and metadata.has_audio and not metadata.has_video
-    mp4_containers = {"mov", "mp4", "m4a", "3gp", "3g2", "mj2"}
-    if not metadata.containers.intersection(mp4_containers):
-        return False
-    if not metadata.has_video or not metadata.has_audio:
-        return False
-    return plan.requested_height is None or plan.requested_height in metadata.video_heights
+        if not ("mp3" in metadata.containers and metadata.has_audio and not metadata.has_video
+                and metadata.audio_bitrates == (192000,)):
+            return False
+    else:
+        mp4_containers = {"mov", "mp4", "m4a", "3gp", "3g2", "mj2"}
+        if not metadata.containers.intersection(mp4_containers):
+            return False
+        if not metadata.has_video or not metadata.has_audio:
+            return False
+        if plan.requested_height is not None and plan.requested_height not in metadata.video_heights:
+            return False
+    completed = _run_media_probe(
+        [str(Path(ffmpeg_path).resolve()), "-hide_banner", "-nostdin", "-v", "fatal",
+         "-xerror", "-err_detect", "explode", "-i", str(path),
+         "-map", "0:a?", "-map", "0:v?", "-f", "null", "-"],
+        controller, timeout=MEDIA_VERIFY_TIMEOUT,
+    )
+    after = path.stat()
+    return (completed is not None and completed.returncode == 0
+            and before.st_size > 0
+            and (before.st_size, before.st_mtime_ns) == (after.st_size, after.st_mtime_ns))
 
 
 def _choose_output_target(
@@ -1125,14 +1181,17 @@ def _choose_output_target(
     plan: DownloadPlan,
     ffmpeg_path: str,
     emitter: LogSink | None,
+    controller: DownloadController | None = None,
 ) -> tuple[str, Path, bool]:
     extension = "mp3" if plan.mode is DownloadMode.AUDIO_MP3 else "mp4"
     for collision in range(1, OUTPUT_COLLISION_LIMIT + 1):
+        if controller and controller.cancelled:
+            raise DownloadCancelled("用户已取消媒体验证")
         stem = _output_stem(planned, plan, collision)
         final_path = Path(target_dir, f"{stem}.{extension}")
         try:
             exists = final_path.exists()
-            valid_existing = final_path.is_file() and _matches_output_spec(final_path, plan, ffmpeg_path)
+            valid_existing = final_path.is_file() and _matches_output_spec(final_path, plan, ffmpeg_path, controller)
         except OSError:
             exists = True
             valid_existing = False
@@ -1199,7 +1258,6 @@ def download_videos(
                 mode=mode,
                 ffmpeg_path=ffmpeg_path,
             )
-            _check_disk_space(target_dir, plan)
             progress = _ProgressAggregator(plan, progress_hook)
             abort_error: ErrorClassification | None = None
 
@@ -1227,50 +1285,54 @@ def download_videos(
                 def final_path_hook(filename: str) -> None:
                     captured.append(filename)
 
-                output_stem, expected_output, reused_existing = _choose_output_target(
-                    target_dir,
-                    planned,
-                    plan,
-                    ffmpeg_path,
-                    emitter,
-                )
-                if reused_existing:
-                    existing_path = str(expected_output.resolve())
-                    if emitter:
-                        emitter(f"P{part.index} 已验证并复用相同规格的现有媒体。")
-                    results.append(
-                        PartDownloadResult(part, PartDownloadStatus.COMPLETED, (existing_path,))
-                    )
-                    progress.terminal(ordinal, part, "completed", complete=True)
-                    continue
-                escaped_stem = output_stem.replace("%", "%%")
-                outtmpl = os.path.join(target_dir, f"{escaped_stem}.%(ext)s")
-                opts = base_ydl_options(config, emitter, cookiefile, ffmpeg_path)
-                opts.update(
-                    {
-                        "format": planned.selector,
-                        "outtmpl": {"default": outtmpl},
-                        "continuedl": True,
-                        "retries": 5,
-                        "fragment_retries": 5,
-                        "progress_hooks": [download_hook],
-                        "postprocessor_hooks": [postprocessor_hook],
-                        "post_hooks": [final_path_hook],
-                        "paths": {"home": target_dir},
-                        "noplaylist": True,
-                    }
-                )
-                if mode is DownloadMode.AUDIO_MP3:
-                    opts["postprocessors"] = [
-                        {
-                            "key": "FFmpegExtractAudio",
-                            "preferredcodec": "mp3",
-                            "preferredquality": "192",
-                        }
-                    ]
-                else:
-                    opts["merge_output_format"] = "mp4"
                 try:
+                    output_stem, expected_output, reused_existing = _choose_output_target(
+                        target_dir,
+                        planned,
+                        plan,
+                        ffmpeg_path,
+                        emitter,
+                        controller,
+                    )
+                    if reused_existing:
+                        existing_path = str(expected_output.resolve())
+                        if emitter:
+                            emitter(f"P{part.index} 已验证并复用相同规格的现有媒体。")
+                        results.append(
+                            PartDownloadResult(part, PartDownloadStatus.COMPLETED, (existing_path,))
+                        )
+                        progress.terminal(ordinal, part, "completed", complete=True)
+                        continue
+                    # Downloads run sequentially: reserve only this new item, using
+                    # current free space after earlier items have finished.
+                    _check_disk_space(target_dir, DownloadPlan((planned,), plan.requested_height, mode))
+                    escaped_stem = output_stem.replace("%", "%%")
+                    outtmpl = os.path.join(target_dir, f"{escaped_stem}.%(ext)s")
+                    opts = base_ydl_options(config, emitter, cookiefile, ffmpeg_path)
+                    opts.update(
+                        {
+                            "format": planned.selector,
+                            "outtmpl": {"default": outtmpl},
+                            "continuedl": True,
+                            "retries": 5,
+                            "fragment_retries": 5,
+                            "progress_hooks": [download_hook],
+                            "postprocessor_hooks": [postprocessor_hook],
+                            "post_hooks": [final_path_hook],
+                            "paths": {"home": target_dir},
+                            "noplaylist": True,
+                        }
+                    )
+                    if mode is DownloadMode.AUDIO_MP3:
+                        opts["postprocessors"] = [
+                            {
+                                "key": "FFmpegExtractAudio",
+                                "preferredcodec": "mp3",
+                                "preferredquality": "192",
+                            }
+                        ]
+                    else:
+                        opts["merge_output_format"] = "mp4"
                     if emitter:
                         emitter(f"开始下载 P{part.index}：{sanitize_windows_filename(part.title)}")
                     with _youtube_dl(opts) as ydl:
@@ -1279,7 +1341,7 @@ def download_videos(
                     expected_path = expected_output.resolve()
                     if str(expected_path) not in reported_files or not expected_path.is_file():
                         raise RuntimeError("下载结束，但未捕获到当前规格的最终输出文件。")
-                    if not _matches_output_spec(expected_path, plan, ffmpeg_path):
+                    if not _matches_output_spec(expected_path, plan, ffmpeg_path, controller):
                         state = "已有" if reused_existing else "新生成"
                         raise RuntimeError(f"{state}输出无法验证为当前请求的媒体规格。")
                     files = (str(expected_path),)

@@ -15,7 +15,7 @@
 <p>
   <strong>Navigation</strong><br/>
   <a href="https://github.com/Qrzzzz/bili-downloader/releases/latest">Download</a> ·
-  <a href="./docs/releases/v2.9.md">Release Notes</a> ·
+  <a href="./docs/releases/v2.10.md">Release Notes</a> ·
   <a href="#features">Features</a> ·
   <a href="./docs/architecture/v2.5-winui.md">Architecture</a> ·
   <a href="./SECURITY.md">Security</a> ·
@@ -47,24 +47,24 @@
 
 Download the latest stable release from [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest).
 
-The current stable release is **Bili Downloader Lite v2.9**.
+The current release is **Bili Downloader Lite v2.10**. See the [release notes](./docs/releases/v2.10.md) and [validation record](./docs/validation/v2.10.md).
 
 | File                              | Purpose                                 |
 | --------------------------------- | --------------------------------------- |
-| `BiliDownloader.v2.9.win-x64.zip` | Complete Windows x64 application        |
-| `BiliDownloader.v2.9.sbom.json`   | Software bill of materials              |
+| `BiliDownloader.v2.10.win-x64.zip` | Complete Windows x64 application        |
+| `BiliDownloader.v2.10.sbom.json`   | Software bill of materials              |
 | `SHA256SUMS`                      | SHA-256 checksums for release artifacts |
 
 ### Installation
 
-1. Download `BiliDownloader.v2.9.win-x64.zip`.
+1. Download `BiliDownloader.v2.10.win-x64.zip`.
 2. **Fully extract** the ZIP instead of launching the executable from inside the archive.
 3. Keep the main executable, backend executable, and runtime files in their original directory structure.
 4. Configure FFmpeg as described below.
 5. Run:
 
 ```text
-BiliDownloader.v2.9.exe
+BiliDownloader.v2.10.exe
 ```
 
 The release package includes the required **.NET, Windows App SDK, and Python runtimes**. End users do not need to install these separately.
@@ -76,7 +76,7 @@ Bili Downloader Lite **does not download, install, or bundle FFmpeg**.
 Obtain `ffmpeg.exe` yourself from a lawful and trusted source, then either place it at:
 
 ```text
-BiliDownloader.v2.9.exe
+BiliDownloader.v2.10.exe
 tools/
 └── ffmpeg.exe
 ```
@@ -106,18 +106,13 @@ On supported Windows 11 systems, the application can use native Windows effects 
 > [!NOTE]
 > The application only shows formats that are **actually available to the current account, video, region, and platform policy**. Signing in does not grant access to content or qualities the account is not entitled to use.
 
-## ✨ What's new in v2.9
+## ✨ What's new in v2.10
 
-v2.9 focuses on credential consistency across multiple application instances and QR-login state transitions:
+* Existing media and newly generated output must pass cancellable, time-limited full decoding checks. MP3 audio must be 192 kbps; damaged or incompatible files are preserved and a new name is selected.
+* A later part's output preparation failure preserves earlier successful results and saved paths. Retrying failed parts merges correctly with completed items.
+* Reusable files bypass the source-media disk budget. Each new sequential download checks the current free space before it starts.
 
-* Parsing, downloading, and retries no longer silently switch to another generation of credentials after another instance clears or replaces the saved session.
-* Requests that depend on a changed authenticated session explicitly require a fresh parse.
-* The Account page immediately reflects a successful QR verification and committed login state.
-* Cancellation, refreshes, or credential changes before the terminal QR state can no longer produce a false success state.
-* If credentials are cleared, corrupted, or replaced during verification, late results from the old verification transaction are discarded.
-* Anonymous mode, multi-instance support, DPAPI storage, temporary-cookie cleanup, MP4 / MP3 behavior, and the FFmpeg boundary remain unchanged.
-
-See the full [v2.9 release notes](./docs/releases/v2.9.md) and [v2.9 validation record](./docs/validation/v2.9.md).
+See the [v2.10 release notes](./docs/releases/v2.10.md) and [validation record](./docs/validation/v2.10.md).
 
 <a id="features"></a>
 
@@ -431,8 +426,8 @@ from the application directory. It does not search the system `PATH` for an arbi
 
 | Document                                                | Contents                                             |
 | ------------------------------------------------------- | ---------------------------------------------------- |
-| [v2.9 Release Notes](./docs/releases/v2.9.md)           | Current release changes                              |
-| [v2.9 Validation](./docs/validation/v2.9.md)            | Validation record for the current release            |
+| [v2.10 Release Notes](./docs/releases/v2.10.md)           | Current release changes                              |
+| [v2.10 Validation](./docs/validation/v2.10.md)            | Validation record for the current release            |
 | [WinUI Architecture](./docs/architecture/v2.5-winui.md) | Native Windows architecture and migration boundary   |
 | [IPC v1](./docs/architecture/ipc-v1.md)                 | WinUI ↔ Python protocol                              |
 | [Security Policy](./SECURITY.md)                        | Credentials, sensitive data, vulnerability reporting |
@@ -536,7 +531,7 @@ The current build output is written to:
 
 ```text
 dist\
-└── BiliDownloader.v2.9.win-x64\
+└── BiliDownloader.v2.10.win-x64\
 ```
 
 with a corresponding ZIP candidate.
@@ -545,7 +540,7 @@ Run the packaged smoke test with:
 
 ```powershell
 .\tools\package_smoke.ps1 `
-  -Executable .\dist\BiliDownloader.v2.9.win-x64\BiliDownloader.v2.9.exe
+  -Executable .\dist\BiliDownloader.v2.10.win-x64\BiliDownloader.v2.10.exe
 ```
 
 PR / main CI runs Python regression tests, WinUI compilation, and C# pipeline tests.
