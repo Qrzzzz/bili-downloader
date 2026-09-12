@@ -47,7 +47,7 @@
 
 Download the latest stable release from [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest).
 
-The current source is the **v3.0 candidate**, adding persistent tasks, parallel downloads, batch input, and explicit recovery after restart. Public availability is determined by GitHub Releases. See the [release notes](./docs/releases/v3.0.md) and [validation record](./docs/validation/v3.0.md). The planned 3.0 asset names are:
+**v3.0** adds persistent tasks, parallel downloads, batch input, and explicit recovery after restart. Get published builds from GitHub Releases. See the [release notes](./docs/releases/v3.0.md) and [validation record](./docs/validation/v3.0.md). The 3.0 asset names are:
 
 | File                              | Purpose                                 |
 | --------------------------------- | --------------------------------------- |

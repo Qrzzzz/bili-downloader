@@ -32,9 +32,9 @@
 
 ## 📦 下载与使用
 
-当前源码为 **v3.0 候选**：新增独立任务页面、并行下载、多链接批量添加及重启恢复。见 [3.0 发布说明](./docs/releases/v3.0.md) 和 [验证记录](./docs/validation/v3.0.md)。
+**v3.0** 新增独立任务页面、并行下载、多链接批量添加及重启恢复。见 [3.0 发布说明](./docs/releases/v3.0.md) 和 [验证记录](./docs/validation/v3.0.md)。
 
-Windows x64 正式版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest) 获取。3.0 发布时的资产名称为：
+Windows x64 正式版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest) 获取。3.0 的资产名称为：
 
 * 完整应用包：`BiliDownloader.v3.0.win-x64.zip`
 * 软件物料清单：`BiliDownloader.v3.0.sbom.json`
