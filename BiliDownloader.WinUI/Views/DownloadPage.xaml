@@ -21,14 +21,15 @@
             <StackPanel Style="{StaticResource PageContentStyle}" Width="{Binding ViewportWidth, ElementName=PageScroll}">
                 <StackPanel Spacing="6">
                     <TextBlock Text="下载" Style="{ThemeResource TitleTextBlockStyle}"/>
-                    <TextBlock Text="粘贴视频链接，选择规格，保存到本机。" Style="{StaticResource SecondaryTextStyle}"/>
+                    <TextBlock Text="粘贴视频链接或分享文本，选择规格，保存到本机。" Style="{StaticResource SecondaryTextStyle}"/>
                 </StackPanel>
                 <Border Style="{StaticResource SurfaceCardStyle}">
                     <StackPanel Spacing="12">
                         <Grid ColumnSpacing="12">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <TextBox x:Name="InputBox" Header="视频链接或 BV / av 号" PlaceholderText="https://www.bilibili.com/video/…"
-                                     Text="{Binding Input, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" KeyDown="Input_KeyDown"
+                            <TextBox x:Name="InputBox" Header="视频链接、分享文本或 BV / av 号" PlaceholderText="可直接粘贴含标题和链接的分享文本"
+                                     AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="144" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     Text="{Binding Input, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PreviewKeyDown="Input_KeyDown"
                                      IsEnabled="{Binding CanEditInput}" AutomationProperties.AutomationId="VideoInput"/>
                             <Button Grid.Column="1" Content="解析" Click="Parse_Click" VerticalAlignment="Bottom"
                                     Style="{StaticResource AccentButtonStyle}" IsEnabled="{Binding CanParse}" AutomationProperties.AutomationId="ParseButton"/>

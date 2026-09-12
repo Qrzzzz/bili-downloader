@@ -87,6 +87,22 @@ public static class NativeAcceptance
         var initialSize = window.AppWindow.Size;
         var themes = new List<string>();
         await Task.Delay(250);
+        root.RequestedTheme = ElementTheme.Light;
+        var inputBox = Elements(frame).OfType<TextBox>().First(e => AutomationProperties.GetAutomationId(e) == "VideoInput");
+        const string shareText = "【华强卖瓜-大厂版】\nhttps://www.bilibili.com/video/BV1kkbC6eEgm/?share_source=copy_web";
+        inputBox.Text = shareText;
+        await Task.Delay(50);
+        Check(inputBox.AcceptsReturn && model.Input.Replace("\r\n", "\n").Replace('\r', '\n') == shareText && model.CanParse,
+            "multiline_share_text_reaches_parse_input");
+        await Snapshot("share-text-light", true);
+        root.RequestedTheme = ElementTheme.Dark;
+        window.AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(640 * root.XamlRoot.RasterizationScale), (int)(480 * root.XamlRoot.RasterizationScale)));
+        await Task.Delay(250);
+        await Snapshot("share-text-narrow-dark", true);
+        window.AppWindow.Resize(initialSize);
+        root.RequestedTheme = originalTheme;
+        model.Input = "";
+        await Task.Delay(250);
         foreach (var theme in new[] { ElementTheme.Light, ElementTheme.Dark })
         {
             root.RequestedTheme = theme;

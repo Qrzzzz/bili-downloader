@@ -1,9 +1,9 @@
-name: Release v2.11
+name: Release v2.12
 
 on:
   push:
     tags:
-      - v2.11
+      - v2.12
 
 permissions:
   contents: read
@@ -22,10 +22,10 @@ jobs:
       attestations: write
     env:
       PYTHONUTF8: "1"
-      RELEASE_VERSION: "2.11"
-      RELEASE_TAG: v2.11
-      RELEASE_TITLE: Bili Downloader Lite v2.11
-      RELEASE_ASSET: BiliDownloader.v2.11.win-x64.zip
+      RELEASE_VERSION: "2.12"
+      RELEASE_TAG: v2.12
+      RELEASE_TITLE: Bili Downloader Lite v2.12
+      RELEASE_ASSET: BiliDownloader.v2.12.win-x64.zip
       GH_TOKEN: ${{ github.token }}
 
     steps:
@@ -88,8 +88,8 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
-            dist/BiliDownloader.v2.11.win-x64.zip
-            dist/BiliDownloader.v2.11.sbom.json
+            dist/BiliDownloader.v2.12.win-x64.zip
+            dist/BiliDownloader.v2.12.sbom.json
             dist/SHA256SUMS
 
       - name: Verify attestations before publication
@@ -105,7 +105,7 @@ jobs:
       - name: Publish GitHub Release
         shell: powershell
         run: |
-          gh release create $env:RELEASE_TAG "dist/$env:RELEASE_ASSET" "dist/BiliDownloader.v$env:RELEASE_VERSION.sbom.json" "dist/SHA256SUMS" --verify-tag --title $env:RELEASE_TITLE --notes-file "docs/releases/v2.11.md" --latest
+          gh release create $env:RELEASE_TAG "dist/$env:RELEASE_ASSET" "dist/BiliDownloader.v$env:RELEASE_VERSION.sbom.json" "dist/SHA256SUMS" --verify-tag --title $env:RELEASE_TITLE --notes-file "docs/releases/v2.12.md" --latest
           if ($LASTEXITCODE -ne 0) { throw "GitHub Release creation failed with exit code $LASTEXITCODE" }
 
       # These are the same local files verified above; API digests bind the

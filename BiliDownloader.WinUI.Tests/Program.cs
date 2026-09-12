@@ -47,8 +47,8 @@ try
         var c = Client("real"); c.Start();
         try
         {
-            var hello = Protocol.Read<Hello>(await c.RequestAsync("hello", new { protocol_version = 1, frontend_version = "2.11" }));
-            Check(hello.BackendVersion == "2.11" && hello.ProtocolVersion == 1, "Version negotiation failed");
+            var hello = Protocol.Read<Hello>(await c.RequestAsync("hello", new { protocol_version = 1, frontend_version = "2.12" }));
+            Check(hello.BackendVersion == "2.12" && hello.ProtocolVersion == 1, "Version negotiation failed");
             Check(Directory.EnumerateDirectories(profile, "run-markers", SearchOption.AllDirectories).SelectMany(Directory.EnumerateFiles).Any(), "Backend did not acquire a running marker");
             string? operation = null;
             await Throws<BackendException>(() => c.RunAsync("parse.start", new { input = "invalid", credential_mode = "anonymous" }, id => operation = id));
@@ -67,7 +67,7 @@ try
             c.Event += e => events.Enqueue(e.Name); c.Start();
             try
             {
-                await c.RequestAsync("hello", new { protocol_version = 1, frontend_version = "2.11" });
+                await c.RequestAsync("hello", new { protocol_version = 1, frontend_version = "2.12" });
                 string? operation = null;
                 await Throws<BackendException>(() => c.RunAsync("diagnostics.run", null, id =>
                 {

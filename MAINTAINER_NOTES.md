@@ -6,6 +6,13 @@
 - PR/main 执行 Python 回归、真实 WinUI 编译和 C# 管道测试；最终目录/ZIP 组包、package smoke 和归档审计集中在 Release。
 - 真实扫码、下载、界面截图和许可证复核按相关改动触发；公网探测仅手动运行。无关变更不要求重复人工验收。
 
+## v2.12 发布边界
+
+- 从 main `bbd842c` 开发分享文本提取，分支 `codex/v2.12-share-text`；用户已授权清理临时产物并推送发布，按 PR、CI、合并、注释标签及 Release 资产核验顺序执行。源码、程序集、界面与 Release 工作流目标同步为 2.12 / v2.12。
+- `normalize_video_input` 在服务入口提取完整 URL token，再调用原有官方 HTTPS 校验及 canonicalization；不从被拒绝 URL 中回退提取 BV/av，也不为文本扫描发送请求。只有纯输入继续接受 BV/av 号。
+- Markdown 中重复 URL 按去除追踪参数、保留分 P 后的地址去重；多个不同地址明确拒绝，不增加批量视频下载或短链联网去重。
+- 下载页保持原有解析、取消、输入修订与旧结果失效流程；输入框支持多行分享文本。回归与外部验证边界见 [2.12 验证记录](./docs/validation/v2.12.md)。
+
 ## v2.11 发布边界
 
 - 从 main `b4b5ccb` 修复 #28、#29；源码、程序集、窗口及 Release 目标同步为 2.11 / v2.11。用户已授权推送并发布，按 PR、CI、合并、注释标签和 Release 资产核验顺序执行；本地证据见 [2.11 验证记录](./docs/validation/v2.11.md)。

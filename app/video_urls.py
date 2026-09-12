@@ -10,6 +10,12 @@ BV_RE = re.compile(r"^(BV[0-9A-Za-z]{8,})$", re.IGNORECASE)
 AV_RE = re.compile(r"^(av\d+)$", re.IGNORECASE)
 BVID_PATH_RE = re.compile(r"^/video/(BV[0-9A-Za-z]{8,})/?$", re.IGNORECASE)
 AVID_PATH_RE = re.compile(r"^/video/(?:av)?(\d+)/?$", re.IGNORECASE)
+# Match complete URL tokens, including untrusted hosts, so a Bilibili URL inside
+# another URL's path/query cannot be mistaken for a standalone shared link.
+SHARED_URL_RE = re.compile(
+    r"(?<![0-9A-Za-z_/:?&=%@.+\\-])https?://[^\s<>\"'`\[\](){}，。；：！？、【】（）《》〈〉「」『』“”‘’]+",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -96,9 +102,11 @@ def canonicalize_video_url(url: str) -> ResolvedVideoUrl:
 
 
 def normalize_video_input(raw: str) -> str:
+    """Accept one video ID, URL, or share text containing one distinct URL."""
+
     value = raw.strip()
     if not value:
-        raise ValueError("请输入 Bilibili 视频链接或 BV/av 号。")
+        raise ValueError("请输入 Bilibili 视频链接、分享文本或 BV/av 号。")
 
     bv = BV_RE.fullmatch(value)
     if bv:
@@ -107,6 +115,28 @@ def normalize_video_input(raw: str) -> str:
     if av:
         return f"https://www.bilibili.com/video/{av.group(1)}"
 
+    urls: set[str] = set()
+    first_error: ValueError | None = None
+    for match in SHARED_URL_RE.finditer(value):
+        candidate = match.group().rstrip(".,;:!?")
+        # Common Markdown escapes in copied share query parameters. Do not
+        # decode percent escapes or search for an ID inside a rejected URL.
+        candidate = re.sub(r"\\([_&])", r"\1", candidate)
+        try:
+            urls.add(_normalize_input_url(candidate))
+        except ValueError as exc:
+            if first_error is None:
+                first_error = exc
+        if len(urls) > 1:
+            raise ValueError("文本中包含多个不同的视频链接，请只保留一个后再解析。")
+    if urls:
+        return urls.pop()
+    if first_error is not None:
+        raise first_error
+    raise ValueError("未找到有效的 Bilibili 视频链接，请粘贴分享文本、完整链接或 BV/av 号。")
+
+
+def _normalize_input_url(value: str) -> str:
     parsed, host = _official_https_url(value, allow_short=True)
     if host == "b23.tv":
         if not parsed.path or parsed.path == "/":
