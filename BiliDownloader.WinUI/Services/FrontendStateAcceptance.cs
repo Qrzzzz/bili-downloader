@@ -75,6 +75,30 @@ internal static class FrontendStateAcceptance
             Check(!session.CancelRequested && model.CanEditInput && model.ResultVisibility == Visibility.Visible, "cancel_finishes_in_inline_result");
             Check(model.OutputVisibility == Visibility.Collapsed && model.DetailVisibility == Visibility.Visible, "no_empty_file_picker");
 
+            // These placeholder paths exercise the UI result contract only. Real
+            // MP4/MP3 decode and cancellation checks live in test_downloader_v211.py.
+            string resultFixtures = Path.Combine(Environment.GetEnvironmentVariable("BILI_ACCEPTANCE_OUTPUT") ?? Path.GetTempPath(), "v211-result-fixtures");
+            Directory.CreateDirectory(resultFixtures);
+            foreach (string extension in new[] { "mp4", "mp3" })
+            {
+                model.ApplyVideo(video with { Parts = [new(1, "第一部分", 45, "p1"), new(2, "第二部分", 45, "p2"), new(3, "第三部分", 45, "p3")] });
+                model.SelectedParts.UnionWith([1, 2, 3]); model.ModeIndex = extension == "mp3" ? 1 : 0;
+                string first = Path.Combine(resultFixtures, "first." + extension), second = Path.Combine(resultFixtures, "second." + extension);
+                await File.WriteAllTextAsync(first, "UI fixture, not media");
+                await File.WriteAllTextAsync(second, "UI fixture, not media");
+                download = model.DownloadAsync(); await WaitUntil(() => session.CanCancel);
+                await session.CancelAsync();
+                await CompleteAsync(new BatchResult("deferred-" + extension, "cancelled", [first, second], false,
+                    [new(1, "第一部分", "completed", [first], null), new(2, "第二部分", "completed", [second], null), new(3, "第三部分", "cancelled", [], null)], resultFixtures));
+                await download;
+                Check(!session.Busy && model.ResultVisibility == Visibility.Visible && model.OutputFiles.SequenceEqual([first, second]) &&
+                      model.Results.Select(p => p.Status).SequenceEqual(["completed", "completed", "cancelled"]), extension + "_deferred_cancel_preserves_two_results");
+                model.SelectedOutput = second;
+                Check(model.CanOpenFile && model.OutputPickerVisibility == Visibility.Visible && !model.CanRetry,
+                      extension + "_safe_current_file_remains_openable");
+                if (snapshot is not null) await snapshot(model, "result-deferred-" + extension);
+            }
+
             var operation = session.RunAsync("diagnostics.run"); await WaitUntil(() => session.CanCancel);
             Check(model.ProgressVisibility == Visibility.Collapsed && model.OtherTaskStatus.Contains("诊断") && !model.CanCancel, "unrelated_task_has_accurate_status");
             await CompleteAsync(new { }); await operation;
@@ -136,8 +160,40 @@ internal static class FrontendStateAcceptance
             await session.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8));
             Check(!session.CanNavigate && !model.CanEditInput && !model.CanDownload && !settings.CanSave, "closing_disables_interaction");
             Check(!session.Busy, "malformed_terminal_shutdown_finishes");
+            await CheckWorkerFailuresAsync(dispatcher, python, source, checks);
             return checks.ToArray();
         }
         finally { if (!session.Closing) await session.ShutdownAsync(); }
+    }
+
+    private static async Task CheckWorkerFailuresAsync(DispatcherQueue dispatcher, string python, string source, List<string> checks)
+    {
+        foreach (string scenario in new[] { "worker_construct", "worker_start" })
+        {
+            var client = new BackendClient(() =>
+            {
+                var start = new ProcessStartInfo(python) { WorkingDirectory = source, UseShellExecute = false, CreateNoWindow = true,
+                    RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+                start.ArgumentList.Add(Path.Combine(source, "tests", "fixtures", "backend_fault_peer.py"));
+                start.ArgumentList.Add(scenario); start.Environment["PYTHONUTF8"] = "1";
+                return Process.Start(start)!;
+            });
+            var session = new ApplicationSession(client) { Dispatcher = dispatcher };
+            try
+            {
+                await session.InitializeAsync();
+                Task failed = session.RunAsync("diagnostics.run");
+                if (!session.Busy) throw new InvalidOperationException("Worker fixture did not enter Busy.");
+                await session.ExecuteAsync(async () => await failed).WaitAsync(TimeSpan.FromSeconds(8));
+                if (!session.Available || session.Busy || session.ActiveMethod is not null || session.CanCancel || session.Shell.Severity != InfoBarSeverity.Error)
+                    throw new InvalidOperationException("Worker failure did not release ApplicationSession: " + scenario);
+                checks.Add(scenario + "_releases_busy_on_live_connection");
+                var recovered = await session.RunAsync("diagnostics.run").WaitAsync(TimeSpan.FromSeconds(8));
+                if (recovered.GetProperty("text").GetString() != "recovered" || !session.Available)
+                    throw new InvalidOperationException("Worker failure left the next task blocked: " + scenario);
+                checks.Add(scenario + "_next_task_completes");
+            }
+            finally { await session.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8)); }
+        }
     }
 }
