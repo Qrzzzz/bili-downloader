@@ -22,6 +22,7 @@ BackendClient Client(string scenario, double timeout = 3) => new(() =>
     var start = new ProcessStartInfo(python) { WorkingDirectory = repo, UseShellExecute = false, CreateNoWindow = true,
         RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
     if (scenario == "real") { start.ArgumentList.Add("-m"); start.ArgumentList.Add("app.backend"); }
+    else if (scenario.StartsWith("worker_")) { start.ArgumentList.Add(Path.Combine(repo, "tests", "fixtures", "backend_fault_peer.py")); start.ArgumentList.Add(scenario); }
     else { start.ArgumentList.Add(Path.Combine(repo, "tests", "fixtures", "ipc_peer.py")); start.ArgumentList.Add(scenario); }
     start.Environment["LOCALAPPDATA"] = Path.Combine(profile, scenario, "Local");
     start.Environment["APPDATA"] = Path.Combine(profile, scenario, "Roaming");
@@ -46,8 +47,8 @@ try
         var c = Client("real"); c.Start();
         try
         {
-            var hello = Protocol.Read<Hello>(await c.RequestAsync("hello", new { protocol_version = 1, frontend_version = "2.10" }));
-            Check(hello.BackendVersion == "2.10" && hello.ProtocolVersion == 1, "Version negotiation failed");
+            var hello = Protocol.Read<Hello>(await c.RequestAsync("hello", new { protocol_version = 1, frontend_version = "2.11" }));
+            Check(hello.BackendVersion == "2.11" && hello.ProtocolVersion == 1, "Version negotiation failed");
             Check(Directory.EnumerateDirectories(profile, "run-markers", SearchOption.AllDirectories).SelectMany(Directory.EnumerateFiles).Any(), "Backend did not acquire a running marker");
             string? operation = null;
             await Throws<BackendException>(() => c.RunAsync("parse.start", new { input = "invalid", credential_mode = "anonymous" }, id => operation = id));
@@ -59,6 +60,32 @@ try
         finally { await c.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
         Check(!Directory.EnumerateDirectories(profile, "run-markers", SearchOption.AllDirectories).SelectMany(Directory.EnumerateFiles).Any(), "Backend did not release running marker");
     });
+    foreach (string scenario in new[] { "worker_construct", "worker_start" })
+        await Test(scenario + " settles the real backend and accepts the next operation", async () =>
+        {
+            var c = Client(scenario); var events = new ConcurrentQueue<string>();
+            c.Event += e => events.Enqueue(e.Name); c.Start();
+            try
+            {
+                await c.RequestAsync("hello", new { protocol_version = 1, frontend_version = "2.11" });
+                string? operation = null;
+                await Throws<BackendException>(() => c.RunAsync("diagnostics.run", null, id =>
+                {
+                    operation = id; events.Enqueue("accepted");
+                }));
+                Check(scenario == "worker_start" ? operation is not null : operation is null, "Wrong acceptance boundary");
+                Check(events.SequenceEqual(scenario == "worker_start" ? new[] { "accepted", "operation.failed" } : []),
+                      "Worker failure violated ACK/terminal order or failed to settle exactly once");
+                if (operation is not null)
+                {
+                    var cancel = await c.RequestAsync("operation.cancel", new { operation_id = operation });
+                    Check(cancel.GetProperty("state").GetString() == "already_finished", "Unstarted worker stayed active");
+                }
+                var recovered = await c.RunAsync("diagnostics.run", null, _ => { });
+                Check(recovered.GetProperty("text").GetString() == "recovered", "Backend remained busy after worker failure");
+            }
+            finally { await c.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8)); }
+        });
     await Test("fragmented Unicode frames: acceptance precedes events; stale events ignored", async () =>
     {
         var c = Client("fragmented"); var events = new List<string>();
