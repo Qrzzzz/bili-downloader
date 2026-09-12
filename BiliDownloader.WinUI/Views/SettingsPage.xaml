@@ -5,7 +5,7 @@
         <StackPanel Style="{StaticResource PageContentStyle}" Width="{Binding ViewportWidth, ElementName=PageScroll}">
             <StackPanel Spacing="6">
                 <TextBlock Text="设置" Style="{ThemeResource TitleTextBlockStyle}"/>
-                <TextBlock Text="调整外观、保存位置，或检查运行环境。" Style="{StaticResource SecondaryTextStyle}"/>
+                <TextBlock Text="调整下载偏好、外观、保存位置，或检查运行环境。" Style="{StaticResource SecondaryTextStyle}"/>
             </StackPanel>
             <Border Style="{StaticResource SurfaceCardStyle}">
                 <StackPanel Spacing="16">
@@ -22,6 +22,17 @@
                                  IsEnabled="{Binding CanEdit}" AutomationProperties.AutomationId="DefaultDirectory"/>
                         <Button Grid.Column="1" Content="浏览…" Click="Browse_Click" IsEnabled="{Binding CanEdit}" VerticalAlignment="Bottom" AutomationProperties.Name="选择默认下载目录"/>
                     </Grid>
+                    <Expander Header="下载偏好" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="DownloadPreferences">
+                        <StackPanel Spacing="12">
+                            <ToggleSwitch Header="自动记住下载页的选择" IsOn="{Binding RememberDownloadPreferences, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" OnContent="已开启" OffContent="已关闭" AutomationProperties.AutomationId="RememberDownloadPreferences"/>
+                            <TextBlock Text="开启后，主动选择的模式和画质会自动保存。关闭后，下载页的选择仅用于本次会话；下次启动使用此处保存的偏好。" Style="{StaticResource SecondaryTextStyle}"/>
+                            <ComboBox Header="下载模式" SelectedIndex="{Binding DownloadModeIndex, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="PreferredDownloadMode">
+                                <ComboBoxItem Content="音视频（MP4）"/><ComboBoxItem Content="仅音频（MP3，192 kbps）"/>
+                            </ComboBox>
+                            <ComboBox Header="偏好画质" ItemsSource="{Binding QualityOptions}" SelectedItem="{Binding PreferredQuality, Mode=TwoWay}" DisplayMemberPath="Label" IsEnabled="{Binding CanEdit}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="PreferredQuality"/>
+                            <TextBlock Text="画质用于 MP4。指定分辨率不可用时会提示重新选择，不自动降档。修改偏好不影响已入队任务。" Style="{StaticResource SecondaryTextStyle}"/>
+                        </StackPanel>
+                    </Expander>
                     <TextBlock Text="{Binding SaveStatus}" Style="{StaticResource SecondaryTextStyle}" AutomationProperties.LiveSetting="Polite"/>
                     <Button Content="保存设置" Click="Save_Click" Style="{StaticResource AccentButtonStyle}" IsEnabled="{Binding CanSave}" AutomationProperties.AutomationId="SaveSettings"/>
                 </StackPanel>
@@ -43,7 +54,7 @@
             </Expander>
             <Expander Header="关于与更新" HorizontalAlignment="Stretch">
                 <StackPanel Spacing="12">
-                    <TextBlock Text="Bili Downloader Lite 3.0" Style="{ThemeResource BodyStrongTextBlockStyle}"/>
+                    <TextBlock Text="Bili Downloader Lite 3.1" Style="{ThemeResource BodyStrongTextBlockStyle}"/>
                     <TextBlock Text="{Binding UpdateText}" TextWrapping="Wrap"/>
                     <StackPanel Orientation="Horizontal" Spacing="12">
                         <Button Content="检查更新" Click="Update_Click" IsEnabled="{Binding CanManage}"/>

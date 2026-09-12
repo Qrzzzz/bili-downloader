@@ -9,7 +9,7 @@
 <p>
   <strong>导航</strong><br/>
   <a href="https://github.com/Qrzzzz/bili-downloader/releases/latest">下载最新版</a> ·
-  <a href="./docs/releases/v3.0.md">v3.0 发布说明</a> ·
+  <a href="./docs/releases/v3.1.md">v3.1 发布说明</a> ·
   <a href="#主要功能">主要功能</a> ·
   <a href="#从源码运行">从源码运行</a> ·
   <a href="./SECURITY.md">安全策略</a> ·
@@ -32,15 +32,15 @@
 
 ## 📦 下载与使用
 
-**v3.0** 新增独立任务页面、并行下载、多链接批量添加及重启恢复。见 [3.0 发布说明](./docs/releases/v3.0.md) 和 [验证记录](./docs/validation/v3.0.md)。
+**v3.1** 自动记住下载模式与偏好画质，并支持在设置里调整或关闭自动记忆。见 [3.1 发布说明](./docs/releases/v3.1.md) 和 [验证记录](./docs/validation/v3.1.md)。
 
-Windows x64 正式版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest) 获取。3.0 的资产名称为：
+Windows x64 正式版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest) 获取。3.1 的资产名称为：
 
-* 完整应用包：`BiliDownloader.v3.0.win-x64.zip`
-* 软件物料清单：`BiliDownloader.v3.0.sbom.json`
+* 完整应用包：`BiliDownloader.v3.1.win-x64.zip`
+* 软件物料清单：`BiliDownloader.v3.1.sbom.json`
 * 校验文件：`SHA256SUMS`
 
-完整解压对应版本的 ZIP 后运行其中的 `BiliDownloader.v3.0.exe`，保留相邻的后端 EXE 和运行库。包中包含 .NET、Windows App SDK 和 Python 运行时，无需另装这些运行环境。下载前请自行准备合法来源的 `ffmpeg.exe`，并选择以下任一方式放置：
+完整解压对应版本的 ZIP 后运行其中的 `BiliDownloader.v3.1.exe`，保留相邻的后端 EXE 和运行库。包中包含 .NET、Windows App SDK 和 Python 运行时，无需另装这些运行环境。下载前请自行准备合法来源的 `ffmpeg.exe`，并选择以下任一方式放置：
 
 1. 放入主程序相邻的 `tools\ffmpeg.exe`。
 2. 将 FFmpeg 所在的绝对目录加入系统 `PATH`。
@@ -49,12 +49,13 @@ Windows x64 正式版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-
 
 ### 基本流程
 
-1. 运行完整解压目录中的 `BiliDownloader.v3.0.exe`。
+1. 运行完整解压目录中的 `BiliDownloader.v3.1.exe`。
 2. 在“添加下载”粘贴链接、BV/av 号或分享文本。单视频点击“解析”，多个视频点击“批量解析多个链接”，一次最多 50 个。
 3. 如需账号权限下的更多可用画质，可在“账号”页使用应用内二维码扫码登录。
 4. 选择 MP4 或 MP3、分 P、画质和目录后“加入队列”。批量添加可用统一规格，也可逐项配置；默认只选择链接指向的分 P。
 5. 前往“任务”查看并行进度、结果、文件和日志，按需取消、重试失败项或继续未完成项；可同时回到添加页继续解析。
 6. 默认同时下载 2 个任务，设置支持 1—3 个。暂停队列不打断在途任务；重启后需确认继续，移除记录保留媒体文件。
+7. 下载页主动选择的 MP4/MP3 模式和画质会自动保存；在“设置 → 下载偏好”可直接调整，或关闭自动记忆。关闭后，本次会话的选择不会覆盖保存的偏好。指定画质不可用时需重新选择，MP3 不会清除视频画质偏好；设置变化不影响已入队任务。
 
 ### WinUI 3 原生界面
 
@@ -158,10 +159,10 @@ dotnet run --project BiliDownloader.WinUI.Tests
 
 # 构建自包含目录与 ZIP 候选包
 .\build.ps1 -Clean
-.\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v3.0.win-x64\BiliDownloader.v3.0.exe
+.\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v3.1.win-x64\BiliDownloader.v3.1.exe
 ```
 
-当前源码构建输出为 `dist\BiliDownloader.v3.0.win-x64\` 与同名 ZIP；未提交构建会保留 dirty 标记。`build.ps1` 重新创建 `build\.venv`，使用哈希锁与 NuGet locked restore。`python -m app.main` 是兼容后端入口，UI 入口已迁移至 WinUI 工程。
+当前源码构建输出为 `dist\BiliDownloader.v3.1.win-x64\` 与同名 ZIP；未提交构建会保留 dirty 标记。`build.ps1` 重新创建 `build\.venv`，使用哈希锁与 NuGet locked restore。`python -m app.main` 是兼容后端入口，UI 入口已迁移至 WinUI 工程。
 
 PR/main CI 执行 Python 回归、WinUI 编译和 C# 管道测试，纯 Markdown 变更跳过。正式打包集中在 Release，校验前后端版本、原生启动、包内容及联合 SBOM，再生成摘要和来源证明。真实扫码、下载、DPI、读屏和窗口交互的外部验收单独记录。详见 [发布检查清单](./RELEASE_CHECKLIST.md) 与 [维护者说明](./MAINTAINER_NOTES.md)。
 

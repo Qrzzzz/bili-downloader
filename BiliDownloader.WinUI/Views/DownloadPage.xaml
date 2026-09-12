@@ -98,6 +98,7 @@
                                       SelectedItem="{Binding SelectedFormat, Mode=TwoWay}" Visibility="{Binding FormatVisibility}"
                                       IsEnabled="{Binding CanChoose}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="VideoFormat"/>
                         </Grid>
+                        <TextBlock Text="{Binding QualityHint}" Visibility="{Binding FormatVisibility}" Style="{StaticResource SecondaryTextStyle}" AutomationProperties.LiveSetting="Polite" AutomationProperties.AutomationId="QualityPreferenceHint"/>
                         <Grid ColumnSpacing="12">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <TextBox Header="保存目录" Text="{Binding DownloadDirectory, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"

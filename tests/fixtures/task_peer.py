@@ -14,8 +14,12 @@ from app.video_urls import normalize_video_input
 def parse(value, *args):
     url = normalize_video_input(value)
     name = url.split("/")[-1]
+    formats = [FormatChoice("最高可用", "bestvideo+bestaudio/best")]
+    if not name.endswith("1"):
+        formats.append(FormatChoice("1080p", "bestvideo[height=1080]+bestaudio/best[height=1080]", 1080, "exact_height"))
+    formats.append(FormatChoice("720p", "bestvideo[height=720]+bestaudio/best[height=720]", 720, "exact_height"))
     return VideoInfoResult(name, "fixture", 1, "", [VideoPart(1, name, url, 1, "p1")],
-                           [FormatChoice("最高可用", "bestvideo+bestaudio/best")], raw_id=name, source_url=url)
+                           formats, raw_id=name, source_url=url)
 
 
 def download(request, controller, progress, log, parts):

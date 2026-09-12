@@ -134,6 +134,38 @@ public static class NativeAcceptance
         session.ApplySettings(Protocol.Read<AppSettings>(await session.Client.RequestAsync("settings.get")), discardDraft: true);
         root.RequestedTheme = ElementTheme.Light;
         await Snapshot("settings-light", false);
+        var originalPreferences = Protocol.Read<AppSettings>(await session.Client.RequestAsync("settings.get"));
+        var preferences = Elements(frame).OfType<Expander>().Single(e => AutomationProperties.GetAutomationId(e) == "DownloadPreferences");
+        preferences.IsExpanded = true;
+        await Task.Delay(150);
+        var remember = Elements(frame).OfType<ToggleSwitch>().Single(e => AutomationProperties.GetAutomationId(e) == "RememberDownloadPreferences");
+        var defaultMode = Elements(frame).OfType<ComboBox>().Single(e => AutomationProperties.GetAutomationId(e) == "PreferredDownloadMode");
+        var defaultQuality = Elements(frame).OfType<ComboBox>().Single(e => AutomationProperties.GetAutomationId(e) == "PreferredQuality");
+        Check(new ToggleSwitchAutomationPeer(remember).GetPattern(PatternInterface.Toggle) is IToggleProvider, "remember_preference_has_native_toggle_semantics");
+        Check(new ComboBoxAutomationPeer(defaultQuality).GetPattern(PatternInterface.ExpandCollapse) is IExpandCollapseProvider, "quality_preference_has_native_combobox_semantics");
+        if (remember.IsOn) ((IToggleProvider)new ToggleSwitchAutomationPeer(remember).GetPattern(PatternInterface.Toggle)).Toggle();
+        defaultMode.SelectedIndex = 1;
+        defaultQuality.SelectedItem = session.Settings.QualityOptions.Single(q => q.Height == 1080);
+        Check(session.Settings is { HasChanges: true, RememberDownloadPreferences: false, DownloadModeIndex: 1 } && session.Settings.PreferredQuality?.Height == 1080,
+            "native_preference_controls_update_settings_draft");
+        preferences.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 });
+        await Snapshot("preferences-light", false);
+        await InvokeButton("保存设置");
+        for (int i = 0; i < 100 && session.Settings.HasChanges; i++) await Task.Delay(20);
+        var savedPreferences = Protocol.Read<AppSettings>(await session.Client.RequestAsync("settings.get"));
+        Check(!session.Settings.HasChanges && savedPreferences is { RememberDownloadPreferences: false, DownloadMode: "audio_mp3", PreferredQuality: 1080 } && model.ModeIndex == 1,
+            "native_save_button_persists_preferences_to_real_backend");
+        root.RequestedTheme = ElementTheme.Dark;
+        window.AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(640 * root.XamlRoot.RasterizationScale), (int)(480 * root.XamlRoot.RasterizationScale)));
+        await Task.Delay(200);
+        defaultQuality.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+        Check(defaultQuality.Focus(FocusState.Keyboard), "quality_preference_accepts_keyboard_focus");
+        await Snapshot("preferences-narrow-dark", false);
+        window.AppWindow.Resize(initialSize);
+        await session.UpdateSettingsAsync(new { remember_download_preferences = originalPreferences.RememberDownloadPreferences,
+            download_mode = originalPreferences.DownloadMode, preferred_quality = originalPreferences.PreferredQuality }, discardDraft: true);
+        preferences.IsExpanded = false;
+        root.RequestedTheme = ElementTheme.Light;
         navigation.SelectedItem = navigation.MenuItems[0];
         await Task.Delay(250);
         model.Input = "BV1nativeFixture";
