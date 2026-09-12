@@ -72,8 +72,17 @@ class AppConfig:
     schema_version: int = CONFIG_SCHEMA_VERSION
     theme: str = "system"
     max_parallel: int = 2
+    remember_download_preferences: bool = True
+    download_mode: str = "audio_video"
+    preferred_quality: int | None = None
 
     def __post_init__(self) -> None:
+        if type(self.remember_download_preferences) is not bool:
+            raise ConfigValidationError("记住下载偏好必须为布尔值。")
+        if self.download_mode not in ("audio_video", "audio_mp3"):
+            raise ConfigValidationError("下载模式必须为 MP4 或 MP3。")
+        if self.preferred_quality is not None and (type(self.preferred_quality) is not int or not 1 <= self.preferred_quality <= 16384):
+            raise ConfigValidationError("偏好画质必须为最高可用或有效的分辨率高度。")
         if type(self.max_parallel) is not int or not 1 <= self.max_parallel <= 3:
             raise ConfigValidationError("同时下载数必须为 1 至 3。")
         if isinstance(self.schema_version, bool) or not isinstance(self.schema_version, int):
@@ -176,7 +185,8 @@ def load_config() -> AppConfig:
         if schema == 0:
             diagnostics.append("检测到旧版无版本号配置，已按当前 schema 迁移。")
 
-        unknown = sorted(set(data) - {"schema_version", "download_dir", "theme", "max_parallel"})
+        unknown = sorted(set(data) - {"schema_version", "download_dir", "theme", "max_parallel",
+                                     "remember_download_preferences", "download_mode", "preferred_quality"})
         if unknown:
             diagnostics.append("已忽略未知配置项：" + "、".join(unknown))
 
@@ -185,12 +195,23 @@ def load_config() -> AppConfig:
             theme = "system"
             diagnostics.append("主题配置无效，已恢复为跟随系统。")
 
+        preferences = {}
+        for name, default in (("remember_download_preferences", True), ("download_mode", "audio_video"), ("preferred_quality", None)):
+            value = data.get(name, default)
+            try:
+                AppConfig(**{name: value})
+            except ConfigValidationError:
+                value = default
+                diagnostics.append(f"{name} 配置无效，已恢复该项默认值。")
+            preferences[name] = value
+
         try:
             config = AppConfig(
                 schema_version=CONFIG_SCHEMA_VERSION,
                 download_dir=data.get("download_dir", _default_download_dir()),
                 theme=theme,
                 max_parallel=data.get("max_parallel", 2),
+                **preferences,
             )
         except ConfigValidationError as exc:
             return _fallback(diagnostics, f"配置字段无效：{exc} 已使用默认配置。")

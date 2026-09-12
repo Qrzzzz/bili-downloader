@@ -1,6 +1,6 @@
 # IPC v2：持久任务与并行队列
 
-应用版本 3.0，协议版本 2。私有 stdin/stdout JSONL 的编码、大小、字段拒绝、错误分类、ACK 在 worker 事件之前、单操作终态、EOF 收尾和前后端精确版本握手继续沿用 [IPC v1](ipc-v1.md)。v1 客户端不能连接 v2 后端。
+应用版本 3.1，协议版本 2。私有 stdin/stdout JSONL 的编码、大小、字段拒绝、错误分类、ACK 在 worker 事件之前、单操作终态、EOF 收尾和前后端精确版本握手继续沿用 [IPC v1](ipc-v1.md)。v1 客户端不能连接 v2 后端。
 
 ## 状态所有权
 
@@ -22,9 +22,16 @@ SQLite `tasks.sqlite3` 存储任务快照、执行轮次、逐 P 结果和有界
 | tasks.reorder | task_id | `{task}`，将等待任务移到队首 |
 | tasks.remove | task_id | `{removed:task_id}`；先取消再移除，文件保留 |
 | queue.pause / queue.resume | {} | 完整列表摘要；暂停不取消在途工作 |
-| settings.update | download_dir?、theme?、max_parallel? | 原子保存后的完整设置 |
+| settings.update | download_dir?、theme?、max_parallel?、remember_download_preferences?、download_mode?、preferred_quality? | 原子保存后的完整设置 |
+| settings.remember | download_mode?、preferred_quality? | 自动记忆开启时原子保存；关闭时返回原设置，不写入 |
 
 `token` 在重复提交中保持不变；同 token 对应不同任务规格返回 `idempotency_conflict`。队列内同视频、分 P、模式、画质、目录与凭据身份的重复任务返回原任务。模式与画质必须来自后端解析选择，不接受任意 selector、媒体直链、headers、Cookie 或原始 yt-dlp 字典。
+
+## 下载偏好
+
+3.1 在 schema 1 中增加三个可选配置字段：`remember_download_preferences` 默认为 `true`；`download_mode` 为 `audio_video`（默认）或 `audio_mp3`；`preferred_quality` 为 `null`（最高可用）或 1—16384 的整数分辨率高度。读取旧配置补齐默认值，读取损坏的偏好字段只恢复该项，更新请求中的非法字段/类型则拒绝整次更新。
+
+偏好不保存临时 `format_id`。新解析按高度选择当前格式，最高可用按每个视频独立选择；指定高度缺失时单项提示重新选择，批量中该项不入队，其余有效项可继续。MP3 忽略画质要求并保留原视频偏好。自动应用、清空解析结果不会覆盖用户偏好；只有主动选择触发 `settings.remember`。前端串行保存字段补丁，设置草稿按字段合并，正常关闭等待已发起的自动保存。所有偏好仅作用于编辑器和后续创建的任务，既有任务规格、重试和恢复维持原快照。
 
 ## 事件
 

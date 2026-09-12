@@ -108,6 +108,47 @@ internal static class FrontendStateAcceptance
             Check(!model.CanRetry && model.RetryVisibility == Visibility.Collapsed, "new_input_invalidates_retry");
 
             var settings = session.Settings;
+            var preferencesVideo = video with { Formats = [new("best", "最高可用", null, "best_per_part"), new("high", "1080p", 1080, "exact_height"), new("low", "720p", 720, "exact_height")] };
+            model.ApplyVideo(preferencesVideo);
+            model.SelectedFormat = model.Formats.Single(f => f.Height == 1080);
+            model.ModeIndex = 1;
+            await model.WaitForPreferenceSaveAsync();
+            var remembered = Protocol.Read<AppSettings>(await client.RequestAsync("settings.get"));
+            Check(remembered is { DownloadMode: "audio_mp3", PreferredQuality: 1080 }, "explicit_mode_and_quality_are_remembered");
+            model.ApplyVideo(preferencesVideo with { Formats = [new("reordered", "720p", 720, "exact_height"), new("new-id", "1080p", 1080, "exact_height")] });
+            Check(model.SelectedFormat?.FormatId == "new-id" && model.ModeIndex == 1, "preferences_use_height_not_video_format_id");
+            model.ModeIndex = 0;
+            model.ApplyVideo(preferencesVideo with { Formats = [new("only", "720p", 720, "exact_height")] });
+            await model.WaitForPreferenceSaveAsync();
+            Check(model.SelectedFormat is null && !model.CanDownload && model.QualityHint.Contains("1080p"), "unavailable_preference_blocks_instead_of_downgrading");
+            Check(Protocol.Read<AppSettings>(await client.RequestAsync("settings.get")).PreferredQuality == 1080, "parse_fallback_does_not_overwrite_preference");
+            model.ModeIndex = 1;
+            Check(model.CanDownload && model.FormatVisibility == Visibility.Collapsed, "mp3_ignores_missing_video_quality");
+            model.ApplyVideo(preferencesVideo);
+            Check(model.SelectedFormat?.Height == 1080, "mp3_retains_video_quality");
+            await model.WaitForPreferenceSaveAsync();
+            settings.DownloadDirectory = Path.Combine(source, "preference-draft");
+            model.ModeIndex = 0; model.ModeIndex = 1; model.ModeIndex = 0;
+            model.SelectedFormat = model.Formats.Single(f => f.Height == 720);
+            await model.WaitForPreferenceSaveAsync();
+            Check(settings.HasChanges && settings.DownloadDirectory.EndsWith("preference-draft") && settings.PreferredQuality?.Height == 720 && settings.DownloadModeIndex == 0,
+                "auto_save_merges_untouched_fields_into_settings_draft");
+            await settings.SaveAsync();
+            remembered = Protocol.Read<AppSettings>(await client.RequestAsync("settings.get"));
+            Check(remembered.DownloadMode == "audio_video" && remembered.PreferredQuality == 720, "rapid_changes_and_draft_save_keep_latest_preferences");
+            settings.RememberDownloadPreferences = false;
+            settings.PreferredQuality = settings.QualityOptions.Single(q => q.Height == 1080);
+            await settings.SaveAsync();
+            model.ModeIndex = 1; model.SelectedFormat = model.Formats.Single(f => f.Height == 720);
+            await model.WaitForPreferenceSaveAsync();
+            remembered = Protocol.Read<AppSettings>(await client.RequestAsync("settings.get"));
+            Check(remembered is { RememberDownloadPreferences: false, DownloadMode: "audio_video", PreferredQuality: 1080 }, "disabled_memory_keeps_saved_defaults");
+            session.ApplySettings(remembered);
+            Check(model.ModeIndex == 0 && model.SelectedFormat?.Height == 1080, "saved_settings_restore_defaults");
+            settings.RememberDownloadPreferences = true;
+            settings.PreferredQuality = settings.QualityOptions.Single(q => q.Height is null);
+            await settings.SaveAsync();
+            Check(model.SelectedFormat?.Height is null && model.CanDownload, "settings_select_best_available");
             settings.DownloadDirectory = Path.Combine(source, "draft-folder"); settings.ThemeIndex = 2;
             await settings.ReloadAsync();
             session.ApplySettings(new AppSettings(source, "light"));
@@ -229,10 +270,19 @@ internal static class FrontendStateAcceptance
         {
             await session.InitializeAsync();
             await session.Tasks.TogglePauseAsync();
+            session.Settings.PreferredQuality = session.Settings.QualityOptions.Single(q => q.Height == 1080);
+            await session.Settings.SaveAsync();
             session.Download.Input = "BV1234567890\nBV1234567891";
             await session.Download.ParseBatchAsync();
             Check(session.Download.BatchItems.Count == 2 && session.Download.CanAddBatch, "native_vm_batch_ready");
             await session.Download.EnqueueBatchAsync();
+            Check(session.Tasks.Items.Count == 1 && !session.Download.BatchItems[1].Added && session.Download.BatchItems[1].Message.Contains("画质不可用"),
+                "native_vm_batch_skips_unavailable_preference_without_downgrade");
+            session.Settings.PreferredQuality = session.Settings.QualityOptions.Single(q => q.Height is null);
+            await session.Settings.SaveAsync();
+            await session.Download.EnqueueBatchAsync();
+            Check(session.Tasks.Items.Any(r => r.Value.FormatLabel.Contains("1080p")) && session.Tasks.Items.Any(r => r.Value.FormatLabel.Contains("最高可用")),
+                "native_vm_best_quality_per_item_and_queued_spec_unchanged");
             Check(session.Tasks.Items.Count == 2 && session.Tasks.Items.All(r => r.Value.State == "queued"), "native_vm_batch_durable_enqueue");
             Check(session.Download.BatchItems.All(r => r.Added), "native_vm_batch_marks_submitted");
             await session.Tasks.TogglePauseAsync();

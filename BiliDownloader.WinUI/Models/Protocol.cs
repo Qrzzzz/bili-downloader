@@ -14,7 +14,13 @@ public static class Protocol
     };
     public static T Read<T>(JsonElement value) => value.Deserialize<T>(Json) ?? throw new InvalidDataException("后端返回空数据。");
 }
-public sealed record AppSettings(string DownloadDir, string Theme = "system", int SchemaVersion = 1, int MaxParallel = 2);
+public sealed record AppSettings(string DownloadDir, string Theme = "system", int SchemaVersion = 1, int MaxParallel = 2,
+    bool RememberDownloadPreferences = true, string DownloadMode = "audio_video", int? PreferredQuality = null);
+public sealed record QualityPreference(int? Height)
+{
+    public string Label => Height is null ? "最高可用画质" : $"{Height}p（严格匹配）";
+    public override string ToString() => Label;
+}
 public sealed record LoginStatus(string Code, string Text, string? Generation);
 public sealed record Hello(int ProtocolVersion, string BackendVersion, string SessionId, bool SafeMode,
                           AppSettings Settings, LoginStatus Status, string[] ConfigDiagnostics);

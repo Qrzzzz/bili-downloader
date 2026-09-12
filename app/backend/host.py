@@ -190,9 +190,12 @@ class Backend:
         if method == "settings.get":
             fields(params, set())
             return asdict(self.config), None
-        if method == "settings.update":
-            fields(params, {"download_dir", "theme", "max_parallel"})
+        if method in {"settings.update", "settings.remember"}:
+            fields(params, {"download_mode", "preferred_quality"} if method == "settings.remember" else
+                   {"download_dir", "theme", "max_parallel", "remember_download_preferences", "download_mode", "preferred_quality"})
             updated = replace(self.config, **params)
+            if method == "settings.remember" and not self.config.remember_download_preferences:
+                return asdict(self.config), None
             save_config(updated)
             self.config = updated
             if self.tasks:

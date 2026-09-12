@@ -32,7 +32,7 @@ def backend():
         request_id = id or f"r{len(host.seen) + 1}"
         host.request({"id": request_id, "method": method, "params": params or {}})
         return next(m for m in reversed(messages) if m.get("id") == request_id)
-    send("hello", {"protocol_version": 2, "frontend_version": "3.0"})
+    send("hello", {"protocol_version": 2, "frontend_version": "3.1"})
     yield host, messages, send
     host.close()
     host.wait()
@@ -75,11 +75,44 @@ def test_parse_share_text_through_backend(backend, monkeypatch, share):
 
 def test_handshake_and_duplicate_requests_fail_closed(backend):
     host, messages, send = backend
-    assert not send("hello", {"protocol_version": 1, "frontend_version": "3.0"})["ok"]
+    assert not send("hello", {"protocol_version": 1, "frontend_version": "3.1"})["ok"]
     assert send("settings.get", id="unique")["ok"]
     assert send("settings.get", id="unique")["error"]["code"] == "duplicate_request"
     assert send("download.start", {"parse_id": "untrusted"})["ok"] is False
     assert host.active is None
+
+
+def test_preferences_patch_validation_and_save_failure_keep_backend_and_disk_consistent(backend, monkeypatch):
+    from dataclasses import asdict
+    from app.config import ConfigSaveError, load_config
+
+    host, _, send = backend
+    assert send("tasks.list")["ok"]
+    updated = send("settings.update", {"download_mode": "audio_mp3", "preferred_quality": 1080})
+    assert updated["ok"]
+    assert load_config().download_mode == "audio_mp3" and load_config().preferred_quality == 1080
+    assert send("settings.update", {"theme": "dark"})["result"]["preferred_quality"] == 1080
+    previous = asdict(host.config)
+    for patch in ({"preferred_quality": True}, {"download_mode": "other"}, {"remember_download_preferences": 1}, {"format_id": "1"}):
+        assert not send("settings.update", patch)["ok"]
+        assert asdict(host.config) == asdict(load_config()) == previous
+    monkeypatch.setattr("app.backend.host.save_config", lambda _: (_ for _ in ()).throw(ConfigSaveError("synthetic failure")))
+    assert not send("settings.update", {"preferred_quality": 720})["ok"]
+    assert asdict(host.config) == asdict(load_config()) == previous
+    assert host.tasks.config.preferred_quality == 1080
+
+
+def test_disabled_memory_ignores_late_automatic_save_but_accepts_explicit_settings(backend):
+    from app.config import config_path, load_config
+
+    _, _, send = backend
+    assert send("settings.update", {"remember_download_preferences": False, "preferred_quality": 1080})["ok"]
+    previous = config_path().read_bytes()
+    assert send("settings.remember", {"download_mode": "audio_mp3", "preferred_quality": 720})["ok"]
+    assert config_path().read_bytes() == previous
+    assert not send("settings.remember", {"theme": "dark"})["ok"]
+    assert send("settings.update", {"download_mode": "audio_mp3", "preferred_quality": None})["ok"]
+    assert load_config().download_mode == "audio_mp3" and load_config().preferred_quality is None
 
 
 def test_parse_cancel_discards_late_result_and_does_not_block_reader(backend, monkeypatch):
@@ -153,10 +186,10 @@ sys.meta_path.insert(0, NoQt())
 sys.path.insert(0, sys.argv[1])
 runpy.run_module("app.backend", run_name="__main__")
 '''
-    requests = [dict(v=2, type='request', id='r1', method='hello', params={'protocol_version': 2, 'frontend_version': '3.0'}),
+    requests = [dict(v=2, type='request', id='r1', method='hello', params={'protocol_version': 2, 'frontend_version': '3.1'}),
                 dict(v=2, type='request', id='r2', method='shutdown', params={})]
     process = subprocess.run([sys.executable, '-I', '-c', code, str(root)], input=''.join(json.dumps(r)+'\n' for r in requests), capture_output=True, text=True, encoding='utf-8', timeout=15)
     assert process.returncode == 0, process.stderr
     output = [json.loads(line) for line in process.stdout.splitlines()]
-    assert output[0]['result']['backend_version'] == '3.0'
+    assert output[0]['result']['backend_version'] == '3.1'
     assert output[-1]['event'] == 'shutdown.ready'
