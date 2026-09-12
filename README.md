@@ -9,7 +9,7 @@
 <p>
   <strong>导航</strong><br/>
   <a href="https://github.com/Qrzzzz/bili-downloader/releases/latest">下载最新版</a> ·
-  <a href="./docs/releases/v2.12.md">v2.12 发布说明</a> ·
+  <a href="./docs/releases/v3.0.md">v3.0 发布说明</a> ·
   <a href="#主要功能">主要功能</a> ·
   <a href="#从源码运行">从源码运行</a> ·
   <a href="./SECURITY.md">安全策略</a> ·
@@ -32,15 +32,15 @@
 
 ## 📦 下载与使用
 
-当前版本为 **v2.12**：可直接粘贴含标题和链接的分享文本、多行文本或 Markdown 链接，自动提取视频地址。见 [2.12 发布说明](./docs/releases/v2.12.md) 和 [验证记录](./docs/validation/v2.12.md)。
+当前源码为 **v3.0 候选**：新增独立任务页面、并行下载、多链接批量添加及重启恢复。见 [3.0 发布说明](./docs/releases/v3.0.md) 和 [验证记录](./docs/validation/v3.0.md)。
 
-Windows x64 正式版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest) 获取。v2.12 资产为：
+Windows x64 正式版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest) 获取。3.0 发布时的资产名称为：
 
-* 完整应用包：`BiliDownloader.v2.12.win-x64.zip`
-* 软件物料清单：`BiliDownloader.v2.12.sbom.json`
+* 完整应用包：`BiliDownloader.v3.0.win-x64.zip`
+* 软件物料清单：`BiliDownloader.v3.0.sbom.json`
 * 校验文件：`SHA256SUMS`
 
-完整解压对应版本的 ZIP 后运行其中的 `BiliDownloader.v2.12.exe`，保留相邻的后端 EXE 和运行库。包中包含 .NET、Windows App SDK 和 Python 运行时，无需另装这些运行环境。下载前请自行准备合法来源的 `ffmpeg.exe`，并选择以下任一方式放置：
+完整解压对应版本的 ZIP 后运行其中的 `BiliDownloader.v3.0.exe`，保留相邻的后端 EXE 和运行库。包中包含 .NET、Windows App SDK 和 Python 运行时，无需另装这些运行环境。下载前请自行准备合法来源的 `ffmpeg.exe`，并选择以下任一方式放置：
 
 1. 放入主程序相邻的 `tools\ffmpeg.exe`。
 2. 将 FFmpeg 所在的绝对目录加入系统 `PATH`。
@@ -49,11 +49,12 @@ Windows x64 正式版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-
 
 ### 基本流程
 
-1. 运行完整解压目录中的 `BiliDownloader.v2.12.exe`。
-2. 粘贴 Bilibili 视频链接、BV 号或 av 号并解析。也可直接粘贴含标题和链接的分享文本（包括多行与 Markdown），无需手工提取；多个不同链接时请只保留一个。
+1. 运行完整解压目录中的 `BiliDownloader.v3.0.exe`。
+2. 在“添加下载”粘贴链接、BV/av 号或分享文本。单视频点击“解析”，多个视频点击“批量解析多个链接”，一次最多 50 个。
 3. 如需账号权限下的更多可用画质，可在“账号”页使用应用内二维码扫码登录。
-4. 选择音视频 MP4 或仅音频 MP3，按需选择分 P、画质和保存目录后开始下载。
-5. 在任务结果中查看成功、失败或取消的项目，并按需重试失败项。
+4. 选择 MP4 或 MP3、分 P、画质和目录后“加入队列”。批量添加可用统一规格，也可逐项配置；默认只选择链接指向的分 P。
+5. 前往“任务”查看并行进度、结果、文件和日志，按需取消、重试失败项或继续未完成项；可同时回到添加页继续解析。
+6. 默认同时下载 2 个任务，设置支持 1—3 个。暂停队列不打断在途任务；重启后需确认继续，移除记录保留媒体文件。
 
 ### WinUI 3 原生界面
 
@@ -87,11 +88,11 @@ Windows x64 正式版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-
 
 ### 🧭 清晰的任务流程
 
-* 下载页聚焦链接输入与解析，账号管理和应用设置各有独立页面
+* 添加下载页聚焦输入与规格，任务、账号和设置各有独立页面
 * 解析成功后再显示视频信息、分 P、画质、保存目录和下载操作
-* 下载期间突出显示进度与取消入口，任务结束后在主窗口下方展示紧凑或完整结果
-* 任务详情可在下载页展开；环境诊断和错误日志位于设置页，登录与隐私说明位于账号页
-* 切页保留当前任务和结果，解析或下载期间暂停账号状态变更
+* 任务页提供状态筛选、独立进度、取消、重试、排序和逐 P 结果；下载不阻止继续解析
+* 任务详情与脱敏日志按需展开；环境诊断位于设置页，登录与隐私说明位于账号页
+* 任务保存到本机，切页保留状态；使用登录态的下载在途时暂停账号变更，重启不会自动联网恢复
 
 ### 📱 应用内扫码登录
 
@@ -157,10 +158,10 @@ dotnet run --project BiliDownloader.WinUI.Tests
 
 # 构建自包含目录与 ZIP 候选包
 .\build.ps1 -Clean
-.\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v2.12.win-x64\BiliDownloader.v2.12.exe
+.\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v3.0.win-x64\BiliDownloader.v3.0.exe
 ```
 
-当前源码构建输出为 `dist\BiliDownloader.v2.12.win-x64\` 与同名 ZIP；未提交构建会保留 dirty 标记。`build.ps1` 重新创建 `build\.venv`，使用哈希锁与 NuGet locked restore。`python -m app.main` 是兼容后端入口，UI 入口已迁移至 WinUI 工程。
+当前源码构建输出为 `dist\BiliDownloader.v3.0.win-x64\` 与同名 ZIP；未提交构建会保留 dirty 标记。`build.ps1` 重新创建 `build\.venv`，使用哈希锁与 NuGet locked restore。`python -m app.main` 是兼容后端入口，UI 入口已迁移至 WinUI 工程。
 
 PR/main CI 执行 Python 回归、WinUI 编译和 C# 管道测试，纯 Markdown 变更跳过。正式打包集中在 Release，校验前后端版本、原生启动、包内容及联合 SBOM，再生成摘要和来源证明。真实扫码、下载、DPI、读屏和窗口交互的外部验收单独记录。详见 [发布检查清单](./RELEASE_CHECKLIST.md) 与 [维护者说明](./MAINTAINER_NOTES.md)。
 

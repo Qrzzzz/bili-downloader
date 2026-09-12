@@ -199,6 +199,71 @@ def _config(module: Any, tmp_path: Path) -> Any:
     return module.AppConfig(download_dir=str(tmp_path / "downloads"))
 
 
+def test_task_outputs_are_staged_and_same_identity_is_serialized(downloader, monkeypatch, tmp_path):
+    import threading
+    from app.services.task_resources import FileLease
+    owner = FileLease("instance:output-owner")
+    assert owner.acquire()
+    part = _parts(downloader, 1)[0]
+    scenario = YdlScenario({part.url: _formats(1080, sized=True)})
+    started, release = threading.Event(), threading.Event()
+    calls, results = [], []
+    def action(ydl, url):
+        calls.append(url)
+        assert ".bili-tasks" in ydl.options["paths"]["home"]
+        started.set()
+        assert release.wait(3)
+        return _success_action("fixture.mp4")(ydl, url)
+    scenario.download_actions = {part.url: action}
+    _install_scenario(downloader, monkeypatch, scenario)
+    def run(task_id):
+        controller = downloader.DownloadController()
+        controller.task_id, controller.task_owner = task_id, "output-owner"
+        results.append(downloader.download_videos([part], _config(downloader, tmp_path), str(tmp_path / "output"),
+                       "bestvideo+bestaudio/best", lambda _: None, controller=controller))
+    first = threading.Thread(target=run, args=("one",)); second = threading.Thread(target=run, args=("two",))
+    try:
+        first.start(); assert started.wait(3)
+        second.start(); release.set()
+        first.join(5); second.join(5)
+        assert not first.is_alive() and not second.is_alive()
+        assert len(calls) == 1 and len(results) == 2
+        assert results[0].saved_files == results[1].saved_files
+        assert all(not r.failed for r in results)
+        assert ".bili-tasks" not in results[0].saved_files[0]
+    finally:
+        release.set(); first.join(5)
+        if second.ident is not None: second.join(5)
+        owner.close()
+
+
+def test_task_publish_never_overwrites_a_foreign_file(downloader, monkeypatch, tmp_path):
+    from app.services.task_resources import FileLease
+    owner = FileLease("instance:publish-owner")
+    assert owner.acquire()
+    part = _parts(downloader, 1)[0]
+    scenario = YdlScenario({part.url: _formats(1080, sized=True)})
+    target = None
+    def action(ydl, url):
+        nonlocal target
+        output = _render_output_path(ydl.options, "mp4")
+        target = tmp_path / "output" / output.name
+        target.write_bytes(b"foreign data")
+        return _success_action("fixture.mp4")(ydl, url)
+    scenario.download_actions = {part.url: action}
+    _install_scenario(downloader, monkeypatch, scenario)
+    controller = downloader.DownloadController()
+    controller.task_id, controller.task_owner = "one", "publish-owner"
+    try:
+        result = downloader.download_videos([part], _config(downloader, tmp_path), str(tmp_path / "output"),
+                  "bestvideo+bestaudio/best", lambda _: None, controller=controller)
+        assert result.failed and not result.saved_files
+        assert target.read_bytes() == b"foreign data"
+        assert list((tmp_path / "output" / ".bili-tasks" / "one").glob("*.mp4"))
+    finally:
+        owner.close()
+
+
 def test_b23_redirect_preserves_target_page_and_drops_tracking_query(
     downloader: Any,
     monkeypatch: pytest.MonkeyPatch,

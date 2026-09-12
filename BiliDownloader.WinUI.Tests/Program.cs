@@ -22,6 +22,7 @@ BackendClient Client(string scenario, double timeout = 3) => new(() =>
     var start = new ProcessStartInfo(python) { WorkingDirectory = repo, UseShellExecute = false, CreateNoWindow = true,
         RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
     if (scenario == "real") { start.ArgumentList.Add("-m"); start.ArgumentList.Add("app.backend"); }
+    else if (scenario == "tasks") { start.ArgumentList.Add(Path.Combine(repo, "tests", "fixtures", "task_peer.py")); }
     else if (scenario.StartsWith("worker_")) { start.ArgumentList.Add(Path.Combine(repo, "tests", "fixtures", "backend_fault_peer.py")); start.ArgumentList.Add(scenario); }
     else { start.ArgumentList.Add(Path.Combine(repo, "tests", "fixtures", "ipc_peer.py")); start.ArgumentList.Add(scenario); }
     start.Environment["LOCALAPPDATA"] = Path.Combine(profile, scenario, "Local");
@@ -33,6 +34,50 @@ BackendClient Client(string scenario, double timeout = 3) => new(() =>
 async Task Test(string name, Func<Task> test) { await test(); passed++; Console.WriteLine($"PASS {name}"); }
 try
 {
+    await Test("production queue: parallel tasks, independent cancel, new parsing and durable recovery", async () =>
+    {
+        var c = Client("tasks"); c.Start();
+        var events = new ConcurrentQueue<TaskChange>();
+        c.Event += e => { if (e.Name == "task.changed") events.Enqueue(Protocol.Read<TaskChange>(e.Data)); };
+        string[] ids = [];
+        try
+        {
+            await c.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.0" });
+            await c.RequestAsync("queue.pause");
+            var list = new List<string>();
+            for (int i = 0; i < 3; i++)
+            {
+                var parsed = Protocol.Read<VideoInfo>(await c.RunAsync("parse.start", new { input = $"BV123456789{i}", credential_mode = "anonymous" }, _ => { }));
+                var request = new { parse_id = parsed.ParseId, part_indices = new[] { 1 }, format_id = "0", download_mode = "audio_video", download_dir = profile, token = $"token-{i}" };
+                var created = Protocol.Read<TaskReply>(await c.RequestAsync("tasks.create", request));
+                list.Add(created.Task.TaskId);
+                var duplicate = Protocol.Read<TaskReply>(await c.RequestAsync("tasks.create", request));
+                Check(duplicate.Duplicate && duplicate.Task.TaskId == created.Task.TaskId, "Duplicate submission created a task twice");
+            }
+            ids = list.ToArray();
+            await c.RequestAsync("queue.resume");
+            await Task.Delay(300);
+            var before = Protocol.Read<TaskSnapshot>(await c.RequestAsync("tasks.list"));
+            Check(before.Tasks.Count(t => t.State == "queued") == 1, "Concurrency limit was not respected");
+            await c.RequestAsync("tasks.cancel", new { task_id = ids[0] });
+            await Task.Delay(400);
+            var during = Protocol.Read<TaskSnapshot>(await c.RequestAsync("tasks.list"));
+            Check(during.Tasks.First(t => t.TaskId == ids[0]).State == "cancelled", "Cancelled task did not settle");
+            Check(during.Tasks.Where(t => t.TaskId != ids[0]).All(t => t.State == "downloading"), "Cancel affected another task or slot was not filled");
+            await c.RunAsync("parse.start", new { input = "BV1234567899", credential_mode = "anonymous" }, _ => { });
+            Check(events.Count > 0 && events.Select(e => e.Task.TaskId).Distinct().Count() == 3, "Task events were not routed independently");
+        }
+        finally { await c.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
+        var recovered = Client("tasks"); recovered.Start();
+        try
+        {
+            await recovered.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.0" });
+            var snapshot = Protocol.Read<TaskSnapshot>(await recovered.RequestAsync("tasks.list"));
+            Check(snapshot.Tasks.Count(t => t.State == "interrupted") == 2, "Shutdown did not preserve incomplete work");
+            Check(snapshot.Tasks.All(t => t.State != "downloading"), "Recovery started network work automatically");
+        }
+        finally { await recovered.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
+    });
     await Test("accessible item text does not expose DTO implementation details", () =>
     {
         var part = new VideoPart(2, "第二部分", 30, "private-id");
@@ -47,8 +92,8 @@ try
         var c = Client("real"); c.Start();
         try
         {
-            var hello = Protocol.Read<Hello>(await c.RequestAsync("hello", new { protocol_version = 1, frontend_version = "2.12" }));
-            Check(hello.BackendVersion == "2.12" && hello.ProtocolVersion == 1, "Version negotiation failed");
+            var hello = Protocol.Read<Hello>(await c.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.0" }));
+            Check(hello.BackendVersion == "3.0" && hello.ProtocolVersion == 2, "Version negotiation failed");
             Check(Directory.EnumerateDirectories(profile, "run-markers", SearchOption.AllDirectories).SelectMany(Directory.EnumerateFiles).Any(), "Backend did not acquire a running marker");
             string? operation = null;
             await Throws<BackendException>(() => c.RunAsync("parse.start", new { input = "invalid", credential_mode = "anonymous" }, id => operation = id));
@@ -67,7 +112,7 @@ try
             c.Event += e => events.Enqueue(e.Name); c.Start();
             try
             {
-                await c.RequestAsync("hello", new { protocol_version = 1, frontend_version = "2.12" });
+                await c.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.0" });
                 string? operation = null;
                 await Throws<BackendException>(() => c.RunAsync("diagnostics.run", null, id =>
                 {

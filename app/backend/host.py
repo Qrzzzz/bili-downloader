@@ -19,6 +19,9 @@ from app.services.download_service import DownloadRequest, run_download
 from app.services.login_service import LoginWorkflow
 from app.services.parse_service import parse_video
 from app.services.session_service import clear_session, session_status, validate_session
+from app.services.task_service import TaskManager
+from app.services.task_resources import resource_lease
+from app.video_urls import extract_video_inputs
 
 from .dto import batch_dto, error_dto, progress_dto, video_dto
 from .protocol import MAX_MESSAGE_BYTES, MAX_REQUEST_BYTES, VERSION, ProtocolError, decode_request, encode_message, fields, string
@@ -90,6 +93,26 @@ class Backend:
         self.active: Operation | None = None
         self.closing = False
         self.lock = threading.RLock()
+        self.parses: dict[str, ParsedVideo] = {}
+        self.tasks: TaskManager | None = None
+        self.task_seq = 0
+        self.task_event_lock = threading.Lock()
+
+    def task_manager(self) -> TaskManager:
+        if self.tasks is None:
+            self.tasks = TaskManager(self.task_event, self.config, self.session_id)
+        return self.tasks
+
+    def task_event(self, data: dict) -> None:
+        with self.task_event_lock:
+            self.task_seq += 1
+            self.send({"v": VERSION, "type": "event", "operation_id": self.session_id,
+                       "seq": self.task_seq, "event": "task.changed", "data": data}, False)
+
+    def remember_parse(self, parsed: ParsedVideo) -> None:
+        self.parses[parsed.id] = parsed
+        while len(self.parses) > 100:
+            del self.parses[next(iter(self.parses))]
 
     def reply(self, id: str | None, result: dict | None = None, error: dict | None = None) -> None:
         body = {"v": VERSION, "type": "response", "id": id, "ok": error is None}
@@ -136,7 +159,7 @@ class Backend:
             return {"protocol_version": VERSION, "backend_version": __version__, "session_id": self.session_id,
                     "safe_mode": self.safe_mode, "settings": asdict(self.config), "status": session_status(),
                     "config_diagnostics": list(config_diagnostics()),
-                    "capabilities": ["parse", "thumbnail", "audio_video", "audio_mp3", "qr", "retry", "diagnostics"],
+                    "capabilities": ["parse", "thumbnail", "audio_video", "audio_mp3", "qr", "retry", "diagnostics", "tasks", "batch_parse"],
                     "limits": {"request_bytes": MAX_REQUEST_BYTES, "message_bytes": MAX_MESSAGE_BYTES}}, None
         if not self.handshaken:
             raise ProtocolError("handshake_required", "请先完成版本握手。")
@@ -168,14 +191,49 @@ class Backend:
             fields(params, set())
             return asdict(self.config), None
         if method == "settings.update":
-            fields(params, {"download_dir", "theme"})
+            fields(params, {"download_dir", "theme", "max_parallel"})
             updated = replace(self.config, **params)
             save_config(updated)
             self.config = updated
-            return asdict(updated), None
+            if self.tasks:
+                with self.tasks.lock:
+                    self.tasks.config = replace(updated)
+            return asdict(updated), self.tasks.start_ready if self.tasks else None
         if method == "session.status":
             fields(params, set())
             return session_status(), None
+
+        if method in {"tasks.list", "queue.pause", "queue.resume"}:
+            fields(params, set())
+            manager = self.task_manager()
+            with manager.lock:
+                if method != "tasks.list":
+                    manager.paused = method == "queue.pause"
+                result = manager.snapshot()
+            return result, manager.start_ready if method == "queue.resume" else None
+        if method == "tasks.create":
+            fields(params, {"parse_id", "part_indices", "format_id", "download_mode", "download_dir", "token"},
+                   {"parse_id", "part_indices", "download_mode", "download_dir", "token"})
+            parsed = self.parses.get(string(params, "parse_id", limit=80))
+            if parsed is None:
+                raise ProtocolError("stale_parse", "解析结果已过期，请重新解析。")
+            if parsed.mode == CredentialMode.SAVED and session_status()["generation"] != parsed.generation:
+                raise ProtocolError("stale_session", "登录状态已改变，请重新解析。")
+            manager = self.task_manager()
+            result = manager.create(parsed, params["part_indices"], string(params, "download_mode"), params.get("format_id"),
+                                    string(params, "download_dir"), string(params, "token", limit=80))
+            return result, manager.start_ready
+        if method in {"tasks.cancel", "tasks.retry", "tasks.resume", "tasks.remove", "tasks.reorder", "tasks.get"}:
+            fields(params, {"task_id", "reauthorize"}, {"task_id"})
+            if "reauthorize" in params and type(params["reauthorize"]) is not bool:
+                raise ProtocolError("invalid_params", "账号确认参数无效。")
+            manager = self.task_manager()
+            task_id = string(params, "task_id", limit=80)
+            if method == "tasks.get":
+                with manager.lock:
+                    return {"task": manager._public(manager.repo.get(task_id), detail=True)}, None
+            result = manager.command(method.split(".")[1], task_id, params.get("reauthorize", False))
+            return result, manager.start_ready
 
         self.require_idle()
         op = Operation(method, self.send)
@@ -189,14 +247,46 @@ class Backend:
             generation = session_status()["generation"] if mode == CredentialMode.SAVED else None
 
             def parse() -> dict:
-                info = parse_video(value, config, mode, op.log, generation)
+                with resource_lease("metadata", op.controller):
+                    info = parse_video(value, config, mode, op.log, generation)
                 parsed = ParsedVideo(uuid.uuid4().hex, revision, info, mode, generation)
                 with self.lock:
                     if op.cancelled.is_set() or revision != self.revision:
                         return {"outcome": "cancelled"}
                     self.parsed = parsed
+                    self.remember_parse(parsed)
                 return video_dto(info, parsed.id, revision)
             work = parse
+        elif method == "parse.batch":
+            fields(params, {"input", "credential_mode"}, {"input", "credential_mode"})
+            rows = extract_video_inputs(string(params, "input", limit=24000))
+            mode = CredentialMode(string(params, "credential_mode"))
+            generation = session_status()["generation"] if mode == CredentialMode.SAVED else None
+            config = replace(self.config)
+
+            def parse_batch() -> dict:
+                seen = set()
+                for row in rows:
+                    if op.cancelled.is_set():
+                        break
+                    if row["message"]:
+                        continue
+                    try:
+                        with resource_lease("metadata", op.controller):
+                            info = parse_video(row["input"], config, mode, op.log, generation)
+                        identity = (info.raw_id or info.source_url, info.current_part_index)
+                        if identity in seen:
+                            row["message"] = "与本批另一项重复"
+                            continue
+                        seen.add(identity)
+                        parsed = ParsedVideo(uuid.uuid4().hex, self.revision, info, mode, generation)
+                        with self.lock:
+                            self.remember_parse(parsed)
+                        row["video"] = video_dto(info, parsed.id, self.revision)
+                    except Exception as exc:
+                        row["message"] = error_dto(exc)["message"]
+                return {"items": rows}
+            work = parse_batch
         elif method == "media.thumbnail":
             fields(params, {"parse_id"}, {"parse_id"})
             parsed = self.get_parse(params)
@@ -316,6 +406,8 @@ class Backend:
             raise ProtocolError("unknown_method", "不支持的操作。")
 
         op.thread = threading.Thread(target=self.run, args=(op, work), name=f"backend-{method}")
+        if method in {"auth.qr.start", "session.clear", "session.validate"} and self.tasks:
+            self.tasks.account_gate(True)
         self.active = op
         return {"operation_id": op.id, "state": "accepted"}, lambda: self.start(op)
 
@@ -352,6 +444,8 @@ class Backend:
         with self.lock:
             # Work has unwound all requests/lease/FFmpeg contexts before terminal delivery.
             self.active = None
+            if op.method in {"auth.qr.start", "session.clear", "session.validate"} and self.tasks:
+                self.tasks.account_gate(False)
             try:
                 encode_message({"v": VERSION, "type": "event", "operation_id": op.id,
                                 "seq": 1, "event": event, "data": {"method": op.method, "result": result}})
@@ -366,12 +460,16 @@ class Backend:
             self.closing = True
             if self.active:
                 self.active.cancel()
+            if self.tasks:
+                self.tasks.close()
 
     def wait(self) -> None:
         with self.lock:
             thread = self.active.thread if self.active else None
         if thread:
             thread.join()
+        if self.tasks:
+            self.tasks.wait()
 
 
 def serve(input: BinaryIO, output: BinaryIO, safe_mode: bool = False) -> int:

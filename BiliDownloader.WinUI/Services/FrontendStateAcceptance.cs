@@ -146,6 +146,21 @@ internal static class FrontendStateAcceptance
             await login;
             Check(session.Account.StatusTitle == "未登录" && !session.Account.CanManage && session.Shell.Severity == InfoBarSeverity.Warning,
                   "stale_qr_terminal_never_shows_success");
+            var sampleTask = new DownloadTask("task-a", "attempt-a", "并行任务 A", "MP4", 1, "anonymous", source,
+                "downloading", "", 1, 0, 1, false, null, "", new("downloading", 1, 1, 1, 25, 25, 100, 400, null, 1024, 1, false));
+            var secondTask = sampleTask with { TaskId = "task-b", Title = "并行任务 B", Position = 2 };
+            session.Tasks.Apply(new TaskSnapshot(false, 2, [sampleTask, secondTask], 10));
+            Check(session.Available && model.CanEditInput && session.Tasks.Items.Count == 2, "parallel_queue_does_not_lock_input");
+            session.Tasks.Changed(new TaskChange(sampleTask with { State = "cancelled", Revision = 2 }, 11));
+            Check(session.Tasks.Items[0].CanResume && session.Tasks.Items[1].CanCancel, "task_cancel_does_not_change_other_row");
+            session.Tasks.Apply(new TaskSnapshot(false, 2, [sampleTask], 9));
+            Check(session.Tasks.Items.Count == 2 && session.Tasks.Items[0].Value.State == "cancelled", "stale_snapshot_cannot_replace_new_task_event");
+            session.Tasks.FilterIndex = 3;
+            Check(session.Tasks.Items.Count == 1 && session.Tasks.Items[0].Id == "task-a", "task_attention_filter");
+            session.Tasks.FilterIndex = 0;
+            session.Tasks.Changed(new TaskChange(secondTask with { CredentialMode = "saved" }, 12));
+            Check(!session.Account.CanLogin, "running_saved_task_locks_account_change");
+            session.Tasks.Apply(new TaskSnapshot(false, 2, [], 13));
             var terminalEvents = new System.Collections.Concurrent.ConcurrentQueue<string>();
             client.Event += e => { if (e.Name.StartsWith("operation.")) terminalEvents.Enqueue(e.Name); };
             await session.ExecuteAsync(async () =>
@@ -161,6 +176,7 @@ internal static class FrontendStateAcceptance
             Check(!session.CanNavigate && !model.CanEditInput && !model.CanDownload && !settings.CanSave, "closing_disables_interaction");
             Check(!session.Busy, "malformed_terminal_shutdown_finishes");
             await CheckWorkerFailuresAsync(dispatcher, python, source, checks);
+            await CheckTaskFrontendAsync(dispatcher, python, source, checks);
             return checks.ToArray();
         }
         finally { if (!session.Closing) await session.ShutdownAsync(); }
@@ -195,5 +211,46 @@ internal static class FrontendStateAcceptance
             }
             finally { await session.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8)); }
         }
+    }
+
+    private static async Task CheckTaskFrontendAsync(DispatcherQueue dispatcher, string python, string source, List<string> checks)
+    {
+        var start = new ProcessStartInfo(python) { WorkingDirectory = source, UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        start.ArgumentList.Add(Path.Combine(source, "tests", "fixtures", "task_peer.py"));
+        string profile = Path.Combine(Environment.GetEnvironmentVariable("BILI_ACCEPTANCE_OUTPUT")!, "task-ui-profile", Guid.NewGuid().ToString("N"));
+        start.Environment["LOCALAPPDATA"] = Path.Combine(profile, "Local");
+        start.Environment["APPDATA"] = Path.Combine(profile, "Roaming");
+        start.Environment["PYTHONUTF8"] = "1";
+        var client = new BackendClient(() => Process.Start(start)!);
+        var session = new ApplicationSession(client) { Dispatcher = dispatcher };
+        void Check(bool ok, string name) { if (!ok) throw new InvalidOperationException(name); checks.Add(name); }
+        try
+        {
+            await session.InitializeAsync();
+            await session.Tasks.TogglePauseAsync();
+            session.Download.Input = "BV1234567890\nBV1234567891";
+            await session.Download.ParseBatchAsync();
+            Check(session.Download.BatchItems.Count == 2 && session.Download.CanAddBatch, "native_vm_batch_ready");
+            await session.Download.EnqueueBatchAsync();
+            Check(session.Tasks.Items.Count == 2 && session.Tasks.Items.All(r => r.Value.State == "queued"), "native_vm_batch_durable_enqueue");
+            Check(session.Download.BatchItems.All(r => r.Added), "native_vm_batch_marks_submitted");
+            await session.Tasks.TogglePauseAsync();
+            await Task.Delay(300);
+            await session.Tasks.ReloadAsync();
+            Check(session.Tasks.Items.All(r => r.Active) && session.Download.CanEditInput, "native_vm_parallel_does_not_lock_editor");
+            var first = session.Tasks.Items[0];
+            await session.Tasks.ActAsync(first, "cancel");
+            await Task.Delay(200);
+            await session.Tasks.ReloadAsync();
+            Check(first.Value.State == "cancelled" && session.Tasks.Items[1].Active, "native_vm_cancel_is_independent");
+            await first.LoadDetailsAsync();
+            Check(first.Details.Contains("已取消"), "native_vm_details_match_cancelled_result");
+            session.Download.Input = "BV1234567892";
+            await session.Download.ParseAsync();
+            await session.Download.EnqueueAsync();
+            Check(session.Tasks.Items.Count == 3 && session.Download.CanParse, "native_vm_add_while_downloading");
+        }
+        finally { await session.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
     }
 }

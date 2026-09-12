@@ -16,6 +16,7 @@
 - [ ] 最终目录包的 package smoke 和 ZIP 审计通过：真实 WinUI 启动、前后端退出，PE/程序集版本和提交一致，不夹带 Qt、凭据、日志、浏览器运行时或 FFmpeg。
 - [ ] 生成 ZIP、联合 CycloneDX SBOM、`SHA256SUMS`；SBOM 包含 NuGet、Python、.NET runtime 和实际文件摘要，许可证资料随包交付；发布前为三份资产生成并验证 attestation。
 - [ ] 发布后用 API 核对 Release 状态、标题、tag/commit、资产名称/数量/大小及 digest；本地同一份资产已验证过 attestation，无需再验一遍或重新下载。
+- [ ] 3.0 的 Codex 非空实现提交保留可关联的作者邮箱并进入默认分支；核对 commit API 的 `author.login` 为 `chatgpt-codex-connector[bot]`，再验证 GitHub 原生 Contributors。分支或文档署名不算通过，统计缓存未刷新时记录待验证。
 
 ## 仅在相关变更时验收
 
@@ -53,6 +54,6 @@ python -m pip check
 
 # 仅需验证打包时执行；普通开发构建会如实标记 dirty 状态
 .\build.ps1
-.\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v2.12.win-x64\BiliDownloader.v2.12.exe
-.\build\.venv\Scripts\python.exe tools\audit_release_artifact.py --executable .\dist\BiliDownloader.v2.12.win-x64.zip --expected-version 2.12
+.\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v3.0.win-x64\BiliDownloader.v3.0.exe
+.\build\.venv\Scripts\python.exe tools\audit_release_artifact.py --executable .\dist\BiliDownloader.v3.0.win-x64.zip --expected-version 3.0
 ```

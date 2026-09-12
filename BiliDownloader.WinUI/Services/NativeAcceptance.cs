@@ -121,7 +121,7 @@ public static class NativeAcceptance
         string? settingsPage = frame.Content?.GetType().FullName;
         session.Settings.DownloadDirectory = Path.Combine(output, "draft-downloads");
         session.Settings.ThemeIndex = 2;
-        navigation.SelectedItem = navigation.MenuItems[1];
+        navigation.SelectedItem = navigation.MenuItems.OfType<NavigationViewItem>().First(i => (string)i.Tag == "account");
         await Task.Delay(250);
         string? accountPage = frame.Content?.GetType().FullName;
         bool statusPreserved = session.Shell.Message == "原生验收：跨页状态保留";
@@ -193,11 +193,37 @@ public static class NativeAcceptance
         model.CollapseResult();
         Check(model.VideoVisibility == Visibility.Visible, "native_return_to_download_options");
         window.AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(640 * root.XamlRoot.RasterizationScale), (int)(480 * root.XamlRoot.RasterizationScale)));
-        navigation.SelectedItem = navigation.MenuItems[1];
+        navigation.SelectedItem = navigation.MenuItems.OfType<NavigationViewItem>().First(i => (string)i.Tag == "account");
         await Snapshot("account-narrow", false);
         navigation.SelectedItem = navigation.SettingsItem;
         await Snapshot("settings-narrow", false);
         window.AppWindow.Resize(initialSize);
+        // Source-only queue fixtures use the real Page and bindings, with no media/network work.
+        if (Environment.GetCommandLineArgs().Contains("--ui-regression"))
+        {
+            navigation.SelectedItem = navigation.MenuItems.OfType<NavigationViewItem>().First(i => (string)i.Tag == "tasks");
+            await Task.Delay(300);
+            var page = frame.Content as Page ?? throw new InvalidOperationException("任务页未完成导航。");
+            object context = page.DataContext;
+            var fixtureQueue = new ViewModels.TasksViewModel(session);
+            var taskA = new DownloadTask("native-task-a", "attempt-1", "课程学习：从第一章到第五章", "MP4 · 1080p", 5, "anonymous", output,
+                "downloading", "", 1, 0, 1, false, null, "", new("downloading", 2, 2, 5, 54, 32, 10485760, 52428800, null, 3145728, 12, false));
+            var taskB = taskA with { TaskId = "native-task-b", Title = "音乐现场 · 保存音频", FormatLabel = "MP3 · 192 kbps", PartCount = 1, Position = 2,
+                Progress = new("downloading", 1, 1, 1, 68, 68, 8388608, 12582912, null, 1048576, 4, false) };
+            fixtureQueue.Apply(new TaskSnapshot(false, 2, [taskA, taskB, taskA with { TaskId = "native-task-c", Title = "稍后下载的视频", State = "queued", Position = 3, Progress = null }], 1));
+            page.DataContext = fixtureQueue;
+            root.RequestedTheme = ElementTheme.Light;
+            await Snapshot("tasks-parallel-light", true);
+            Check(fixtureQueue.Items.Count == 3 && fixtureQueue.Items.Count(t => t.Active) == 2, "native_parallel_task_rows");
+            root.RequestedTheme = ElementTheme.Dark;
+            window.AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(640 * root.XamlRoot.RasterizationScale), (int)(480 * root.XamlRoot.RasterizationScale)));
+            await Snapshot("tasks-parallel-narrow-dark", true);
+            fixtureQueue.FilterIndex = 3;
+            Check(fixtureQueue.Items.Count == 0, "native_task_filter_empty_state");
+            await Snapshot("tasks-empty-filter-narrow", true);
+            page.DataContext = context;
+            window.AppWindow.Resize(initialSize);
+        }
         var evidence = new { version = App.AppVersion, backend_connected = session.Connected,
             git_commit = typeof(App).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "GitCommit")?.Value,
             build_dirty = typeof(App).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "BuildDirty")?.Value,

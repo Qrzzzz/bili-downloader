@@ -20,7 +20,7 @@
         <ScrollViewer x:Name="PageScroll" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
             <StackPanel Style="{StaticResource PageContentStyle}" Width="{Binding ViewportWidth, ElementName=PageScroll}">
                 <StackPanel Spacing="6">
-                    <TextBlock Text="下载" Style="{ThemeResource TitleTextBlockStyle}"/>
+                    <TextBlock Text="添加下载" Style="{ThemeResource TitleTextBlockStyle}"/>
                     <TextBlock Text="粘贴视频链接或分享文本，选择规格，保存到本机。" Style="{StaticResource SecondaryTextStyle}"/>
                 </StackPanel>
                 <Border Style="{StaticResource SurfaceCardStyle}">
@@ -42,8 +42,26 @@
                             </ComboBox>
                         </StackPanel>
                         <TextBlock Text="{Binding AccessHint}" Style="{StaticResource SecondaryTextStyle}"/>
+                        <Button Content="批量解析多个链接" Click="BatchParse_Click" IsEnabled="{Binding CanParse}" AutomationProperties.AutomationId="BatchParse"/>
                     </StackPanel>
                 </Border>
+                <StackPanel Spacing="8" Visibility="{Binding QueueMessageVisibility}">
+                    <TextBlock Text="{Binding QueueMessage}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+                    <Button Content="查看任务" Click="Tasks_Click"/>
+                </StackPanel>
+                <Expander Header="批量待添加项目" Visibility="{Binding BatchVisibility}" IsExpanded="True" HorizontalAlignment="Stretch">
+                    <StackPanel Spacing="8">
+                        <ListView ItemsSource="{Binding BatchItems}" SelectionMode="None" MaxHeight="240" AutomationProperties.Name="批量解析结果">
+                            <ListView.ItemTemplate><DataTemplate><StackPanel Spacing="4" Padding="0,8">
+                                <TextBlock Text="{Binding Title}" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding Message}" TextWrapping="Wrap"/>
+                                <Button Content="单项配置" Click="ConfigureBatch_Click" IsEnabled="{Binding CanConfigure}"/>
+                            </StackPanel></DataTemplate></ListView.ItemTemplate>
+                        </ListView>
+                        <TextBlock Text="全部加入使用下方的模式、画质和目录，每项默认选择链接指向的分 P。需要多个分 P 时请单项配置后加入。" Style="{StaticResource SecondaryTextStyle}"/>
+                        <Button Content="将其余有效项目加入队列" Click="AddBatch_Click" IsEnabled="{Binding CanAddBatch}"/>
+                    </StackPanel>
+                </Expander>
                 <TextBlock Text="{Binding OtherTaskStatus}" Visibility="{Binding OtherTaskVisibility}" Style="{StaticResource SecondaryTextStyle}"/>
                 <Border x:Name="VideoCard" Visibility="{Binding VideoVisibility}" Style="{StaticResource SurfaceCardStyle}">
                     <StackPanel Spacing="16">
@@ -86,7 +104,7 @@
                                      IsEnabled="{Binding CanChoose}" AutomationProperties.AutomationId="DownloadDirectory"/>
                             <Button Grid.Column="1" Content="浏览…" Click="Browse_Click" IsEnabled="{Binding CanChoose}" VerticalAlignment="Bottom" AutomationProperties.Name="选择下载目录"/>
                         </Grid>
-                        <Button Content="开始下载" Click="Download_Click" Style="{StaticResource AccentButtonStyle}" IsEnabled="{Binding CanDownload}"
+                        <Button Content="加入队列" Click="Download_Click" Style="{StaticResource AccentButtonStyle}" IsEnabled="{Binding CanDownload}"
                                 HorizontalAlignment="Right" AutomationProperties.AutomationId="DownloadButton"/>
                     </StackPanel>
                 </Border>

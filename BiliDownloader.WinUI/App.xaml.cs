@@ -5,7 +5,7 @@ namespace BiliDownloader.WinUI;
 
 public partial class App : Application
 {
-    public const string AppVersion = "2.12";
+    public const string AppVersion = "3.0";
     public static ApplicationSession Session { get; private set; } = null!;
     public static MainWindow MainWindow { get; private set; } = null!;
     public App()
