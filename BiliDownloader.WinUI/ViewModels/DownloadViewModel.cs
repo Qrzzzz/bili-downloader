@@ -19,6 +19,14 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     private string progressPhase = "preparing";
     private string? selectedOutput;
     private FormatChoice? selectedFormat;
+    private bool adding;
+    private string queueMessage = "";
+    private readonly Dictionary<string, string> submissionTokens = [];
+    public ObservableCollection<BatchInputRow> BatchItems { get; } = [];
+    public string QueueMessage { get => queueMessage; private set { Set(ref queueMessage, value); Refresh(); } }
+    public Visibility QueueMessageVisibility => string.IsNullOrEmpty(QueueMessage) ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility BatchVisibility => BatchItems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    public bool CanAddBatch => session.Available && !adding && BatchItems.Any(r => r.Video is not null && !r.Added);
     public ObservableCollection<VideoPart> Parts { get; } = [];
     public ObservableCollection<FormatChoice> Formats { get; } = [];
     public ObservableCollection<PartResult> Results { get; } = [];
@@ -46,15 +54,15 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     public BitmapImage? Thumbnail { get => thumbnail; private set { if (Set(ref thumbnail, value)) Refresh(); } }
     public double Percent { get; private set; }
     public string Metrics { get; private set; } = "";
-    public bool CanParse => session.Available && !string.IsNullOrWhiteSpace(input);
-    public bool CanDownload => session.Available && video is not null && SelectedParts.Count > 0 && !string.IsNullOrWhiteSpace(directory)
+    public bool CanParse => session.Available && !adding && !string.IsNullOrWhiteSpace(input);
+    public bool CanDownload => session.Available && !adding && video is not null && SelectedParts.Count > 0 && !string.IsNullOrWhiteSpace(directory)
         && (ModeIndex == 1 || SelectedFormat is not null);
     public bool CanRetry => session.Available && result?.RetryAllowed == true && video is not null;
-    public bool CanChoose => session.Available;
-    public bool CanEditInput => !session.Closing && !IsDownloading;
+    public bool CanChoose => session.Available && !adding;
+    public bool CanEditInput => !session.Closing && !IsDownloading && !adding;
     public bool CanCancel => IsLocalTask && session.CanCancel;
     public string CancelText => session.CancelRequested ? "正在安全取消…" : "取消当前任务";
-    private bool IsLocalTask => session.Busy && session.ActiveMethod is "parse.start" or "media.thumbnail" or "download.start" or "download.retry";
+    private bool IsLocalTask => session.Busy && session.ActiveMethod is "parse.start" or "parse.batch" or "media.thumbnail" or "download.start" or "download.retry";
     public bool IsIndeterminate => IsLocalTask && (!IsDownloading || progressPhase is "preparing" or "merging" or "converting");
     public Visibility VideoVisibility => video is null || showResult || IsDownloading ? Visibility.Collapsed : Visibility.Visible;
     private bool IsDownloading => session.Busy && session.ActiveMethod is "download.start" or "download.retry";
@@ -89,6 +97,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     public void Invalidate()
     {
         inputRevision++;
+        BatchItems.Clear(); QueueMessage = ""; submissionTokens.Clear();
         video = null; Thumbnail = null;
         if (result is not null) result = result with { RetryAllowed = false };
         if (!session.Busy) { showResult = false; Status = "链接或账号模式已改变，请重新解析。"; }
@@ -130,6 +139,75 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
         SelectedFormat = Formats.FirstOrDefault();
         if (parsed.Parts.Length > 0) SelectedParts.Add(parsed.Parts.Any(p => p.Index == parsed.CurrentPartIndex) ? parsed.CurrentPartIndex : parsed.Parts[0].Index);
         Refresh();
+    }
+
+    public async Task ParseBatchAsync()
+    {
+        if (!CanParse) return;
+        long revision = ++inputRevision;
+        BatchItems.Clear(); QueueMessage = ""; video = null; showResult = false;
+        Status = "正在逐项解析…"; Refresh();
+        var batch = Protocol.Read<BatchParseResult>(await session.RunAsync("parse.batch", new { input, credential_mode = CredentialIndex == 0 ? "saved" : "anonymous" }));
+        if (revision != inputRevision || session.Closing) return;
+        foreach (var row in batch.Items) BatchItems.Add(new BatchInputRow(row));
+        QueueMessage = $"解析成功 {BatchItems.Count(r => r.Video is not null)} / {BatchItems.Count}。默认只选择链接指向的分 P，可逐项配置。";
+        var first = BatchItems.FirstOrDefault(r => r.Video is not null);
+        if (first?.Video is { } parsed) ApplyVideo(parsed);
+        Refresh();
+    }
+
+    public void ConfigureBatch(BatchInputRow row)
+    {
+        if (row.Video is { } parsed && CanChoose) { ApplyVideo(parsed); QueueMessage = "正在配置：" + parsed.Title; }
+    }
+
+    private async Task<TaskReply> EnqueueVideoAsync(VideoInfo parsed, int[] indices, string? formatId)
+    {
+        string key = System.Text.Json.JsonSerializer.Serialize(new { parsed.ParseId, indices, formatId, ModeIndex, directory });
+        if (!submissionTokens.TryGetValue(key, out var token)) submissionTokens[key] = token = Guid.NewGuid().ToString("N");
+        var reply = Protocol.Read<TaskReply>(await session.Client.RequestAsync("tasks.create", new { parse_id = parsed.ParseId,
+            part_indices = indices, format_id = formatId, download_mode = ModeIndex == 0 ? "audio_video" : "audio_mp3", download_dir = directory, token }));
+        session.Tasks.Upsert(reply.Task);
+        return reply;
+    }
+
+    public async Task EnqueueAsync()
+    {
+        if (!CanDownload) return;
+        adding = true; Refresh();
+        try
+        {
+            var reply = await EnqueueVideoAsync(video!, SelectedParts.Order().ToArray(), SelectedFormat?.FormatId);
+            QueueMessage = reply.Duplicate ? "此任务已存在，可在任务页查看。" : "已加入队列。可继续添加视频，或前往任务页查看。";
+            foreach (var row in BatchItems.Where(r => r.Video?.ParseId == video!.ParseId)) row.MarkAdded();
+            await session.Tasks.ReloadAsync();
+        }
+        finally { adding = false; Refresh(); }
+    }
+
+    public async Task EnqueueBatchAsync()
+    {
+        if (!CanAddBatch) return;
+        adding = true; Refresh();
+        int count = 0;
+        try
+        {
+            foreach (var row in BatchItems.Where(r => r.Video is not null && !r.Added).ToArray())
+            {
+                var parsed = row.Video!;
+                var format = parsed.Formats.FirstOrDefault(f => f.Height == SelectedFormat?.Height);
+                if (ModeIndex == 0 && format is null) { row.SetMessage("所选画质不可用，请逐项配置。"); continue; }
+                try
+                {
+                    await EnqueueVideoAsync(parsed, [parsed.CurrentPartIndex], format?.FormatId);
+                    row.MarkAdded(); count++;
+                }
+                catch (BackendException ex) { row.SetMessage(ex.Message); }
+            }
+            QueueMessage = $"已加入 {count} 个任务。未成功的项目可查看提示后重试。";
+            await session.Tasks.ReloadAsync();
+        }
+        finally { adding = false; Refresh(); }
     }
 
     public async Task DownloadAsync(bool retry = false)
@@ -184,4 +262,15 @@ public sealed record OutputFileItem(string Path)
 {
     public string Name => System.IO.Path.GetFileName(Path);
     public override string ToString() => Name;
+}
+
+public sealed class BatchInputRow(BatchParseItem item) : ViewModelBase
+{
+    public VideoInfo? Video => item.Video;
+    public string Title => item.Video?.Title ?? item.Input;
+    public string Message { get; private set; } = item.Message;
+    public bool Added { get; private set; }
+    public bool CanConfigure => Video is not null && !Added;
+    public void MarkAdded() { Added = true; Message = "已加入队列"; Refresh(); }
+    public void SetMessage(string text) { Message = text; Refresh(); }
 }

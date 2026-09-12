@@ -4,7 +4,7 @@ namespace BiliDownloader.WinUI.Models;
 
 public static class Protocol
 {
-    public const int Version = 1;
+    public const int Version = 2;
     public const int MaximumMessageBytes = 16 * 1024 * 1024;
     public static readonly JsonSerializerOptions Json = new()
     {
@@ -14,7 +14,7 @@ public static class Protocol
     };
     public static T Read<T>(JsonElement value) => value.Deserialize<T>(Json) ?? throw new InvalidDataException("后端返回空数据。");
 }
-public sealed record AppSettings(string DownloadDir, string Theme = "system", int SchemaVersion = 1);
+public sealed record AppSettings(string DownloadDir, string Theme = "system", int SchemaVersion = 1, int MaxParallel = 2);
 public sealed record LoginStatus(string Code, string Text, string? Generation);
 public sealed record Hello(int ProtocolVersion, string BackendVersion, string SessionId, bool SafeMode,
                           AppSettings Settings, LoginStatus Status, string[] ConfigDiagnostics);
@@ -55,3 +55,11 @@ public sealed record DiagnosticItem(string Name, string Status, string Summary, 
 public sealed record DiagnosticReport(DiagnosticItem[] Items, string Text);
 public sealed record UpdateResult(string CurrentVersion, string? LatestVersion, string? ReleaseUrl, bool UpdateAvailable, string Message);
 public sealed record BackendEvent(string OperationId, long Sequence, string Name, JsonElement Data);
+public sealed record DownloadTask(string TaskId, string AttemptId, string Title, string FormatLabel,
+    int PartCount, string CredentialMode, string OutputDir, string State, string Message, long Revision,
+    double CreatedAt, double Position, bool Foreign, BatchResult? Result, string Logs, DownloadProgress? Progress);
+public sealed record TaskSnapshot(bool Paused, int MaxParallel, DownloadTask[] Tasks, long Revision);
+public sealed record TaskChange(DownloadTask Task, long Revision, bool Paused = false);
+public sealed record TaskReply(DownloadTask Task, bool Duplicate = false);
+public sealed record BatchParseItem(string Input, string Message, VideoInfo? Video);
+public sealed record BatchParseResult(BatchParseItem[] Items);

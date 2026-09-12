@@ -9,6 +9,8 @@ public sealed class SettingsViewModel(ApplicationSession session) : ViewModelBas
 {
     private string directory = "", diagnosticText = "", updateText = "尚未检查更新。";
     private int themeIndex;
+    private int parallelIndex = 1;
+    public int ParallelIndex { get => parallelIndex; set { if (Set(ref parallelIndex, value)) Refresh(); } }
     private bool loading, saving;
     private AppSettings? saved;
     public ObservableCollection<DiagnosticItem> Diagnostics { get; } = [];
@@ -24,7 +26,7 @@ public sealed class SettingsViewModel(ApplicationSession session) : ViewModelBas
         }
     }
     public string CurrentTheme => ThemeIndex switch { 1 => "light", 2 => "dark", _ => "system" };
-    public bool HasChanges => saved is not null && (directory != saved.DownloadDir || CurrentTheme != saved.Theme);
+    public bool HasChanges => saved is not null && (directory != saved.DownloadDir || CurrentTheme != saved.Theme || ParallelIndex + 1 != saved.MaxParallel);
     public bool CanManage => session.Available;
     public bool CanEdit => session.Connected && !session.Closing && !saving;
     public bool CanSave => CanEdit && HasChanges && !string.IsNullOrWhiteSpace(directory);
@@ -44,6 +46,7 @@ public sealed class SettingsViewModel(ApplicationSession session) : ViewModelBas
             try
             {
                 DownloadDirectory = settings.DownloadDir;
+                ParallelIndex = settings.MaxParallel - 1;
                 ThemeIndex = settings.Theme switch { "light" => 1, "dark" => 2, _ => 0 };
             }
             finally { loading = false; }
@@ -56,7 +59,7 @@ public sealed class SettingsViewModel(ApplicationSession session) : ViewModelBas
         saving = true; Refresh();
         try
         {
-            var settings = Protocol.Read<AppSettings>(await session.Client.RequestAsync("settings.update", new { download_dir = directory, theme = CurrentTheme }));
+            var settings = Protocol.Read<AppSettings>(await session.Client.RequestAsync("settings.update", new { download_dir = directory, theme = CurrentTheme, max_parallel = ParallelIndex + 1 }));
             session.ApplySettings(settings, discardDraft: true);
             session.Shell.Notify("设置已保存。", InfoBarSeverity.Success);
         }

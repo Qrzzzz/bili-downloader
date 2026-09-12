@@ -15,7 +15,7 @@
 <p>
   <strong>Navigation</strong><br/>
   <a href="https://github.com/Qrzzzz/bili-downloader/releases/latest">Download</a> ·
-  <a href="./docs/releases/v2.12.md">v2.12 Release Notes</a> ·
+  <a href="./docs/releases/v3.0.md">v3.0 Release Notes</a> ·
   <a href="#features">Features</a> ·
   <a href="./docs/architecture/v2.5-winui.md">Architecture</a> ·
   <a href="./SECURITY.md">Security</a> ·
@@ -47,24 +47,24 @@
 
 Download the latest stable release from [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest).
 
-The current release is **Bili Downloader Lite v2.12**, adding direct video URL extraction from share text and Markdown links. See the [release notes](./docs/releases/v2.12.md) and [validation record](./docs/validation/v2.12.md).
+**v3.0** adds persistent tasks, parallel downloads, batch input, and explicit recovery after restart. Get published builds from GitHub Releases. See the [release notes](./docs/releases/v3.0.md) and [validation record](./docs/validation/v3.0.md). The 3.0 asset names are:
 
 | File                              | Purpose                                 |
 | --------------------------------- | --------------------------------------- |
-| `BiliDownloader.v2.12.win-x64.zip` | Complete Windows x64 application        |
-| `BiliDownloader.v2.12.sbom.json`   | Software bill of materials              |
+| `BiliDownloader.v3.0.win-x64.zip` | Complete Windows x64 application        |
+| `BiliDownloader.v3.0.sbom.json`   | Software bill of materials              |
 | `SHA256SUMS`                      | SHA-256 checksums for release artifacts |
 
 ### Installation
 
-1. Download `BiliDownloader.v2.12.win-x64.zip`.
+1. Download `BiliDownloader.v3.0.win-x64.zip`.
 2. **Fully extract** the ZIP instead of launching the executable from inside the archive.
 3. Keep the main executable, backend executable, and runtime files in their original directory structure.
 4. Configure FFmpeg as described below.
 5. Run:
 
 ```text
-BiliDownloader.v2.12.exe
+BiliDownloader.v3.0.exe
 ```
 
 The release package includes the required **.NET, Windows App SDK, and Python runtimes**. End users do not need to install these separately.
@@ -76,7 +76,7 @@ Bili Downloader Lite **does not download, install, or bundle FFmpeg**.
 Obtain `ffmpeg.exe` yourself from a lawful and trusted source, then either place it at:
 
 ```text
-BiliDownloader.v2.12.exe
+BiliDownloader.v3.0.exe
 tools/
 └── ffmpeg.exe
 ```
@@ -100,19 +100,21 @@ On supported Windows 11 systems, the application can use native Windows effects 
 3. Parse the video to retrieve its title, uploader, cover, parts, and currently available formats.
 4. If account-authorized formats are required, sign in from the Account page using the in-app QR code.
 5. Select the parts, quality, MP4 / MP3 mode, and output directory.
-6. Start the download and follow its progress in the application.
-7. Review per-item success, failure, or cancellation results and retry failed items when appropriate.
+6. Add the video to the queue. Use batch parsing for multiple links; each item defaults to the part addressed by its link and can be configured individually.
+7. Open Tasks to follow independent progress, cancel, retry failed parts, continue unfinished parts, or open output files. Parsing remains available during downloads.
 
 > [!NOTE]
 > The application only shows formats that are **actually available to the current account, video, region, and platform policy**. Signing in does not grant access to content or qualities the account is not entitled to use.
 
-## ✨ What's new in v2.12
+## ✨ What's new in v3.0
 
-* Extract a video URL directly from copied share text, including titles, line breaks, punctuation, and Markdown links.
-* Preserve the selected part, discard share tracking parameters, and deduplicate repeated links. Multiple distinct links require keeping one target.
-* The input field supports multiple lines and wrapping; press Enter or click Parse to continue.
+* Independent durable tasks and a dedicated native Tasks page with filters, results, logs, retry, cancellation, and queue ordering.
+* Two simultaneous tasks by default, configurable from one to three; parts within each task run sequentially. Pausing the queue only stops new tasks from starting.
+* Batch parsing of up to 50 links or share texts, with isolated errors, duplicate detection, shared settings, and individual part selection.
+* Explicit restart recovery, generation-bound credentials, coordinated output paths, conservative disk reservations, and serialized FFmpeg processing across instances.
+* Removing records preserves files. Intermediate media remains in the output directory's `.bili-tasks` folder for continuation. Tasks never resume network activity automatically on launch.
 
-See the [v2.12 release notes](./docs/releases/v2.12.md) and [validation record](./docs/validation/v2.12.md).
+See the [v3.0 release notes](./docs/releases/v3.0.md) and [validation record](./docs/validation/v3.0.md).
 
 <a id="features"></a>
 
@@ -427,8 +429,8 @@ from the application directory. It does not search the system `PATH` for an arbi
 
 | Document                                                | Contents                                             |
 | ------------------------------------------------------- | ---------------------------------------------------- |
-| [v2.12 Release Notes](./docs/releases/v2.12.md)           | Current release changes                              |
-| [v2.12 Validation](./docs/validation/v2.12.md)            | Validation record for the current release            |
+| [v3.0 Release Notes](./docs/releases/v3.0.md)           | Current release changes                              |
+| [v3.0 Validation](./docs/validation/v3.0.md)            | Validation record for the current release            |
 | [WinUI Architecture](./docs/architecture/v2.5-winui.md) | Native Windows architecture and migration boundary   |
 | [IPC v1](./docs/architecture/ipc-v1.md)                 | WinUI ↔ Python protocol                              |
 | [Security Policy](./SECURITY.md)                        | Credentials, sensitive data, vulnerability reporting |
@@ -532,7 +534,7 @@ The current build output is written to:
 
 ```text
 dist\
-└── BiliDownloader.v2.12.win-x64\
+└── BiliDownloader.v3.0.win-x64\
 ```
 
 with a corresponding ZIP candidate.
@@ -541,7 +543,7 @@ Run the packaged smoke test with:
 
 ```powershell
 .\tools\package_smoke.ps1 `
-  -Executable .\dist\BiliDownloader.v2.12.win-x64\BiliDownloader.v2.12.exe
+  -Executable .\dist\BiliDownloader.v3.0.win-x64\BiliDownloader.v3.0.exe
 ```
 
 PR / main CI runs Python regression tests, WinUI compilation, and C# pipeline tests.

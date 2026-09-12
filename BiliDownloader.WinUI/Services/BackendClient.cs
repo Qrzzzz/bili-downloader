@@ -23,6 +23,7 @@ public sealed class BackendClient(Func<Process>? startProcess = null, TimeSpan? 
     private Task? reader, stderrReader;
     private long requestSequence;
     private bool stopping;
+    private string? sessionId;
     private Exception? transportFailure;
     public event Action<BackendEvent>? Event;
     public event Action<Exception>? Disconnected;
@@ -163,6 +164,7 @@ public sealed class BackendClient(Func<Process>? startProcess = null, TimeSpan? 
                     return;
                 }
                 var result = message.GetProperty("result").Clone();
+                if (result.TryGetProperty("session_id", out var session) && result.TryGetProperty("protocol_version", out _)) sessionId = session.GetString();
                 if (call.IsOperation)
                 {
                     string operationId = result.GetProperty("operation_id").GetString()!;
@@ -184,6 +186,20 @@ public sealed class BackendClient(Func<Process>? startProcess = null, TimeSpan? 
         string op = message.GetProperty("operation_id").GetString()!;
         string name = message.GetProperty("event").GetString()!;
         if (name == "shutdown.ready") return;
+        if (name == "task.changed")
+        {
+            if (op != sessionId) throw new InvalidDataException("任务事件会话无效。");
+            long taskSeq = message.GetProperty("seq").GetInt64();
+            if (taskSeq <= 0 || sequences.TryGetValue(op, out var priorTaskSeq) && taskSeq <= priorTaskSeq) throw new InvalidDataException("任务事件顺序异常。");
+            var taskData = message.GetProperty("data").Clone();
+            var change = Protocol.Read<TaskChange>(taskData);
+            if (change.Task is null || string.IsNullOrWhiteSpace(change.Task.TaskId) || change.Revision < 1 || change.Task.Revision < 1 ||
+                change.Task.State is not ("queued" or "preparing" or "downloading" or "waiting_resources" or "merging" or "converting" or "postprocessing" or "verifying" or "cancelling" or "completed" or "partial" or "failed" or "cancelled" or "interrupted" or "blocked"))
+                throw new InvalidDataException("任务事件结构无效。");
+            sequences[op] = taskSeq;
+            Event?.Invoke(new BackendEvent(op, taskSeq, name, taskData));
+            return;
+        }
         // Ignore stale events from completed operations. Only accepted operations own state.
         if (!operations.TryGetValue(op, out _)) return;
         long seq = message.GetProperty("seq").GetInt64();
