@@ -13,6 +13,8 @@ public sealed class ApplicationSession : ViewModelBase
     public DownloadViewModel Download { get; }
     public AccountViewModel Account { get; }
     public SettingsViewModel Settings { get; }
+    public TasksViewModel Tasks { get; }
+    private DispatcherQueueTimer? taskTimer;
     public DispatcherQueue Dispatcher { get; set; } = null!;
     public bool Connected { get; private set; }
     public bool Busy { get; private set; }
@@ -24,6 +26,8 @@ public sealed class ApplicationSession : ViewModelBase
     public string? ActiveMethod { get; private set; }
     private string? operationId;
     public event Action<string>? ThemeRequested;
+    public event Action? TasksRequested;
+    public void ShowTasks() => TasksRequested?.Invoke();
 
     public ApplicationSession(BackendClient? client = null)
     {
@@ -31,10 +35,11 @@ public sealed class ApplicationSession : ViewModelBase
         Download = new DownloadViewModel(this);
         Account = new AccountViewModel(this);
         Settings = new SettingsViewModel(this);
+        Tasks = new TasksViewModel(this);
         Client.Event += e => Dispatcher.TryEnqueue(() => HandleEvent(e));
         Client.Disconnected += ex => Dispatcher.TryEnqueue(() =>
         {
-            Connected = false; Changed(); Report(ex);
+            Connected = false; taskTimer?.Stop(); Tasks.Disconnected(); Changed(); Report(ex);
         });
     }
 
@@ -54,6 +59,11 @@ public sealed class ApplicationSession : ViewModelBase
             foreach (var text in hello.ConfigDiagnostics) Download.AppendLog(text);
             Changed();
             if (!hello.SafeMode && hello.Status.Code is not "none") await Account.ValidateAsync();
+            await Tasks.ReloadAsync();
+            taskTimer = Dispatcher.CreateTimer();
+            taskTimer.Interval = TimeSpan.FromSeconds(2);
+            taskTimer.Tick += async (_, _) => await ExecuteAsync(Tasks.ReloadAsync);
+            taskTimer.Start();
         }
         catch (Exception ex) { Report(ex); }
     }
@@ -130,12 +140,13 @@ public sealed class ApplicationSession : ViewModelBase
 
     public void Changed()
     {
-        Refresh(); Download.Refresh(); Account.Refresh(); Settings.Refresh();
+        Refresh(); Download.Refresh(); Account.Refresh(); Settings.Refresh(); Tasks.Refresh();
     }
 
     private void HandleEvent(BackendEvent e)
     {
         if (Closing) return;
+        if (e.Name == "task.changed") { Tasks.Changed(Protocol.Read<TaskChange>(e.Data)); return; }
         if (e.OperationId != operationId) return;
         if (e.Name == "log.message") Download.AppendLog(e.Data.GetProperty("text").GetString() ?? "");
         if (e.Name == "download.progress") Download.Progress(Protocol.Read<DownloadProgress>(e.Data));
@@ -144,7 +155,7 @@ public sealed class ApplicationSession : ViewModelBase
 
     public async Task ShutdownAsync()
     {
-        Closing = true; Changed();
+        Closing = true; taskTimer?.Stop(); Changed();
         Shell.Notify("正在安全关闭，等待后台任务释放资源…", InfoBarSeverity.Warning);
         await Client.ShutdownAsync();
     }

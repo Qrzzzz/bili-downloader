@@ -6,6 +6,13 @@
 - PR/main 执行 Python 回归、真实 WinUI 编译和 C# 管道测试；最终目录/ZIP 组包、package smoke 和归档审计集中在 Release。
 - 真实扫码、下载、界面截图和许可证复核按相关改动触发；公网探测仅手动运行。无关变更不要求重复人工验收。
 
+## v3.0 发布边界
+
+- 基于 main `f022ea8`，实现提交 `0f5c911`；实现独立持久任务、受控并行、批量添加及原生任务页。2026-09-12 用户授权将中间产物移入回收站并推送发布，按 PR、CI、保留实现作者的合并、注释标签及 Release 资产核验顺序执行。
+- 当前协议为 [IPC v2](./docs/architecture/ipc-v2.md)。旧输入修订不再控制持久任务；后续历史小节描述对应旧版本，不覆盖 3.0。
+- 真实公网媒体下载与夹具/原生状态验证分开记录，详见 [3.0 验证记录](./docs/validation/v3.0.md)。
+- 本机两项公网媒体尝试因 TLS 证书校验错误失败；保留该未通过结果。公网 smoke 按当前清单为手动诊断，不作为合并或发布门槛；不能将 CI 或组包通过替代真实媒体、手机扫码及辅助技术人工验收。
+
 ## v2.12 发布边界
 
 - 从 main `bbd842c` 开发分享文本提取，分支 `codex/v2.12-share-text`；用户已授权清理临时产物并推送发布，按 PR、CI、合并、注释标签及 Release 资产核验顺序执行。源码、程序集、界面与 Release 工作流目标同步为 2.12 / v2.12。
@@ -151,3 +158,11 @@
 - 下载及外置 FFmpeg 相关变更才需要真实解析/下载验证；界面变更才需要相应截图与交互验收。
 - 首次分发、依赖或分发方式变化时复核对应许可证/notice；依赖变化或出现新安全公告时执行漏洞审计，不要求每个无关补丁重复复核全部依赖。
 - EXE 大小、SHA-256 已由产物审计自动记录；无签名证书和体积变化不构成额外门槛，不宣称未完成的 Authenticode 签名。
+
+# 3.0 Codex 提交归属要求
+
+3.0 的 Codex 实现提交应使用可归属至 `chatgpt-codex-connector[bot]` 的 author：`Codex <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>`；committer 保留实际提交者。使用真实的非空实现提交，不创建空提交凑贡献，不改写历史版本或全局 Git 身份。
+
+合并时保留该作者身份；如果使用 squash，应核对最终默认分支提交的 author。README 署名或 Co-authored-by 不能代替本要求。发布阶段必须验证 GitHub commit API 的 `author.login`，并检查原生 Contributors/API 是否包含该账号。分支上的本地署名不算完成，GitHub 统计缓存未刷新时据实记为待验证。
+
+规则来源：[GitHub 原生 Contributors](https://docs.github.com/en/repositories/viewing-activity-and-data-for-your-repository/viewing-a-projects-contributors)。本次仅核对了该账号的公开 ID 与当前仓库贡献者列表，未声称已经归属。

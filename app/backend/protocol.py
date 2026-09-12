@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any
 
-VERSION = 1
+VERSION = 2
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
@@ -41,7 +41,7 @@ def decode_request(line: bytes) -> dict:
     if not isinstance(request, dict) or set(request) != {"v", "type", "id", "method", "params"}:
         raise ProtocolError("invalid_request", "Invalid request envelope.")
     if type(request["v"]) is not int or request["v"] != VERSION:
-        raise ProtocolError("protocol_mismatch", "IPC version 1 is required.")
+        raise ProtocolError("protocol_mismatch", "IPC version 2 is required.")
     if request["type"] != "request" or not isinstance(request["id"], str) or not ID_PATTERN.fullmatch(request["id"]):
         raise ProtocolError("invalid_request", "Invalid request identity.")
     if not isinstance(request["method"], str) or not isinstance(request["params"], dict):

@@ -53,7 +53,11 @@ public sealed partial class DownloadPage : Page
     private async void Parse_Click(object sender, RoutedEventArgs e) => await App.Session.ExecuteAsync(Model.ParseAsync);
     private async void Input_KeyDown(object sender, KeyRoutedEventArgs e) { if (e.Key == VirtualKey.Enter && Model.CanParse) { e.Handled = true; await App.Session.ExecuteAsync(Model.ParseAsync); } }
     private async void Browse_Click(object sender, RoutedEventArgs e) => await App.Session.ExecuteAsync(async () => { var path = await WindowsShellService.PickFolderAsync(); if (path is not null) Model.DownloadDirectory = path; });
-    private async void Download_Click(object sender, RoutedEventArgs e) => await App.Session.ExecuteAsync(() => Model.DownloadAsync());
+    private async void Download_Click(object sender, RoutedEventArgs e) => await App.Session.ExecuteAsync(Model.EnqueueAsync);
+    private async void BatchParse_Click(object sender, RoutedEventArgs e) => await App.Session.ExecuteAsync(Model.ParseBatchAsync);
+    private async void AddBatch_Click(object sender, RoutedEventArgs e) => await App.Session.ExecuteAsync(Model.EnqueueBatchAsync);
+    private void ConfigureBatch_Click(object sender, RoutedEventArgs e) => Model.ConfigureBatch((BatchInputRow)((FrameworkElement)sender).DataContext);
+    private void Tasks_Click(object sender, RoutedEventArgs e) => App.Session.ShowTasks();
     private async void Cancel_Click(object sender, RoutedEventArgs e) => await App.Session.ExecuteAsync(App.Session.CancelAsync);
     private void SelectAll_Click(object sender, RoutedEventArgs e) => PartsList.SelectAll();
     private void SelectNone_Click(object sender, RoutedEventArgs e) => PartsList.SelectedItems.Clear();
