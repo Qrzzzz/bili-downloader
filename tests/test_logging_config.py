@@ -189,7 +189,8 @@ def test_config_atomic_save_retains_previous_file_on_replace_failure(
     path = config.config_path()
     previous = path.read_bytes()
     payload = json.loads(previous.decode("utf-8"))
-    assert payload == {"download_dir": str(first_dir.resolve()), "schema_version": config.CONFIG_SCHEMA_VERSION, "theme": "system", "max_parallel": 2}
+    assert payload == {"download_dir": str(first_dir.resolve()), "schema_version": config.CONFIG_SCHEMA_VERSION, "theme": "system", "max_parallel": 2,
+                       "remember_download_preferences": True, "download_mode": "audio_video", "preferred_quality": None}
 
     with monkeypatch.context() as scoped:
         scoped.setattr(config.os, "replace", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("fault")))

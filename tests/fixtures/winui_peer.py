@@ -33,11 +33,12 @@ for line in sys.stdin:
         result = settings
     elif method == "tasks.list":
         result = {"paused": False, "max_parallel": 2, "tasks": [], "revision": 0}
-    elif method == "settings.update":
+    elif method in {"settings.update", "settings.remember"}:
         if params.get("download_dir") == "reject-save":
             error = {"code": "fixture_save_failed", "message": "无法保存设置", "retryable": False, "detail": "test fixture"}
         else:
-            settings = {**settings, **params}
+            if method != "settings.remember" or settings.get("remember_download_preferences", True):
+                settings = {**settings, **params}
             result = settings
     elif method in {"parse.start", "download.start", "download.retry", "diagnostics.run", "auth.qr.start", "session.validate", "fixture.malformed_terminal"}:
         counter += 1
