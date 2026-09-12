@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
 from enum import Enum
 from hashlib import sha256
@@ -633,6 +633,9 @@ class DownloadController:
         self._cancelled = threading.Event()
         self._phase_lock = threading.Lock()
         self._phase = "idle"
+        self.task_id: str | None = None
+        self.task_owner: str | None = None
+        self.media_held = False
 
     @property
     def cancelled(self) -> bool:
@@ -1143,7 +1146,7 @@ def _probe_media(
     return _MediaMetadata(containers, bool(video_lines), heights, bool(audio_lines), bitrates)
 
 
-def _matches_output_spec(
+def _matches_output_spec_unlocked(
     path: Path, plan: DownloadPlan, ffmpeg_path: str,
     controller: DownloadController | None = None,
 ) -> bool:
@@ -1173,6 +1176,26 @@ def _matches_output_spec(
     return (completed is not None and completed.returncode == 0
             and before.st_size > 0
             and (before.st_size, before.st_mtime_ns) == (after.st_size, after.st_mtime_ns))
+
+
+@contextmanager
+def _media_slot(controller: DownloadController | None):
+    if controller is None or not controller.task_id or controller.media_held:
+        yield
+        return
+    from app.services.task_resources import resource_lease
+    with resource_lease("media-processing", controller):
+        controller.media_held = True
+        try:
+            yield
+        finally:
+            controller.media_held = False
+
+
+def _matches_output_spec(path: Path, plan: DownloadPlan, ffmpeg_path: str,
+                         controller: DownloadController | None = None) -> bool:
+    with _media_slot(controller):
+        return _matches_output_spec_unlocked(path, plan, ffmpeg_path, controller)
 
 
 def _choose_output_target(
@@ -1268,16 +1291,25 @@ def download_videos(
                 controller.set_phase("downloading")
                 captured: list[str] = []
                 postprocessing_started = False
+                resources = ExitStack()
+                space_check = None
 
                 def download_hook(status: dict[str, Any]) -> None:
                     if controller.cancelled and not postprocessing_started:
                         raise DownloadCancelled("用户已取消下载")
+                    if space_check and not postprocessing_started:
+                        space_check(status.get("total_bytes") or status.get("total_bytes_estimate") or status.get("downloaded_bytes"))
                     progress.download(ordinal, part, status)
 
                 def postprocessor_hook(status: dict[str, Any]) -> None:
                     nonlocal postprocessing_started
                     if not postprocessing_started and controller.cancelled:
                         raise DownloadCancelled("用户已取消下载")
+                    if not postprocessing_started and controller.task_id:
+                        controller.set_phase("waiting_resources")
+                        progress_hook({"phase": "waiting_resources", "part_index": part.index,
+                                       "part_number": ordinal, "part_count": len(plan.parts)})
+                        resources.enter_context(_media_slot(controller))
                     postprocessing_started = True
                     controller.set_phase("converting" if mode is DownloadMode.AUDIO_MP3 else "merging")
                     progress.postprocess(ordinal, part, status)
@@ -1286,6 +1318,14 @@ def download_videos(
                     captured.append(filename)
 
                 try:
+                    if controller.task_id:
+                        from app.services.task_resources import resource_lease, reserve_space
+                        # Lock the identity, including all numbered collision variants.
+                        identity_path = os.path.normcase(str(Path(target_dir, _output_stem(planned, plan)).resolve()))
+                        controller.set_phase("waiting_resources")
+                        progress_hook({"phase": "waiting_resources", "part_index": part.index,
+                                       "part_number": ordinal, "part_count": len(plan.parts)})
+                        resources.enter_context(resource_lease("output:" + identity_path, controller))
                     output_stem, expected_output, reused_existing = _choose_output_target(
                         target_dir,
                         planned,
@@ -1306,8 +1346,15 @@ def download_videos(
                     # Downloads run sequentially: reserve only this new item, using
                     # current free space after earlier items have finished.
                     _check_disk_space(target_dir, DownloadPlan((planned,), plan.requested_height, mode))
+                    work_dir = target_dir
+                    if controller.task_id:
+                        space_check = resources.enter_context(reserve_space(target_dir, planned.estimated_bytes, controller.task_owner, controller))
+                        stage = Path(target_dir, ".bili-tasks", controller.task_id)
+                        stage.mkdir(parents=True, exist_ok=True)
+                        work_dir = str(stage)
+                    controller.set_phase("downloading")
                     escaped_stem = output_stem.replace("%", "%%")
-                    outtmpl = os.path.join(target_dir, f"{escaped_stem}.%(ext)s")
+                    outtmpl = os.path.join(work_dir, f"{escaped_stem}.%(ext)s")
                     opts = base_ydl_options(config, emitter, cookiefile, ffmpeg_path)
                     opts.update(
                         {
@@ -1319,7 +1366,7 @@ def download_videos(
                             "progress_hooks": [download_hook],
                             "postprocessor_hooks": [postprocessor_hook],
                             "post_hooks": [final_path_hook],
-                            "paths": {"home": target_dir},
+                            "paths": {"home": work_dir},
                             "noplaylist": True,
                         }
                     )
@@ -1338,7 +1385,7 @@ def download_videos(
                     with _youtube_dl(opts) as ydl:
                         info = _require_info(ydl.extract_info(part.url, download=True))
                     reported_files = _existing_output_paths(info, captured)
-                    expected_path = expected_output.resolve()
+                    expected_path = Path(work_dir, expected_output.name).resolve()
                     if str(expected_path) not in reported_files or not expected_path.is_file():
                         raise RuntimeError("下载结束，但未捕获到当前规格的最终输出文件。")
                     # A cancel already deferred through merge/conversion must also
@@ -1348,9 +1395,21 @@ def download_videos(
                     verification_controller = None if deferred_cancel else controller
                     if not deferred_cancel:
                         controller.set_phase("verifying")
+                        if controller.task_id:
+                            progress_hook({"phase": "verifying", "part_index": part.index,
+                                           "part_number": ordinal, "part_count": len(plan.parts)})
                     if not _matches_output_spec(expected_path, plan, ffmpeg_path, verification_controller):
                         state = "已有" if reused_existing else "新生成"
                         raise RuntimeError(f"{state}输出无法验证为当前请求的媒体规格。")
+                    if controller.task_id:
+                        # Atomic no-overwrite publication on Windows. POSIX link also
+                        # fails if a foreign writer created the destination meanwhile.
+                        if os.name == "nt":
+                            os.rename(expected_path, expected_output)
+                        else:
+                            os.link(expected_path, expected_output)
+                            expected_path.unlink()
+                        expected_path = expected_output.resolve()
                     files = (str(expected_path),)
                     results.append(PartDownloadResult(part, PartDownloadStatus.COMPLETED, files))
                     progress.terminal(ordinal, part, "completed", complete=True)
@@ -1378,6 +1437,8 @@ def download_videos(
                     }:
                         abort_error = classified
                         break
+                finally:
+                    resources.close()
 
             processed = {result.part.index for result in results}
             if controller.cancelled:

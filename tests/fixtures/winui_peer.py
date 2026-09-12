@@ -14,7 +14,7 @@ cancellations = 0
 
 
 def send(value):
-    print(json.dumps({"v": 1, **value}, ensure_ascii=False), flush=True)
+    print(json.dumps({"v": 2, **value}, ensure_ascii=False), flush=True)
 
 
 def event(name, data):
@@ -27,10 +27,12 @@ for line in sys.stdin:
     method, params = request["method"], request.get("params", {})
     result, error = {}, None
     if method == "hello":
-        result = {"protocol_version": 1, "backend_version": __version__, "session_id": "ui-fixture", "safe_mode": False,
+        result = {"protocol_version": 2, "backend_version": __version__, "session_id": "ui-fixture", "safe_mode": False,
                   "settings": settings, "status": status, "config_diagnostics": []}
     elif method == "settings.get":
         result = settings
+    elif method == "tasks.list":
+        result = {"paused": False, "max_parallel": 2, "tasks": [], "revision": 0}
     elif method == "settings.update":
         if params.get("download_dir") == "reject-save":
             error = {"code": "fixture_save_failed", "message": "无法保存设置", "retryable": False, "detail": "test fixture"}

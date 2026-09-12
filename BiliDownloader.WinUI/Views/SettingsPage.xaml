@@ -12,6 +12,10 @@
                     <ComboBox Header="外观" SelectedIndex="{Binding ThemeIndex, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="ThemePreference">
                         <ComboBoxItem Content="跟随 Windows"/><ComboBoxItem Content="浅色"/><ComboBoxItem Content="深色"/>
                     </ComboBox>
+                    <ComboBox Header="同时下载任务数" SelectedIndex="{Binding ParallelIndex, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="MaxParallel">
+                        <ComboBoxItem Content="1 个"/><ComboBoxItem Content="2 个（默认）"/><ComboBoxItem Content="3 个"/>
+                    </ComboBox>
+                    <TextBlock Text="每个任务内的分 P 依次下载。降低数量不会打断正在执行的任务。" Style="{StaticResource SecondaryTextStyle}"/>
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                         <TextBox Header="默认下载目录" Text="{Binding DownloadDirectory, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -39,7 +43,7 @@
             </Expander>
             <Expander Header="关于与更新" HorizontalAlignment="Stretch">
                 <StackPanel Spacing="12">
-                    <TextBlock Text="Bili Downloader Lite 2.12" Style="{ThemeResource BodyStrongTextBlockStyle}"/>
+                    <TextBlock Text="Bili Downloader Lite 3.0" Style="{ThemeResource BodyStrongTextBlockStyle}"/>
                     <TextBlock Text="{Binding UpdateText}" TextWrapping="Wrap"/>
                     <StackPanel Orientation="Horizontal" Spacing="12">
                         <Button Content="检查更新" Click="Update_Click" IsEnabled="{Binding CanManage}"/>

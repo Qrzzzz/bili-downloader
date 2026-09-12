@@ -11,6 +11,7 @@
                 <StackPanel Spacing="16">
                     <TextBlock Text="{Binding StatusTitle}" Style="{ThemeResource SubtitleTextBlockStyle}"/>
                     <TextBlock Text="{Binding Status}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" AutomationProperties.AutomationId="AccountStatus"/>
+                    <TextBlock Text="有任务正在使用登录态。请等待任务安全结束后再更改账号。" TextWrapping="Wrap" Visibility="{Binding TaskLockVisibility}"/>
                     <Button Content="扫码登录" Click="Login_Click" Style="{StaticResource AccentButtonStyle}" Visibility="{Binding LoginVisibility}"
                             IsEnabled="{Binding CanLogin}" AutomationProperties.AutomationId="LoginButton"/>
                     <StackPanel Visibility="{Binding QrVisibility}" Spacing="12">

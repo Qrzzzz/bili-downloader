@@ -24,8 +24,9 @@ public sealed class AccountViewModel(ApplicationSession session) : ViewModelBase
     public string StatusTitle => statusCode switch { "verified" => "已登录", "none" => "未登录", "invalid" => "登录态不可用", _ => "登录态待验证" };
     public Visibility LoginVisibility => statusCode == "verified" || IsLoggingIn ? Visibility.Collapsed : Visibility.Visible;
     public Visibility ManageVisibility => HasCredentials && !IsLoggingIn ? Visibility.Visible : Visibility.Collapsed;
-    public bool CanLogin => session.Available && !SafeMode;
-    public bool CanManage => session.Available && HasCredentials;
+    public bool CanLogin => session.Available && !SafeMode && !session.Tasks.SavedRunning;
+    public bool CanManage => session.Available && HasCredentials && !session.Tasks.SavedRunning;
+    public Visibility TaskLockVisibility => session.Tasks.SavedRunning ? Visibility.Visible : Visibility.Collapsed;
     public bool IsLoggingIn => session.Busy && session.ActiveMethod == "auth.qr.start";
     public bool CanRefresh => IsLoggingIn && !refreshing && !session.CancelRequested && !session.Closing;
     public bool CanCancel => IsLoggingIn && session.CanCancel;

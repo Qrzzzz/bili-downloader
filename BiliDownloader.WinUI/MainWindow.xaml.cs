@@ -30,6 +30,7 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
         App.Session.Dispatcher = DispatcherQueue;
         theme = new ThemeService(Root);
         App.Session.ThemeRequested += theme.Apply;
+        App.Session.TasksRequested += () => Navigation.SelectedItem = Navigation.MenuItems.OfType<NavigationViewItem>().First(i => (string)i.Tag == "tasks");
         shutdown = new ShutdownCoordinator(this, App.Session);
         Closed += (_, _) => { App.Session.ThemeRequested -= theme.Apply; theme.Dispose(); };
         Navigation.SelectedItem = Navigation.MenuItems[0];
@@ -56,7 +57,8 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
     private void Navigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
         if (App.Session.Closing) return;
-        Type target = args.IsSettingsSelected ? typeof(SettingsPage) : args.SelectedItemContainer?.Tag as string == "account" ? typeof(AccountPage) : typeof(DownloadPage);
+        Type target = args.IsSettingsSelected ? typeof(SettingsPage) : (args.SelectedItemContainer?.Tag as string) switch
+        { "account" => typeof(AccountPage), "tasks" => typeof(TasksPage), _ => typeof(DownloadPage) };
         if (ContentFrame.CurrentSourcePageType != target) ContentFrame.Navigate(target);
     }
     private void TitleBar_PaneToggleRequested(TitleBar sender, object args) => Navigation.IsPaneOpen = !Navigation.IsPaneOpen;

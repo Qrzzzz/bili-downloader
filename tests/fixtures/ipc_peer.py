@@ -22,7 +22,7 @@ def write(message, fragmented=False):
 
 def event(seq, name, data, operation="op"):
     write(
-        {"v": 1, "type": "event", "operation_id": operation, "seq": seq, "event": name, "data": data},
+        {"v": 2, "type": "event", "operation_id": operation, "seq": seq, "event": name, "data": data},
         scenario == "fragmented",
     )
 
@@ -35,17 +35,17 @@ for line in sys.stdin.buffer:
     request = json.loads(line)
     method = request["method"]
     if method == "shutdown":
-        write({"v": 1, "type": "response", "id": request["id"], "ok": True, "result": {"state": "draining"}})
+        write({"v": 2, "type": "response", "id": request["id"], "ok": True, "result": {"state": "draining"}})
         break
     if scenario == "unacknowledged":
         continue
     if scenario == "partial":
-        sys.stdout.buffer.write(b'{"v":1')
+        sys.stdout.buffer.write(b'{"v":2')
         break
 
     operation_count += 1
     operation = "op" if scenario in {"fragmented", "reuse_operation_id"} else f"op-{operation_count}"
-    reply = {"v": 1, "type": "response", "id": request["id"], "ok": True, "result": {"operation_id": operation}}
+    reply = {"v": 2, "type": "response", "id": request["id"], "ok": True, "result": {"operation_id": operation}}
     if scenario == "wrong_version":
         reply["v"] = 99
     if scenario == "malformed":

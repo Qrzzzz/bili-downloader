@@ -71,8 +71,11 @@ class AppConfig:
     download_dir: str = field(default_factory=_default_download_dir)
     schema_version: int = CONFIG_SCHEMA_VERSION
     theme: str = "system"
+    max_parallel: int = 2
 
     def __post_init__(self) -> None:
+        if type(self.max_parallel) is not int or not 1 <= self.max_parallel <= 3:
+            raise ConfigValidationError("同时下载数必须为 1 至 3。")
         if isinstance(self.schema_version, bool) or not isinstance(self.schema_version, int):
             raise ConfigValidationError("配置版本必须是整数。")
         if self.schema_version != CONFIG_SCHEMA_VERSION:
@@ -173,7 +176,7 @@ def load_config() -> AppConfig:
         if schema == 0:
             diagnostics.append("检测到旧版无版本号配置，已按当前 schema 迁移。")
 
-        unknown = sorted(set(data) - {"schema_version", "download_dir", "theme"})
+        unknown = sorted(set(data) - {"schema_version", "download_dir", "theme", "max_parallel"})
         if unknown:
             diagnostics.append("已忽略未知配置项：" + "、".join(unknown))
 
@@ -187,6 +190,7 @@ def load_config() -> AppConfig:
                 schema_version=CONFIG_SCHEMA_VERSION,
                 download_dir=data.get("download_dir", _default_download_dir()),
                 theme=theme,
+                max_parallel=data.get("max_parallel", 2),
             )
         except ConfigValidationError as exc:
             return _fallback(diagnostics, f"配置字段无效：{exc} 已使用默认配置。")

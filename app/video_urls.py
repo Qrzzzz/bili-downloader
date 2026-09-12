@@ -145,3 +145,26 @@ def _normalize_input_url(value: str) -> str:
         # sensitive tracking data. Never carry them into logs or error text.
         return urlunsplit(("https", "b23.tv", parsed.path, "", ""))
     return canonicalize_video_url(value).canonical_url
+
+
+def extract_video_inputs(raw: str) -> list[dict[str, str]]:
+    """Offline batch extraction, preserving invalid rows without following them."""
+    if len(raw) > 24000 or any(ord(c) < 32 and c not in "\r\n\t" for c in raw):
+        raise ValueError("批量输入过长或包含无效控制字符。")
+    candidates = [re.sub(r"\\([_&])", r"\1", m.group().rstrip(".,;:!?")) for m in SHARED_URL_RE.finditer(raw)]
+    candidates.extend(line.strip() for line in raw.splitlines() if BV_RE.fullmatch(line.strip()) or AV_RE.fullmatch(line.strip()))
+    if not candidates:
+        candidates = [raw.strip()]
+    rows, seen = [], set()
+    for value in candidates:
+        try:
+            url = normalize_video_input(value)
+            if url in seen:
+                continue
+            seen.add(url)
+            rows.append({"input": url, "message": ""})
+        except ValueError as exc:
+            rows.append({"input": "无效链接", "message": str(exc)})
+        if len(rows) > 50:
+            raise ValueError("一次最多添加 50 个视频，请分批粘贴。")
+    return rows

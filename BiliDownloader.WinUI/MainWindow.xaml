@@ -6,7 +6,7 @@
     <Window.SystemBackdrop><MicaBackdrop /></Window.SystemBackdrop>
     <Grid x:Name="Root" Loaded="Root_Loaded" Language="zh-CN">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-        <controls:TitleBar x:Name="AppTitleBar" Title="Bili Downloader Lite" Subtitle="2.12"
+        <controls:TitleBar x:Name="AppTitleBar" Title="Bili Downloader Lite" Subtitle="3.0"
                            IsPaneToggleButtonVisible="True" PaneToggleRequested="TitleBar_PaneToggleRequested" />
         <controls:NavigationView x:Name="Navigation" Grid.Row="1" PaneDisplayMode="Auto"
                                  OpenPaneLength="208" CompactPaneLength="48"
@@ -14,7 +14,8 @@
                                  IsSettingsVisible="True" IsBackButtonVisible="Collapsed"
                                  IsPaneToggleButtonVisible="False" SelectionChanged="Navigation_SelectionChanged">
             <controls:NavigationView.MenuItems>
-                <controls:NavigationViewItem Content="下载" Tag="download" Icon="Download" AutomationProperties.AutomationId="NavDownload"/>
+                <controls:NavigationViewItem Content="添加下载" Tag="download" Icon="Add" AutomationProperties.AutomationId="NavDownload"/>
+                <controls:NavigationViewItem Content="任务" Tag="tasks" Icon="AllApps" AutomationProperties.AutomationId="NavTasks"/>
                 <controls:NavigationViewItem Content="账号" Tag="account" Icon="Contact" AutomationProperties.AutomationId="NavAccount"/>
             </controls:NavigationView.MenuItems>
             <Grid>

@@ -1,0 +1,61 @@
+<Page x:Class="BiliDownloader.WinUI.Views.TasksPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      Loaded="Page_Loaded" Unloaded="Page_Unloaded">
+    <Grid Padding="24" RowSpacing="12" MaxWidth="960" HorizontalAlignment="Stretch">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <StackPanel Spacing="6">
+            <TextBlock Text="任务" Style="{ThemeResource TitleTextBlockStyle}"/>
+            <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" AutomationProperties.AutomationId="TaskSummary"/>
+            <TextBlock Text="暂停队列后，正在执行的任务仍会安全完成。移除记录会保留下载文件。" Style="{StaticResource SecondaryTextStyle}"/>
+        </StackPanel>
+        <Grid Grid.Row="1" ColumnSpacing="12">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <ComboBox SelectedIndex="{Binding FilterIndex, Mode=TwoWay}" AutomationProperties.Name="任务状态筛选">
+                <ComboBoxItem Content="全部"/><ComboBoxItem Content="进行中"/><ComboBoxItem Content="已完成"/><ComboBoxItem Content="需处理"/>
+            </ComboBox>
+            <Button Grid.Column="1" Content="{Binding PauseText}" Click="Pause_Click" IsEnabled="{Binding CanManage}" AutomationProperties.AutomationId="PauseQueue"/>
+        </Grid>
+        <Grid Grid.Row="2">
+            <TextBlock Text="{Binding EmptyText}" Visibility="{Binding EmptyVisibility}" TextWrapping="Wrap"/>
+            <ListView ItemsSource="{Binding Items}" SelectionMode="None" HorizontalContentAlignment="Stretch" AutomationProperties.AutomationId="TaskList" AutomationProperties.Name="下载任务">
+                <ListView.Footer><Button Content="清理已完成记录" Click="Clear_Click" Margin="0,12" IsEnabled="{Binding CanClearCompleted}"/></ListView.Footer>
+                <ListView.ItemTemplate><DataTemplate>
+                    <Border Style="{StaticResource SurfaceCardStyle}" Margin="0,0,0,12" HorizontalAlignment="Stretch">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="{Binding Title}" TextWrapping="Wrap" FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding Specification}" Style="{StaticResource SecondaryTextStyle}"/>
+                            <TextBlock Text="{Binding StateText}" AutomationProperties.LiveSetting="Polite"/>
+                            <ProgressBar Value="{Binding Percent}" IsIndeterminate="{Binding Indeterminate}" Visibility="{Binding ProgressVisibility}" AutomationProperties.Name="此任务进度"/>
+                            <TextBlock Text="{Binding Metrics}" TextWrapping="Wrap"/>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button Content="取消任务" Click="Cancel_Click" IsEnabled="{Binding CanCancel}" Visibility="{Binding CancelVisibility}"/>
+                                <Button Content="继续未完成项" Click="Resume_Click" IsEnabled="{Binding CanResume}" Visibility="{Binding ResumeVisibility}"/>
+                                <Button Content="重试失败项" Click="Retry_Click" IsEnabled="{Binding CanRetry}" Visibility="{Binding RetryVisibility}"/>
+                            </StackPanel>
+                            <Expander Header="详情与文件" Expanding="Details_Expanding" Collapsed="Details_Collapsed" HorizontalAlignment="Stretch">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="{Binding Directory}" TextWrapping="Wrap" IsTextSelectionEnabled="True"/>
+                                    <TextBlock Text="{Binding Details}" TextWrapping="Wrap" IsTextSelectionEnabled="True"/>
+                                    <ComboBox ItemsSource="{Binding Files}" SelectedItem="{Binding SelectedFile, Mode=TwoWay}" DisplayMemberPath="Name" HorizontalAlignment="Stretch" AutomationProperties.Name="任务输出文件"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button Content="打开文件" Click="File_Click" IsEnabled="{Binding CanOpenFile}"/>
+                                        <Button Content="打开目录" Click="Folder_Click" IsEnabled="{Binding CanOpenFolder}"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button Content="移到队首" Click="First_Click" IsEnabled="{Binding CanReorder}"/>
+                                        <Button Content="移除记录" Click="Remove_Click" IsEnabled="{Binding CanRemove}"/>
+                                    </StackPanel>
+                                    <Button Content="确认使用当前账号并继续" Click="Reauthorize_Click" IsEnabled="{Binding CanResume}" Visibility="{Binding ReauthorizeVisibility}"/>
+                                    <Expander Header="任务日志" HorizontalAlignment="Stretch">
+                                        <TextBox Text="{Binding Logs}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="180" AutomationProperties.Name="此任务的脱敏日志"/>
+                                    </Expander>
+                                </StackPanel>
+                            </Expander>
+                        </StackPanel>
+                    </Border>
+                </DataTemplate></ListView.ItemTemplate>
+            </ListView>
+        </Grid>
+    </Grid>
+</Page>
