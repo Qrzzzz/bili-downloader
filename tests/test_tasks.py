@@ -76,6 +76,20 @@ def test_parallel_cancel_isolated_and_queue_refills(queue_env, monkeypatch):
     assert states[b["task_id"]] == states[c["task_id"]] == "completed"
 
 
+def test_preferences_do_not_change_frozen_task_specs(queue_env):
+    from dataclasses import replace
+    from app.downloader import FormatChoice
+
+    manager, _, parsed, folder, _ = queue_env
+    video = parsed()
+    video.info.formats.append(FormatChoice("1080p", "bestvideo[height=1080]+bestaudio/best[height=1080]", 1080, "exact_height"))
+    task = manager.create(video, [1], "audio_video", "1", str(folder), "preferences-task")["task"]
+    before = manager.repo.get(task["task_id"])["spec"]
+    manager.config = replace(manager.config, download_mode="audio_mp3", preferred_quality=720, download_dir=str(folder / "new"))
+    assert manager.repo.get(task["task_id"])["spec"] == before
+    assert before["mode"] == "audio_video" and before["height"] == 1080 and before["directory"] == str(folder)
+
+
 def test_pause_and_lower_limit_do_not_interrupt_active_tasks(queue_env, monkeypatch):
     from dataclasses import replace
     from app.downloader import DownloadBatchResult

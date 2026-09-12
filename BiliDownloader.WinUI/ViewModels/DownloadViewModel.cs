@@ -19,6 +19,10 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     private string progressPhase = "preparing";
     private string? selectedOutput;
     private FormatChoice? selectedFormat;
+    private bool applyingPreferences, rememberPreferences = true;
+    private int? preferredHeight;
+    private Task preferenceSave = Task.CompletedTask;
+    internal Task WaitForPreferenceSaveAsync() => preferenceSave;
     private bool adding;
     private string queueMessage = "";
     private readonly Dictionary<string, string> submissionTokens = [];
@@ -33,7 +37,20 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     public ObservableCollection<string> OutputFiles { get; } = [];
     public ObservableCollection<OutputFileItem> OutputChoices { get; } = [];
     public HashSet<int> SelectedParts { get; } = [];
-    public FormatChoice? SelectedFormat { get => selectedFormat; set { if (Set(ref selectedFormat, value)) Refresh(); } }
+    public FormatChoice? SelectedFormat
+    {
+        get => selectedFormat;
+        set
+        {
+            if (!Set(ref selectedFormat, value)) return;
+            if (!applyingPreferences && value is not null && Formats.Contains(value))
+            {
+                preferredHeight = value.Height;
+                RememberPreference(new { preferred_quality = preferredHeight });
+            }
+            Refresh();
+        }
+    }
     public string? SelectedOutput { get => selectedOutput; set { if (Set(ref selectedOutput, value)) Refresh(); } }
     public OutputFileItem? SelectedOutputChoice { get => OutputChoices.FirstOrDefault(file => file.Path == SelectedOutput); set => SelectedOutput = value?.Path; }
     public bool CanOpenFile => SelectedOutput is not null && File.Exists(SelectedOutput);
@@ -41,7 +58,40 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     public bool CanOpenFolder => Directory.Exists(ResultDirectory);
     public string Input { get => input; set { if (CanEditInput && Set(ref input, value)) Invalidate(); } }
     public int CredentialIndex { get => credentialIndex; set { if (Set(ref credentialIndex, value)) Invalidate(); } }
-    public int ModeIndex { get => modeIndex; set { if (Set(ref modeIndex, value)) Refresh(); } }
+    public int ModeIndex
+    {
+        get => modeIndex;
+        set
+        {
+            if (value is not (0 or 1) || !Set(ref modeIndex, value)) return;
+            if (!applyingPreferences) RememberPreference(new { download_mode = value == 1 ? "audio_mp3" : "audio_video" });
+            Refresh();
+        }
+    }
+    private void RememberPreference(object patch)
+    {
+        if (rememberPreferences && session.Connected && !session.Closing)
+            preferenceSave = session.ExecuteAsync(() => session.UpdateSettingsAsync(patch, fromDownload: true));
+    }
+    internal void ApplyPreferences(AppSettings settings)
+    {
+        applyingPreferences = true;
+        try
+        {
+            rememberPreferences = settings.RememberDownloadPreferences;
+            ModeIndex = settings.DownloadMode == "audio_mp3" ? 1 : 0;
+            preferredHeight = settings.PreferredQuality;
+            SelectedFormat = ResolveFormat(Formats);
+        }
+        finally { applyingPreferences = false; }
+        Refresh();
+    }
+    private FormatChoice? ResolveFormat(IEnumerable<FormatChoice> formats) => preferredHeight is { } height
+        ? formats.FirstOrDefault(f => f.Height == height)
+        : formats.FirstOrDefault(f => f.Height is null) ?? formats.OrderByDescending(f => f.Height).FirstOrDefault();
+    public string QualityHint => SelectedFormat is null && preferredHeight is not null
+        ? $"此视频未提供偏好的 {preferredHeight}p，请选择其他画质后加入队列。原偏好会保留，直到你主动更改。"
+        : "指定分辨率时严格匹配，不自动降档。";
     public string DownloadDirectory { get => directory; set { if (Set(ref directory, value)) Refresh(); } }
     public string Status { get => status; set => Set(ref status, value); }
     public string Logs { get => logs; private set => Set(ref logs, value); }
@@ -133,10 +183,16 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     internal void ApplyVideo(VideoInfo parsed)
     {
         video = parsed; result = null; showResult = false; Thumbnail = null;
-        SelectedParts.Clear(); Parts.Clear(); Formats.Clear();
+        SelectedParts.Clear(); Parts.Clear();
         foreach (var p in parsed.Parts) Parts.Add(p);
-        foreach (var f in parsed.Formats) Formats.Add(f);
-        SelectedFormat = Formats.FirstOrDefault();
+        applyingPreferences = true;
+        try
+        {
+            Formats.Clear();
+            foreach (var f in parsed.Formats) Formats.Add(f);
+            SelectedFormat = ResolveFormat(Formats);
+        }
+        finally { applyingPreferences = false; }
         if (parsed.Parts.Length > 0) SelectedParts.Add(parsed.Parts.Any(p => p.Index == parsed.CurrentPartIndex) ? parsed.CurrentPartIndex : parsed.Parts[0].Index);
         Refresh();
     }
@@ -195,7 +251,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
             foreach (var row in BatchItems.Where(r => r.Video is not null && !r.Added).ToArray())
             {
                 var parsed = row.Video!;
-                var format = parsed.Formats.FirstOrDefault(f => f.Height == SelectedFormat?.Height);
+                var format = ResolveFormat(parsed.Formats);
                 if (ModeIndex == 0 && format is null) { row.SetMessage("所选画质不可用，请逐项配置。"); continue; }
                 try
                 {

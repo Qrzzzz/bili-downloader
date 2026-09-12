@@ -42,7 +42,7 @@ try
         string[] ids = [];
         try
         {
-            await c.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.0" });
+            await c.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.1" });
             await c.RequestAsync("queue.pause");
             var list = new List<string>();
             for (int i = 0; i < 3; i++)
@@ -71,7 +71,7 @@ try
         var recovered = Client("tasks"); recovered.Start();
         try
         {
-            await recovered.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.0" });
+            await recovered.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.1" });
             var snapshot = Protocol.Read<TaskSnapshot>(await recovered.RequestAsync("tasks.list"));
             Check(snapshot.Tasks.Count(t => t.State == "interrupted") == 2, "Shutdown did not preserve incomplete work");
             Check(snapshot.Tasks.All(t => t.State != "downloading"), "Recovery started network work automatically");
@@ -92,18 +92,25 @@ try
         var c = Client("real"); c.Start();
         try
         {
-            var hello = Protocol.Read<Hello>(await c.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.0" }));
-            Check(hello.BackendVersion == "3.0" && hello.ProtocolVersion == 2, "Version negotiation failed");
+            var hello = Protocol.Read<Hello>(await c.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.1" }));
+            Check(hello.BackendVersion == "3.1" && hello.ProtocolVersion == 2, "Version negotiation failed");
             Check(Directory.EnumerateDirectories(profile, "run-markers", SearchOption.AllDirectories).SelectMany(Directory.EnumerateFiles).Any(), "Backend did not acquire a running marker");
             string? operation = null;
             await Throws<BackendException>(() => c.RunAsync("parse.start", new { input = "invalid", credential_mode = "anonymous" }, id => operation = id));
             Check(operation is not null, "Failure must follow acceptance");
-            var settings = await c.RequestAsync("settings.update", new { theme = "dark" });
+            var settings = await c.RequestAsync("settings.update", new { theme = "dark", download_mode = "audio_mp3", preferred_quality = 1080 });
             Check(settings.GetProperty("theme").GetString() == "dark", "Preferences did not persist");
             await c.RequestAsync("session.status");
         }
         finally { await c.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
         Check(!Directory.EnumerateDirectories(profile, "run-markers", SearchOption.AllDirectories).SelectMany(Directory.EnumerateFiles).Any(), "Backend did not release running marker");
+        var restarted = Client("real"); restarted.Start();
+        try
+        {
+            var hello = Protocol.Read<Hello>(await restarted.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.1" }));
+            Check(hello.Settings is { DownloadMode: "audio_mp3", PreferredQuality: 1080, RememberDownloadPreferences: true, Theme: "dark" }, "Preferences did not survive backend restart");
+        }
+        finally { await restarted.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
     });
     foreach (string scenario in new[] { "worker_construct", "worker_start" })
         await Test(scenario + " settles the real backend and accepts the next operation", async () =>
@@ -112,7 +119,7 @@ try
             c.Event += e => events.Enqueue(e.Name); c.Start();
             try
             {
-                await c.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.0" });
+                await c.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.1" });
                 string? operation = null;
                 await Throws<BackendException>(() => c.RunAsync("diagnostics.run", null, id =>
                 {

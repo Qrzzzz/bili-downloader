@@ -25,6 +25,7 @@ public sealed class ApplicationSession : ViewModelBase
     public bool CanNavigate => !Closing;
     public string? ActiveMethod { get; private set; }
     private string? operationId;
+    private readonly SemaphoreSlim settingsGate = new(1, 1);
     public event Action<string>? ThemeRequested;
     public event Action? TasksRequested;
     public void ShowTasks() => TasksRequested?.Invoke();
@@ -131,11 +132,26 @@ public sealed class ApplicationSession : ViewModelBase
 
     public void PreviewTheme(string value) => ThemeRequested?.Invoke(value);
 
-    public void ApplySettings(AppSettings settings, bool discardDraft = false)
+    public void ApplySettings(AppSettings settings, bool discardDraft = false, bool applyDownloadPreferences = true)
     {
         Settings.Load(settings, discardDraft);
-        Download.DownloadDirectory = settings.DownloadDir;
+        if (applyDownloadPreferences)
+        {
+            Download.DownloadDirectory = settings.DownloadDir;
+            Download.ApplyPreferences(settings);
+        }
         PreviewTheme(Settings.CurrentTheme);
+    }
+
+    public async Task UpdateSettingsAsync(object patch, bool fromDownload = false, bool discardDraft = false)
+    {
+        await settingsGate.WaitAsync();
+        try
+        {
+            var settings = Protocol.Read<AppSettings>(await Client.RequestAsync(fromDownload ? "settings.remember" : "settings.update", patch));
+            ApplySettings(settings, discardDraft, applyDownloadPreferences: !fromDownload);
+        }
+        finally { settingsGate.Release(); }
     }
 
     public void Changed()
@@ -157,6 +173,7 @@ public sealed class ApplicationSession : ViewModelBase
     {
         Closing = true; taskTimer?.Stop(); Changed();
         Shell.Notify("正在安全关闭，等待后台任务释放资源…", InfoBarSeverity.Warning);
+        await Download.WaitForPreferenceSaveAsync();
         await Client.ShutdownAsync();
     }
 }
