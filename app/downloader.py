@@ -1341,7 +1341,14 @@ def download_videos(
                     expected_path = expected_output.resolve()
                     if str(expected_path) not in reported_files or not expected_path.is_file():
                         raise RuntimeError("下载结束，但未捕获到当前规格的最终输出文件。")
-                    if not _matches_output_spec(expected_path, plan, ffmpeg_path, controller):
+                    # A cancel already deferred through merge/conversion must also
+                    # let this file finish bounded integrity verification. Ordinary
+                    # verification (including existing-file reuse) stays cancellable.
+                    deferred_cancel = postprocessing_started and controller.cancelled
+                    verification_controller = None if deferred_cancel else controller
+                    if not deferred_cancel:
+                        controller.set_phase("verifying")
+                    if not _matches_output_spec(expected_path, plan, ffmpeg_path, verification_controller):
                         state = "已有" if reused_existing else "新生成"
                         raise RuntimeError(f"{state}输出无法验证为当前请求的媒体规格。")
                     files = (str(expected_path),)

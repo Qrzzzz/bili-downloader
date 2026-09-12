@@ -106,13 +106,16 @@ class Backend:
                     raise ProtocolError("session_limit", "请重新启动应用。")
                 self.seen.add(id)
                 result, work = self.prepare(request["method"], request["params"])
-                self.reply(id, result)
-                if work:
-                    work()
             except Exception as exc:
                 error = ({"code": exc.code, "message": str(exc), "retryable": False, "detail": ""}
                          if isinstance(exc, ProtocolError) else error_dto(exc))
                 self.reply(id, error=error)
+                return
+            # Once acknowledged, failures belong to the operation terminal, never
+            # a second response for this request. Keep ACK before worker events.
+            self.reply(id, result)
+            if work:
+                work()
 
     def invalidate(self) -> None:
         self.parsed = None
@@ -312,9 +315,18 @@ class Backend:
         else:
             raise ProtocolError("unknown_method", "不支持的操作。")
 
-        self.active = op
         op.thread = threading.Thread(target=self.run, args=(op, work), name=f"backend-{method}")
-        return {"operation_id": op.id, "state": "accepted"}, op.thread.start
+        self.active = op
+        return {"operation_id": op.id, "state": "accepted"}, lambda: self.start(op)
+
+    def start(self, op: Operation) -> None:
+        try:
+            assert op.thread is not None
+            op.thread.start()
+        except Exception as exc:
+            # No worker exists to unwind this accepted operation. Settle it under
+            # the request lock so cancel/shutdown cannot observe an unstarted active.
+            self.complete(op, "operation.failed", {"error": error_dto(exc)})
 
     def get_parse(self, params: dict) -> ParsedVideo:
         if not self.parsed or self.parsed.id != string(params, "parse_id", limit=80):
@@ -334,6 +346,9 @@ class Backend:
         except Exception as exc:
             result = {"error": error_dto(exc)}
             event = "operation.cancelled" if op.cancelled.is_set() else "operation.failed"
+        self.complete(op, event, result)
+
+    def complete(self, op: Operation, event: str, result: dict) -> None:
         with self.lock:
             # Work has unwound all requests/lease/FFmpeg contexts before terminal delivery.
             self.active = None
