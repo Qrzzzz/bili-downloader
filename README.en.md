@@ -15,7 +15,7 @@
 <p>
   <strong>Navigation</strong><br/>
   <a href="https://github.com/Qrzzzz/bili-downloader/releases/latest">Download</a> ·
-  <a href="./docs/releases/v2.11.md">Release Notes</a> ·
+  <a href="./docs/releases/v2.12.md">v2.12 Release Notes</a> ·
   <a href="#features">Features</a> ·
   <a href="./docs/architecture/v2.5-winui.md">Architecture</a> ·
   <a href="./SECURITY.md">Security</a> ·
@@ -47,24 +47,24 @@
 
 Download the latest stable release from [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest).
 
-The current release is **Bili Downloader Lite v2.11**. See the [release notes](./docs/releases/v2.11.md) and [validation record](./docs/validation/v2.11.md).
+The current release is **Bili Downloader Lite v2.12**, adding direct video URL extraction from share text and Markdown links. See the [release notes](./docs/releases/v2.12.md) and [validation record](./docs/validation/v2.12.md).
 
 | File                              | Purpose                                 |
 | --------------------------------- | --------------------------------------- |
-| `BiliDownloader.v2.11.win-x64.zip` | Complete Windows x64 application        |
-| `BiliDownloader.v2.11.sbom.json`   | Software bill of materials              |
+| `BiliDownloader.v2.12.win-x64.zip` | Complete Windows x64 application        |
+| `BiliDownloader.v2.12.sbom.json`   | Software bill of materials              |
 | `SHA256SUMS`                      | SHA-256 checksums for release artifacts |
 
 ### Installation
 
-1. Download `BiliDownloader.v2.11.win-x64.zip`.
+1. Download `BiliDownloader.v2.12.win-x64.zip`.
 2. **Fully extract** the ZIP instead of launching the executable from inside the archive.
 3. Keep the main executable, backend executable, and runtime files in their original directory structure.
 4. Configure FFmpeg as described below.
 5. Run:
 
 ```text
-BiliDownloader.v2.11.exe
+BiliDownloader.v2.12.exe
 ```
 
 The release package includes the required **.NET, Windows App SDK, and Python runtimes**. End users do not need to install these separately.
@@ -76,7 +76,7 @@ Bili Downloader Lite **does not download, install, or bundle FFmpeg**.
 Obtain `ffmpeg.exe` yourself from a lawful and trusted source, then either place it at:
 
 ```text
-BiliDownloader.v2.11.exe
+BiliDownloader.v2.12.exe
 tools/
 └── ffmpeg.exe
 ```
@@ -96,7 +96,7 @@ On supported Windows 11 systems, the application can use native Windows effects 
 ## 🚀 Basic workflow
 
 1. Open Bili Downloader Lite.
-2. Paste a Bilibili URL, `b23.tv` short link, BV ID, or av ID.
+2. Paste a Bilibili URL, `b23.tv` short link, BV ID, or av ID. You can also paste a title and URL, multiline share text, or a Markdown link directly.
 3. Parse the video to retrieve its title, uploader, cover, parts, and currently available formats.
 4. If account-authorized formats are required, sign in from the Account page using the in-app QR code.
 5. Select the parts, quality, MP4 / MP3 mode, and output directory.
@@ -106,12 +106,13 @@ On supported Windows 11 systems, the application can use native Windows effects 
 > [!NOTE]
 > The application only shows formats that are **actually available to the current account, video, region, and platform policy**. Signing in does not grant access to content or qualities the account is not entitled to use.
 
-## ✨ What's new in v2.11
+## ✨ What's new in v2.12
 
-* A worker thread creation or startup failure now settles the request or accepted operation exactly once. The backend releases its busy state, accepts the next task, and shuts down safely.
-* Cancelling during MP4 merging or MP3 conversion preserves the current file after it safely completes and passes bounded integrity checks. Later parts remain cancelled; corrupt or unverifiable output is still rejected.
+* Extract a video URL directly from copied share text, including titles, line breaks, punctuation, and Markdown links.
+* Preserve the selected part, discard share tracking parameters, and deduplicate repeated links. Multiple distinct links require keeping one target.
+* The input field supports multiple lines and wrapping; press Enter or click Parse to continue.
 
-See the [v2.11 release notes](./docs/releases/v2.11.md) and [validation record](./docs/validation/v2.11.md).
+See the [v2.12 release notes](./docs/releases/v2.12.md) and [validation record](./docs/validation/v2.12.md).
 
 <a id="features"></a>
 
@@ -121,6 +122,7 @@ See the [v2.11 release notes](./docs/releases/v2.11.md) and [validation record](
 
 Supported input forms include:
 
+* Share text and Markdown links
 * Standard Bilibili video URLs
 * `b23.tv` short links
 * BV IDs
@@ -425,8 +427,8 @@ from the application directory. It does not search the system `PATH` for an arbi
 
 | Document                                                | Contents                                             |
 | ------------------------------------------------------- | ---------------------------------------------------- |
-| [v2.11 Release Notes](./docs/releases/v2.11.md)           | Current release changes                              |
-| [v2.11 Validation](./docs/validation/v2.11.md)            | Validation record for the current release            |
+| [v2.12 Release Notes](./docs/releases/v2.12.md)           | Current release changes                              |
+| [v2.12 Validation](./docs/validation/v2.12.md)            | Validation record for the current release            |
 | [WinUI Architecture](./docs/architecture/v2.5-winui.md) | Native Windows architecture and migration boundary   |
 | [IPC v1](./docs/architecture/ipc-v1.md)                 | WinUI ↔ Python protocol                              |
 | [Security Policy](./SECURITY.md)                        | Credentials, sensitive data, vulnerability reporting |
@@ -530,7 +532,7 @@ The current build output is written to:
 
 ```text
 dist\
-└── BiliDownloader.v2.11.win-x64\
+└── BiliDownloader.v2.12.win-x64\
 ```
 
 with a corresponding ZIP candidate.
@@ -539,7 +541,7 @@ Run the packaged smoke test with:
 
 ```powershell
 .\tools\package_smoke.ps1 `
-  -Executable .\dist\BiliDownloader.v2.11.win-x64\BiliDownloader.v2.11.exe
+  -Executable .\dist\BiliDownloader.v2.12.win-x64\BiliDownloader.v2.12.exe
 ```
 
 PR / main CI runs Python regression tests, WinUI compilation, and C# pipeline tests.
