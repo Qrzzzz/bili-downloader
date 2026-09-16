@@ -1,4 +1,4 @@
-> **3.2** refines the native UI and adds a live queue count badge. See [3.2 release notes](docs/releases/v3.2.md).
+> **3.3** flattens the task list with inline details, direct file access, and a separate log dialog. See [3.3 release notes](docs/releases/v3.3.md).
 
 <div align="center">
 

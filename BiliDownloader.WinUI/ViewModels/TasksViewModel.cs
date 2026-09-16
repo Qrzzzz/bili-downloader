@@ -9,8 +9,16 @@ public sealed class TaskRow(DownloadTask task, ApplicationSession session) : Vie
 {
     public DownloadTask Value { get; private set; } = task;
     private DownloadTask? detail;
-    private bool detailLoading;
-    public bool DetailOpen { get; set; }
+    private Task? detailRequest;
+    private bool detailOpen;
+    public bool DetailOpen { get => detailOpen; set { Set(ref detailOpen, value); Refresh(); } }
+    public Visibility DetailVisibility => DetailOpen ? Visibility.Visible : Visibility.Collapsed;
+    public string DetailButtonText => DetailOpen ? "收起详情" : "详情";
+    public Visibility MetricsVisibility => string.IsNullOrWhiteSpace(Metrics) ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility RemoveVisibility => !Active && Value.State != "queued" ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility ReorderVisibility => Value.State == "queued" ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility OpenVisibility => Value.State is "completed" or "partial" ? Visibility.Visible : Visibility.Collapsed;
+    public bool CanInspect => session.Connected && !session.Closing;
     public string Id => Value.TaskId;
     public string Title => Value.Title;
     public string Specification => $"{Value.FormatLabel} · {Value.PartCount} 个分 P";
@@ -41,8 +49,10 @@ public sealed class TaskRow(DownloadTask task, ApplicationSession session) : Vie
         ? $"P{p.PartIndex} · {p.PartNumber}/{p.PartCount} · {Percent:0.#}%" +
           (p.SpeedBytesPerSecond is { } speed ? $" · {speed / 1048576:0.00} MiB/s" : "") : Value.Message;
     public string Directory => Value.OutputDir;
-    public string Details => detail is null ? "展开后读取任务详情。" : string.Join(Environment.NewLine,
-        (detail.Result?.PartResults ?? []).Select(p => p.ToString())) + Environment.NewLine + detail.Message;
+    public string Details => detail is null ? "" : string.Join(Environment.NewLine,
+        (detail.Result?.PartResults ?? []).Where(p => p.Status != "completed")
+            .Select(p => $"{p.Label} · {p.StatusText}" + (p.Error is { } e ? $" · {e.Message}" : "")));
+    public Visibility IssuesVisibility => string.IsNullOrWhiteSpace(Details) ? Visibility.Collapsed : Visibility.Visible;
     public string Logs => detail?.Logs ?? "";
     public ObservableCollection<OutputFileItem> Files { get; } = [];
     private OutputFileItem? selectedFile;
@@ -50,21 +60,25 @@ public sealed class TaskRow(DownloadTask task, ApplicationSession session) : Vie
     public bool CanOpenFile => SelectedFile is not null && File.Exists(SelectedFile.Path);
     public bool CanOpenFolder => System.IO.Directory.Exists(Directory);
     public void Update(DownloadTask value) { Value = value; Refresh(); }
-    public async Task LoadDetailsAsync()
+    public Task LoadDetailsAsync()
     {
-        if (detailLoading || !session.Connected || session.Closing) return;
-        detailLoading = true;
-        try
-        {
+        if (detailRequest is { IsCompleted: false }) return detailRequest;
+        if (!session.Connected || session.Closing) return Task.CompletedTask;
+        return detailRequest = ReadDetailsAsync();
+    }
+    private async Task ReadDetailsAsync()
+    {
         var reply = Protocol.Read<TaskReply>(await session.Client.RequestAsync("tasks.get", new { task_id = Id }));
-        detail = reply.Task;
+        ApplyDetails(reply.Task);
+    }
+    internal void ApplyDetails(DownloadTask value)
+    {
+        detail = value;
         string? selected = SelectedFile?.Path;
         Files.Clear();
         foreach (var path in detail.Result?.SavedFiles ?? []) Files.Add(new OutputFileItem(path));
         SelectedFile = Files.FirstOrDefault(f => f.Path == selected) ?? Files.FirstOrDefault();
         Refresh();
-        }
-        finally { detailLoading = false; }
     }
 }
 

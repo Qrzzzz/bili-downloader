@@ -274,6 +274,44 @@ public static class NativeAcceptance
             fixtureQueue.Apply(new TaskSnapshot(false, 2, [taskA with { State = "completed", Revision = 2 }], 2));
             await Snapshot("tasks-empty-filter-with-completed-record", true);
             Check(fixtureQueue.ClearVisibility == Visibility.Visible && fixtureQueue.EmptyVisibility == Visibility.Visible, "native_completed_cleanup_and_empty_filter_coexist");
+            fixtureQueue.FilterIndex = 0;
+            var completedRow = fixtureQueue.Items.Single();
+            Check(completedRow.MetricsVisibility == Visibility.Collapsed && completedRow.CancelVisibility == Visibility.Collapsed && completedRow.ReorderVisibility == Visibility.Collapsed,
+                "native_completed_task_hides_inapplicable_controls");
+            Check(completedRow.OpenVisibility == Visibility.Visible && completedRow.DetailVisibility == Visibility.Collapsed,
+                "native_completed_file_entry_without_details");
+            await Snapshot("tasks-completed-flat-narrow", true);
+            Check(!Elements(frame).OfType<Expander>().Any(), "native_task_details_have_no_nested_expanders");
+            string fixtureFile = Path.Combine(output, "P001-很长的视频文件名-用于检查窄窗口自动换行.mp4");
+            var completedTask = completedRow.Value with { Result = new BatchResult("fixture", "completed", [fixtureFile], false,
+                [new PartResult(1, "示例分 P", "completed", [fixtureFile], null)], output) };
+            completedRow.ApplyDetails(completedTask);
+            completedRow.DetailOpen = true;
+            await Snapshot("tasks-single-file-details-narrow", true);
+            Check(completedRow.Files.Count == 1 && completedRow.IssuesVisibility == Visibility.Collapsed, "native_success_file_shown_once_without_part_path_dump");
+            Check(!Elements(frame).OfType<ComboBox>().Any(c => AutomationProperties.GetName(c) == "任务输出文件"), "native_single_file_needs_no_selector");
+            var partialTask = completedTask with { State = "partial", Message = "部分分 P 下载失败", Result = new BatchResult("fixture", "partial", [fixtureFile, Path.Combine(output, "P002.mp4")], true,
+                [new PartResult(3, "失败分 P", "failed", [], new ErrorInfo("fixture", "网络中断，请重试。", true, ""))], output) };
+            completedRow.Update(partialTask);
+            completedRow.ApplyDetails(partialTask);
+            Check(completedRow.Files.Count == 2 && completedRow.Details.Contains("网络中断") && completedRow.RetryVisibility == Visibility.Visible,
+                "native_partial_retains_files_failure_reason_and_retry");
+            await Snapshot("tasks-multiple-files-details-narrow", true);
+            var logDialog = ((Views.TasksPage)page).CreateLogDialog(string.Join(Environment.NewLine, Enumerable.Repeat("P3：网络中断，请重试。", 30)));
+            var logOperation = logDialog.ShowAsync();
+            await Task.Delay(200);
+            Check(logDialog.Content is TextBox { IsReadOnly: true, TextWrapping: TextWrapping.Wrap }, "native_task_log_readonly_wrapping");
+            Check(((TextBox)logDialog.Content).Text.Split('\r', '\n').Count(line => line.Length > 0) == 30, "native_task_log_preserves_all_lines");
+            await Snapshot("tasks-log-dialog-narrow-dark", true);
+            logDialog.Hide();
+            await logOperation;
+            window.AppWindow.Resize(initialSize);
+            root.RequestedTheme = ElementTheme.Light;
+            await Snapshot("tasks-multiple-files-details-light", true);
+            var toggle = Elements(frame).OfType<AppBarButton>().First(b => AutomationProperties.GetAutomationId(b) == "TaskDetailsToggle");
+            ((IInvokeProvider)new AppBarButtonAutomationPeer(toggle).GetPattern(PatternInterface.Invoke)).Invoke();
+            await Task.Delay(50);
+            Check(!completedRow.DetailOpen, "native_task_details_toggle_collapses_inline_content");
             fixtureQueue.Apply(new TaskSnapshot(false, 2, [], 3));
             await Snapshot("tasks-empty-narrow-dark", true);
             Check(taskNavigation.InfoBadge.Visibility == Visibility.Collapsed, "native_queue_badge_zero_hidden");
