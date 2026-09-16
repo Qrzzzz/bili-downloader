@@ -4,7 +4,7 @@
     <ScrollViewer x:Name="PageScroll" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
         <StackPanel Style="{StaticResource PageContentStyle}" Width="{Binding ViewportWidth, ElementName=PageScroll}">
             <StackPanel Spacing="6">
-                <TextBlock Text="账号" Style="{ThemeResource TitleTextBlockStyle}"/>
+                <TextBlock Text="账号" Style="{StaticResource PageHeadingStyle}"/>
                 <TextBlock Text="管理这台电脑上的 Bilibili 登录状态。" Style="{StaticResource SecondaryTextStyle}"/>
             </StackPanel>
             <Border Style="{StaticResource SurfaceCardStyle}">

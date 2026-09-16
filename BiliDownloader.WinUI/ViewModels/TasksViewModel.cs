@@ -81,6 +81,11 @@ public sealed class TasksViewModel(ApplicationSession session) : ViewModelBase
     public bool CanManage => session.Connected && !session.Closing;
     public bool CanClearCompleted => CanManage && rows.Values.Any(r => r.Value.State == "completed" && r.CanRemove);
     public bool SavedRunning => rows.Values.Any(r => r.Active && r.Value.CredentialMode == "saved" && !r.Value.Foreign);
+    public int PendingCount => rows.Values.Count(r => r.Active || r.Value.State == "queued");
+    public Visibility BadgeVisibility => PendingCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+    public string NavigationName => PendingCount > 0 ? $"任务，{PendingCount} 个下载任务等待或执行中" : "任务";
+    public string EmptyTitle => rows.Count == 0 ? "从第一个下载开始" : "这里暂时没有任务";
+    public Visibility ClearVisibility => rows.Values.Any(r => r.Value.State == "completed") ? Visibility.Visible : Visibility.Collapsed;
     public string Summary => $"运行 {rows.Values.Count(r => r.Active)} · 等待 {rows.Values.Count(r => r.Value.State == "queued")} · " +
         $"{rows.Values.Where(r => r.Active).Sum(r => r.Value.Progress?.SpeedBytesPerSecond ?? 0) / 1048576:0.00} MiB/s" + (Paused ? " · 队列已暂停" : "");
     public string EmptyText => rows.Count == 0 ? "还没有任务。在“添加下载”中解析视频并加入队列。" : "此筛选下没有任务。";

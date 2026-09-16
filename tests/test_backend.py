@@ -32,7 +32,7 @@ def backend():
         request_id = id or f"r{len(host.seen) + 1}"
         host.request({"id": request_id, "method": method, "params": params or {}})
         return next(m for m in reversed(messages) if m.get("id") == request_id)
-    send("hello", {"protocol_version": 2, "frontend_version": "3.1"})
+    send("hello", {"protocol_version": 2, "frontend_version": "3.2"})
     yield host, messages, send
     host.close()
     host.wait()
@@ -75,7 +75,7 @@ def test_parse_share_text_through_backend(backend, monkeypatch, share):
 
 def test_handshake_and_duplicate_requests_fail_closed(backend):
     host, messages, send = backend
-    assert not send("hello", {"protocol_version": 1, "frontend_version": "3.1"})["ok"]
+    assert not send("hello", {"protocol_version": 1, "frontend_version": "3.2"})["ok"]
     assert send("settings.get", id="unique")["ok"]
     assert send("settings.get", id="unique")["error"]["code"] == "duplicate_request"
     assert send("download.start", {"parse_id": "untrusted"})["ok"] is False
@@ -186,10 +186,10 @@ sys.meta_path.insert(0, NoQt())
 sys.path.insert(0, sys.argv[1])
 runpy.run_module("app.backend", run_name="__main__")
 '''
-    requests = [dict(v=2, type='request', id='r1', method='hello', params={'protocol_version': 2, 'frontend_version': '3.1'}),
+    requests = [dict(v=2, type='request', id='r1', method='hello', params={'protocol_version': 2, 'frontend_version': '3.2'}),
                 dict(v=2, type='request', id='r2', method='shutdown', params={})]
     process = subprocess.run([sys.executable, '-I', '-c', code, str(root)], input=''.join(json.dumps(r)+'\n' for r in requests), capture_output=True, text=True, encoding='utf-8', timeout=15)
     assert process.returncode == 0, process.stderr
     output = [json.loads(line) for line in process.stdout.splitlines()]
-    assert output[0]['result']['backend_version'] == '3.1'
+    assert output[0]['result']['backend_version'] == '3.2'
     assert output[-1]['event'] == 'shutdown.ready'

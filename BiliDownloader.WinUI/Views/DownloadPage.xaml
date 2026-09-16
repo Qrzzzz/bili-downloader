@@ -20,18 +20,19 @@
         <ScrollViewer x:Name="PageScroll" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
             <StackPanel Style="{StaticResource PageContentStyle}" Width="{Binding ViewportWidth, ElementName=PageScroll}">
                 <StackPanel Spacing="6">
-                    <TextBlock Text="添加下载" Style="{ThemeResource TitleTextBlockStyle}"/>
+                    <TextBlock Text="添加下载" Style="{StaticResource PageHeadingStyle}"/>
                     <TextBlock Text="粘贴视频链接或分享文本，选择规格，保存到本机。" Style="{StaticResource SecondaryTextStyle}"/>
                 </StackPanel>
                 <Border Style="{StaticResource SurfaceCardStyle}">
-                    <StackPanel Spacing="12">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="视频来源" Style="{StaticResource SectionHeadingStyle}"/>
                         <Grid ColumnSpacing="12">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <TextBox x:Name="InputBox" Header="视频链接、分享文本或 BV / av 号" PlaceholderText="可直接粘贴含标题和链接的分享文本"
                                      AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="144" ScrollViewer.VerticalScrollBarVisibility="Auto"
                                      Text="{Binding Input, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PreviewKeyDown="Input_KeyDown"
                                      IsEnabled="{Binding CanEditInput}" AutomationProperties.AutomationId="VideoInput"/>
-                            <Button Grid.Column="1" Content="解析" Click="Parse_Click" VerticalAlignment="Bottom"
+                            <Button Grid.Column="1" Content="解析" MinWidth="80" Click="Parse_Click" VerticalAlignment="Bottom"
                                     Style="{StaticResource AccentButtonStyle}" IsEnabled="{Binding CanParse}" AutomationProperties.AutomationId="ParseButton"/>
                         </Grid>
                         <StackPanel Orientation="Horizontal" Spacing="12">
@@ -45,10 +46,12 @@
                         <Button Content="批量解析多个链接" Click="BatchParse_Click" IsEnabled="{Binding CanParse}" AutomationProperties.AutomationId="BatchParse"/>
                     </StackPanel>
                 </Border>
-                <StackPanel Spacing="8" Visibility="{Binding QueueMessageVisibility}">
+                <Border Style="{StaticResource SurfaceCardStyle}" Visibility="{Binding QueueMessageVisibility}">
+                    <StackPanel Spacing="12">
                     <TextBlock Text="{Binding QueueMessage}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
                     <Button Content="查看任务" Click="Tasks_Click"/>
-                </StackPanel>
+                    </StackPanel>
+                </Border>
                 <Expander Header="批量待添加项目" Visibility="{Binding BatchVisibility}" IsExpanded="True" HorizontalAlignment="Stretch">
                     <StackPanel Spacing="8">
                         <ListView ItemsSource="{Binding BatchItems}" SelectionMode="None" MaxHeight="240" AutomationProperties.Name="批量解析结果">
