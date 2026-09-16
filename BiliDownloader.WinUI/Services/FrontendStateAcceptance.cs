@@ -191,17 +191,28 @@ internal static class FrontendStateAcceptance
                 "downloading", "", 1, 0, 1, false, null, "", new("downloading", 1, 1, 1, 25, 25, 100, 400, null, 1024, 1, false));
             var secondTask = sampleTask with { TaskId = "task-b", Title = "并行任务 B", Position = 2 };
             session.Tasks.Apply(new TaskSnapshot(false, 2, [sampleTask, secondTask], 10));
+            Check(session.Tasks.PendingCount == 2 && session.Tasks.BadgeVisibility == Visibility.Visible, "queue_badge_counts_running");
             Check(session.Available && model.CanEditInput && session.Tasks.Items.Count == 2, "parallel_queue_does_not_lock_input");
             session.Tasks.Changed(new TaskChange(sampleTask with { State = "cancelled", Revision = 2 }, 11));
             Check(session.Tasks.Items[0].CanResume && session.Tasks.Items[1].CanCancel, "task_cancel_does_not_change_other_row");
             session.Tasks.Apply(new TaskSnapshot(false, 2, [sampleTask], 9));
             Check(session.Tasks.Items.Count == 2 && session.Tasks.Items[0].Value.State == "cancelled", "stale_snapshot_cannot_replace_new_task_event");
             session.Tasks.FilterIndex = 3;
+            Check(session.Tasks.PendingCount == 1, "queue_badge_ignores_filter_and_terminal_tasks");
             Check(session.Tasks.Items.Count == 1 && session.Tasks.Items[0].Id == "task-a", "task_attention_filter");
             session.Tasks.FilterIndex = 0;
             session.Tasks.Changed(new TaskChange(secondTask with { CredentialMode = "saved" }, 12));
             Check(!session.Account.CanLogin, "running_saved_task_locks_account_change");
             session.Tasks.Apply(new TaskSnapshot(false, 2, [], 13));
+            Check(session.Tasks.PendingCount == 0 && session.Tasks.BadgeVisibility == Visibility.Collapsed, "queue_badge_hides_when_empty");
+            session.Tasks.Apply(new TaskSnapshot(true, 2, [sampleTask with { State = "queued" }], 14));
+            Check(session.Tasks.PendingCount == 1 && session.Tasks.BadgeVisibility == Visibility.Visible, "queue_badge_keeps_paused_waiting_tasks");
+            session.Tasks.Changed(new TaskChange(sampleTask with { State = "completed", Revision = 2 }, 15));
+            Check(session.Tasks.PendingCount == 0 && session.Tasks.BadgeVisibility == Visibility.Collapsed, "queue_badge_hides_when_completed");
+            session.Tasks.Apply(new TaskSnapshot(false, 2, [secondTask], 16));
+            session.Tasks.Disconnected();
+            Check(session.Tasks.PendingCount == 0, "queue_badge_does_not_claim_disconnected_download_is_running");
+            session.Tasks.Apply(new TaskSnapshot(false, 2, [], 17));
             var terminalEvents = new System.Collections.Concurrent.ConcurrentQueue<string>();
             client.Event += e => { if (e.Name.StartsWith("operation.")) terminalEvents.Enqueue(e.Name); };
             await session.ExecuteAsync(async () =>

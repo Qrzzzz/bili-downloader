@@ -4,11 +4,12 @@
     <ScrollViewer x:Name="PageScroll" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
         <StackPanel Style="{StaticResource PageContentStyle}" Width="{Binding ViewportWidth, ElementName=PageScroll}">
             <StackPanel Spacing="6">
-                <TextBlock Text="设置" Style="{ThemeResource TitleTextBlockStyle}"/>
+                <TextBlock Text="设置" Style="{StaticResource PageHeadingStyle}"/>
                 <TextBlock Text="调整下载偏好、外观、保存位置，或检查运行环境。" Style="{StaticResource SecondaryTextStyle}"/>
             </StackPanel>
             <Border Style="{StaticResource SurfaceCardStyle}">
                 <StackPanel Spacing="16">
+                    <TextBlock Text="外观与下载" Style="{StaticResource SectionHeadingStyle}"/>
                     <ComboBox Header="外观" SelectedIndex="{Binding ThemeIndex, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="ThemePreference">
                         <ComboBoxItem Content="跟随 Windows"/><ComboBoxItem Content="浅色"/><ComboBoxItem Content="深色"/>
                     </ComboBox>
@@ -54,7 +55,7 @@
             </Expander>
             <Expander Header="关于与更新" HorizontalAlignment="Stretch">
                 <StackPanel Spacing="12">
-                    <TextBlock Text="Bili Downloader Lite 3.1" Style="{ThemeResource BodyStrongTextBlockStyle}"/>
+                    <TextBlock Text="Bili Downloader Lite 3.2" Style="{ThemeResource BodyStrongTextBlockStyle}"/>
                     <TextBlock Text="{Binding UpdateText}" TextWrapping="Wrap"/>
                     <StackPanel Orientation="Horizontal" Spacing="12">
                         <Button Content="检查更新" Click="Update_Click" IsEnabled="{Binding CanManage}"/>
