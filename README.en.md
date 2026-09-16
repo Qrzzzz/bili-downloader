@@ -1,3 +1,5 @@
+> **3.2** refines the native UI and adds a live queue count badge. See [3.2 release notes](docs/releases/v3.2.md).
+
 <div align="center">
 
 # 📺 Bili Downloader Lite
