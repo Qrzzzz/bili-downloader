@@ -1,0 +1,95 @@
+{
+  "version": "3.4",
+  "python": "3.13.14",
+  "os": "Windows",
+  "tls": "OpenSSL 3.5.7 9 Jun 2026",
+  "tls_verification": true,
+  "credential_mode": "anonymous",
+  "certifi": "2026.07.22",
+  "certifi_tls": "passed",
+  "system_tls": "passed",
+  "max_active": 2,
+  "tasks": [
+    {
+      "source": "BV1GJ411x7h7",
+      "mode": "audio_video",
+      "state": "completed",
+      "task_id": "b4e00d666e3340b785c835690028fd42",
+      "outputs": [
+        {
+          "name": "P001-【官方 MV】Never Gonna Give You Up - Rick Astley-BV1GJ411x7h7-[video-mp4-360p].mp4",
+          "bytes": 9617090,
+          "ffprobe_exit": 0,
+          "probe": {
+            "programs": [],
+            "stream_groups": [],
+            "streams": [
+              {
+                "codec_type": "video",
+                "height": 360,
+                "bit_rate": "155883"
+              },
+              {
+                "codec_type": "audio",
+                "bit_rate": "201984"
+              }
+            ],
+            "format": {
+              "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+              "duration": "212.308833"
+            }
+          }
+        }
+      ],
+      "errors": [],
+      "retry_state": "not_needed",
+      "retained_attempts": 1
+    },
+    {
+      "source": "BV1kkbC6eEgm",
+      "mode": "audio_mp3",
+      "state": "completed",
+      "task_id": "da6719ff2da94e8aaa26136743698d88",
+      "outputs": [
+        {
+          "name": "P001-华强卖瓜-大厂版-BV1kkbC6eEgm-[audio-mp3-192k].mp3",
+          "bytes": 5730251,
+          "ffprobe_exit": 0,
+          "probe": {
+            "programs": [],
+            "stream_groups": [],
+            "streams": [
+              {
+                "codec_type": "audio",
+                "bit_rate": "192000"
+              }
+            ],
+            "format": {
+              "format_name": "mp3",
+              "duration": "238.698667"
+            }
+          }
+        }
+      ],
+      "errors": [],
+      "retry_state": "not_needed",
+      "retained_attempts": 1
+    }
+  ],
+  "outcome": "passed",
+  "not_executed": [
+    "multi_part",
+    "cancel_resume",
+    "process_restart_resume",
+    "phone_qr",
+    "file_association",
+    "clipboard",
+    "screen_reader",
+    "high_contrast",
+    "failure_retry"
+  ],
+  "ffmpeg": "available",
+  "tested_date": "2026-10-03",
+  "build_state": "local_uncommitted_candidate",
+  "baseline_commit": "4b36564d893b65220456ac096bdc12ef226a9ee7"
+}

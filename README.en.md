@@ -1,4 +1,4 @@
-> **3.3** flattens the task list with inline details, direct file access, and a separate log dialog. See [3.3 release notes](docs/releases/v3.3.md).
+> **3.4** revalidates saved outputs before recovery, retains logs for the last five attempts, and starts real download acceptance. See [3.4 release notes](docs/releases/v3.4.md).
 
 <div align="center">
 
