@@ -14,7 +14,8 @@ from app.backend.dto import batch_dto, error_dto, progress_dto
 from app.backend.protocol import ProtocolError
 from app.config import AppConfig, app_data_dir
 from app.cookies import CredentialMode
-from app.downloader import DownloadController, DownloadMode
+from app.downloader import DownloadController, DownloadMode, DownloadPlan, _matches_output_spec
+from app.utils import require_ffmpeg
 from app.logger import redact_sensitive
 from app.services.download_service import DownloadRequest, run_download
 from app.services.parse_service import parse_video
@@ -25,6 +26,29 @@ from app.video_urls import normalize_video_input
 
 ACTIVE = {"preparing", "downloading", "waiting_resources", "merging", "converting", "postprocessing", "verifying", "cancelling"}
 TERMINAL = {"completed", "partial", "failed", "cancelled", "interrupted", "blocked"}
+LOG_LIMIT = 16000
+ATTEMPT_LIMIT = 5
+
+
+def attempt_history(task: dict) -> list[dict]:
+    """Additive JSON migration: old databases retain their last known log."""
+    if "attempts" not in task:
+        task["attempts"] = []
+        if task.get("attempt_id") or task.get("logs"):
+            logs = redact_sensitive(task.get("logs", ""))
+            task["logs"] = logs[-LOG_LIMIT:]
+            task["attempts"].append({"attempt_id": task.get("attempt_id") or "legacy",
+                "started_at": task.get("updated_at", task["created_at"]),
+                "ended_at": task.get("updated_at"), "state": task["state"],
+                "logs": logs[-LOG_LIMIT:], "truncated": len(logs) > LOG_LIMIT, "legacy": True})
+    return task["attempts"]
+
+
+def summarize_result(result: dict) -> None:
+    result["saved_files"] = list(dict.fromkeys(f for p in result["part_results"] for f in p["saved_files"]))
+    statuses = {p["status"] for p in result["part_results"]}
+    result["outcome"] = "cancelled" if "cancelled" in statuses else "partial" if "completed" in statuses and "failed" in statuses else "failed" if "failed" in statuses else "completed"
+    result["retry_allowed"] = "failed" in statuses
 
 
 class TaskRepository:
@@ -87,6 +111,9 @@ class TaskManager:
             for task in self.repo.all():
                 if task["state"] in ACTIVE | {"queued"} and not owner_alive(task["owner"]):
                     task.update(state="interrupted", message="上次运行未完成，请确认后继续。")
+                    for attempt in attempt_history(task):
+                        if attempt.get("ended_at") is None:
+                            attempt.update(state="interrupted", ended_at=time.time())
                     self._save(task)
 
     def _save(self, task: dict) -> None:
@@ -95,12 +122,14 @@ class TaskManager:
         self.repo.put(task)
 
     def _public(self, task: dict, detail: bool = False) -> dict:
+        attempt_history(task)
         result = {k: v for k, v in task.items() if k not in {"token", "owner", "spec", "identity"}}
         result["foreign"] = task["owner"] != self.owner and owner_alive(task["owner"])
         result.update(self.live.get(task["task_id"], {}))
         if not detail:
             result["logs"] = ""
             result["result"] = None
+            result["attempts"] = []
         return result
 
     def snapshot(self) -> dict:
@@ -180,7 +209,12 @@ class TaskManager:
                     continue
                 controller = DownloadController()
                 controller.task_id, controller.task_owner = task["task_id"], self.owner
+                history = attempt_history(task)
                 task.update(state="preparing", attempt_id=uuid.uuid4().hex, message="正在准备", logs="")
+                history.append({"attempt_id": task["attempt_id"], "started_at": time.time(),
+                    "ended_at": None, "state": "preparing", "logs": "", "truncated": False, "legacy": False})
+                task["attempts_dropped"] = task.get("attempts_dropped", 0) + max(0, len(history) - ATTEMPT_LIMIT)
+                del history[:-ATTEMPT_LIMIT]
                 self.live.pop(task["task_id"], None)
                 try:
                     thread = threading.Thread(target=self._run, args=(task["task_id"], controller), name="task-" + task["task_id"][:8])
@@ -191,6 +225,7 @@ class TaskManager:
                 except Exception as exc:
                     self.running.pop(task["task_id"], None)
                     task.update(state="failed", message=redact_sensitive(exc)[:2048])
+                    history[-1].update(state="failed", ended_at=time.time())
                     with self.repo.db:
                         self._save(task)
                 self._changed(task)
@@ -232,10 +267,40 @@ class TaskManager:
         def log(text):
             with self.lock, self.repo.db:
                 current = self.repo.get(task_id)
-                current["logs"] = (current["logs"] + redact_sensitive(text)[:4096] + "\n")[-16000:]
+                clean = redact_sensitive(text)
+                combined = current["logs"] + clean[:4096] + "\n"
+                current["logs"] = combined[-LOG_LIMIT:]
+                attempt_history(current)[-1].update(logs=current["logs"],
+                    truncated=current["attempts"][-1]["truncated"] or len(combined) > LOG_LIMIT or len(clean) > 4096)
                 self._save(current)
 
         try:
+            # Validate before metadata/network work. Persist each rejected P so an
+            # interrupted validation cannot restore stale successful paths.
+            old = task["result"]
+            if old and any(p["status"] == "completed" for p in old["part_results"]):
+                ffmpeg = require_ffmpeg()
+                plan = DownloadPlan((), spec["height"], DownloadMode(spec["mode"]))
+                for part in old["part_results"]:
+                    if controller.cancelled:
+                        raise DownloadCancelled("任务已取消")
+                    if part["status"] != "completed":
+                        continue
+                    try:
+                        valid = bool(part["saved_files"]) and all(
+                            _matches_output_spec(Path(path), plan, ffmpeg, controller) for path in part["saved_files"])
+                    except OSError:
+                        valid = False
+                    if not valid:
+                        message = f"P{part['index']} 的历史输出缺失、损坏或不符合原规格；请继续未完成项以补下载。"
+                        part.update(status="failed", saved_files=[], error={"code": "output_invalid",
+                            "message": message, "retryable": True, "detail": ""})
+                        summarize_result(old)
+                        with self.lock, self.repo.db:
+                            current = self.repo.get(task_id)
+                            current["result"] = old
+                            self._save(current)
+                        log(message)
             mode = CredentialMode(spec["credential_mode"])
             if mode == CredentialMode.SAVED and session_status()["generation"] != spec["generation"]:
                 raise ProtocolError("stale_session", "登录状态已改变，请重新确认账号后继续。")
@@ -257,7 +322,6 @@ class TaskManager:
                 if choice is None:
                     raise ProtocolError("format_unavailable", "当前账号无法取得原任务画质，请重新添加或稍后重试。")
                 selector = choice.selector
-            old = task["result"]
             finished = {p["index"] for p in old["part_results"] if p["status"] == "completed"} if old else set()
             retry_indices = task.get("retry_indices")
             pending = tuple(p for p in selected if p.index not in finished and (retry_indices is None or p.index in retry_indices))
@@ -269,10 +333,7 @@ class TaskManager:
                 result["part_results"] = [replacements.get(p["index"], p) for p in old["part_results"]]
                 included = {p["index"] for p in result["part_results"]}
                 result["part_results"].extend(p for i, p in replacements.items() if i not in included)
-                result["saved_files"] = list(dict.fromkeys(f for p in result["part_results"] for f in p["saved_files"]))
-                statuses = {p["status"] for p in result["part_results"]}
-                result["outcome"] = "cancelled" if "cancelled" in statuses else "partial" if statuses == {"completed", "failed"} else "failed" if "failed" in statuses else "completed"
-                result["retry_allowed"] = "failed" in statuses
+                summarize_result(result)
             reason = next((p["error"]["message"] for p in result["part_results"] if p.get("error")), "")
             task.update(state=result["outcome"], result=result, message=reason)
         except Exception as exc:
@@ -284,9 +345,12 @@ class TaskManager:
                 try:
                     current = self.repo.get(task_id)
                     task["logs"] = current["logs"]
+                    task["attempts"] = attempt_history(current)
+                    task["attempts_dropped"] = current.get("attempts_dropped", 0)
                     task["revision"] = current["revision"]
                     if self.closing and task["state"] != "completed":
                         task["state"] = "interrupted"
+                    task["attempts"][-1].update(state=task["state"], ended_at=time.time())
                     with self.repo.db:
                         self._save(task)
                     self.live.pop(task_id, None)
@@ -308,6 +372,7 @@ class TaskManager:
         with self.lock, self.repo.db:
             self.repo.db.execute("BEGIN IMMEDIATE")
             task = self.repo.get(task_id)
+            attempt_history(task)
             if task["owner"] != self.owner and owner_alive(task["owner"]):
                 raise ProtocolError("task_owned", "任务由另一个应用窗口管理，请在原窗口操作。")
             if action == "cancel":

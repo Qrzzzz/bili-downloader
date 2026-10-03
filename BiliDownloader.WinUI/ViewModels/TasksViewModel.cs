@@ -54,6 +54,8 @@ public sealed class TaskRow(DownloadTask task, ApplicationSession session) : Vie
             .Select(p => $"{p.Label} · {p.StatusText}" + (p.Error is { } e ? $" · {e.Message}" : "")));
     public Visibility IssuesVisibility => string.IsNullOrWhiteSpace(Details) ? Visibility.Collapsed : Visibility.Visible;
     public string Logs => detail?.Logs ?? "";
+    public TaskAttempt[] Attempts => detail?.Attempts ?? [];
+    public int AttemptsDropped => detail?.AttemptsDropped ?? 0;
     public ObservableCollection<OutputFileItem> Files { get; } = [];
     private OutputFileItem? selectedFile;
     public OutputFileItem? SelectedFile { get => selectedFile; set { Set(ref selectedFile, value); Refresh(); } }

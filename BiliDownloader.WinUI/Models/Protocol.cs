@@ -63,7 +63,10 @@ public sealed record UpdateResult(string CurrentVersion, string? LatestVersion, 
 public sealed record BackendEvent(string OperationId, long Sequence, string Name, JsonElement Data);
 public sealed record DownloadTask(string TaskId, string AttemptId, string Title, string FormatLabel,
     int PartCount, string CredentialMode, string OutputDir, string State, string Message, long Revision,
-    double CreatedAt, double Position, bool Foreign, BatchResult? Result, string Logs, DownloadProgress? Progress);
+    double CreatedAt, double Position, bool Foreign, BatchResult? Result, string Logs, DownloadProgress? Progress,
+    TaskAttempt[]? Attempts = null, int AttemptsDropped = 0);
+public sealed record TaskAttempt(string AttemptId, double StartedAt, double? EndedAt, string State,
+    string Logs, bool Truncated, bool Legacy);
 public sealed record TaskSnapshot(bool Paused, int MaxParallel, DownloadTask[] Tasks, long Revision);
 public sealed record TaskChange(DownloadTask Task, long Revision, bool Paused = false);
 public sealed record TaskReply(DownloadTask Task, bool Duplicate = false);

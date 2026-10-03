@@ -188,6 +188,8 @@ def test_deduplicated_submission_token_remains_idempotent_after_completion(queue
 def test_retry_preserves_success_and_does_not_depend_on_input(queue_env, monkeypatch):
     from app.downloader import DownloadBatchResult, PartDownloadResult, PartDownloadStatus
     manager, _, parsed, folder, _ = queue_env
+    monkeypatch.setattr("app.services.task_service.require_ffmpeg", lambda: "fixture-ffmpeg")
+    monkeypatch.setattr("app.services.task_service._matches_output_spec", lambda *args: True)
     p = parsed(count=2)
     monkeypatch.setattr("app.services.task_service.parse_video", lambda *args: p.info)
     task = manager.create(p, [1, 2], "audio_video", "0", str(folder), "multi")["task"]
@@ -205,6 +207,174 @@ def test_retry_preserves_success_and_does_not_depend_on_input(queue_env, monkeyp
     assert runs == [[1, 2], [2]]
     assert result["state"] == "completed" and len(result["result"]["saved_files"]) == 2
     assert result["attempt_id"] != first["attempt_id"]
+
+
+@pytest.mark.parametrize("action,invalid", [("resume", "missing"), ("resume", "corrupt"),
+    ("resume", "second_output"), ("resume", "valid"), ("retry", "missing")])
+def test_recovery_revalidates_outputs_without_expanding_retry_scope(queue_env, monkeypatch, action, invalid):
+    from app.backend.dto import batch_dto
+    from app.downloader import DownloadBatchResult, PartDownloadResult, PartDownloadStatus
+    manager, _, parsed, folder, _ = queue_env
+    video = parsed(count=2)
+    monkeypatch.setattr("app.services.task_service.parse_video", lambda *args: video.info)
+    monkeypatch.setattr("app.services.task_service.require_ffmpeg", lambda: "fixture-ffmpeg")
+    good, other = folder / "p1.mp4", folder / "other.mp4"
+    good.write_bytes(b"valid fixture")
+    other.write_bytes(b"unrelated file")
+    paths = [str(good)]
+    if invalid == "missing":
+        good.unlink()
+    elif invalid == "corrupt":
+        good.write_bytes(b"corrupt")
+    elif invalid == "second_output":
+        paths.append(str(folder / "missing.mp4"))
+    checked = []
+    def verify(path, plan, *args):
+        checked.append((plan.mode.value, plan.requested_height))
+        return path.read_bytes() == b"valid fixture"
+    monkeypatch.setattr("app.services.task_service._matches_output_spec", verify)
+    task = manager.create(video, [1, 2], "audio_video", "0", str(folder), "recovery")["task"]
+    with manager.lock, manager.repo.db:
+        stored = manager.repo.get(task["task_id"])
+        result = batch_dto(DownloadBatchResult([
+            PartDownloadResult(video.info.parts[0], PartDownloadStatus.COMPLETED, tuple(paths)),
+            PartDownloadResult(video.info.parts[1], PartDownloadStatus.FAILED)]), task["task_id"], True)
+        stored.update(state="partial", result=result)
+        manager._save(stored)
+    runs = []
+    def run(request, controller, progress, log, parts):
+        runs.append([p.index for p in parts])
+        output = []
+        for part in parts:
+            target = folder / f"new-p{part.index}.mp4"
+            target.write_bytes(b"new valid fixture")
+            output.append(PartDownloadResult(part, PartDownloadStatus.COMPLETED, (str(target),)))
+        return DownloadBatchResult(output)
+    monkeypatch.setattr("app.services.task_service.run_download", run)
+    manager.command(action, task["task_id"])
+    manager.start_ready(); until(lambda: not manager.running)
+    stored = manager.repo.get(task["task_id"])
+    expected = [2] if invalid == "valid" or action == "retry" else [1, 2]
+    assert runs == [expected]
+    assert checked and all(mode == "audio_video" and height is None for mode, height in checked)
+    assert stored["state"] == ("partial" if action == "retry" else "completed")
+    assert other.read_bytes() == b"unrelated file"
+    if invalid != "valid":
+        assert str(good) not in stored["result"]["saved_files"]
+        if action == "retry":
+            assert stored["result"]["part_results"][0]["error"]["code"] == "output_invalid"
+
+
+def test_cancel_during_recovery_retains_rejected_output_state(queue_env, monkeypatch):
+    from app.downloader import DownloadController
+    from yt_dlp.utils import DownloadCancelled
+    manager, create, _, _, _ = queue_env
+    task = create()
+    with manager.lock, manager.repo.db:
+        stored = manager.repo.get(task["task_id"])
+        stored.update(state="partial", result={"part_results": [
+            {"index": 1, "status": "completed", "saved_files": ["missing"], "error": None},
+            {"index": 2, "status": "completed", "saved_files": ["cancel"], "error": None}]})
+        manager._save(stored)
+    monkeypatch.setattr("app.services.task_service.require_ffmpeg", lambda: "fixture-ffmpeg")
+    def verify(path, plan, ffmpeg, controller):
+        if str(path) == "missing":
+            return False
+        controller.cancel()
+        raise DownloadCancelled("cancel verification")
+    monkeypatch.setattr("app.services.task_service._matches_output_spec", verify)
+    monkeypatch.setattr("app.services.task_service.parse_video", lambda *a: pytest.fail("network after cancel"))
+    manager.command("resume", task["task_id"])
+    manager.start_ready(); until(lambda: not manager.running)
+    result = manager.repo.get(task["task_id"])
+    assert result["state"] == "cancelled"
+    assert result["result"]["part_results"][0]["status"] == "failed"
+    assert "missing" not in result["result"]["saved_files"]
+
+
+@pytest.mark.parametrize("mode,height", [("audio_mp3", None), ("audio_video", 1080)])
+def test_recovery_verifier_uses_frozen_media_spec(queue_env, monkeypatch, mode, height):
+    from app.downloader import DownloadBatchResult
+    manager, create, _, folder, _ = queue_env
+    task = create()
+    with manager.lock, manager.repo.db:
+        stored = manager.repo.get(task["task_id"])
+        stored["spec"].update(mode=mode, height=height)
+        stored.update(state="partial", result={"part_results": [
+            {"index": 1, "status": "completed", "saved_files": [str(folder / "media")], "error": None}]})
+        manager._save(stored)
+    monkeypatch.setattr("app.services.task_service.require_ffmpeg", lambda: "fixture-ffmpeg")
+    checked = []
+    def verify(path, plan, *args):
+        checked.append((plan.mode.value, plan.requested_height))
+        return True
+    monkeypatch.setattr("app.services.task_service._matches_output_spec", verify)
+    monkeypatch.setattr("app.services.task_service.run_download", lambda *a: DownloadBatchResult([]))
+    manager.command("resume", task["task_id"])
+    manager.start_ready(); until(lambda: not manager.running)
+    assert checked == [(mode, height)]
+
+
+def test_missing_verifier_does_not_report_recovery_success(queue_env, monkeypatch):
+    manager, create, _, _, _ = queue_env
+    task = create()
+    with manager.lock, manager.repo.db:
+        stored = manager.repo.get(task["task_id"])
+        stored.update(state="partial", result={"part_results": [
+            {"index": 1, "status": "completed", "saved_files": ["media"], "error": None}]})
+        manager._save(stored)
+    monkeypatch.setattr("app.services.task_service.require_ffmpeg", lambda: (_ for _ in ()).throw(RuntimeError("FFmpeg unavailable")))
+    monkeypatch.setattr("app.services.task_service.parse_video", lambda *a: pytest.fail("network without verifier"))
+    manager.command("resume", task["task_id"])
+    manager.start_ready(); until(lambda: not manager.running)
+    stored = manager.repo.get(task["task_id"])
+    assert stored["state"] == "failed" and "FFmpeg unavailable" in stored["message"]
+
+
+def test_attempt_history_migrates_bounds_redacts_and_survives_restart(queue_env, monkeypatch):
+    from app.downloader import DownloadBatchResult, PartDownloadResult, PartDownloadStatus
+    from app.services.task_service import TaskManager, LOG_LIMIT, ATTEMPT_LIMIT
+    manager, create, _, _, _ = queue_env
+    task = create()
+    with manager.lock, manager.repo.db:
+        stored = manager.repo.get(task["task_id"])
+        stored.pop("attempts", None)
+        stored.update(state="failed", attempt_id="legacy-id", logs="old failure")
+        manager._save(stored)
+    count = 0
+    def run(request, controller, progress, log, parts):
+        nonlocal count
+        count += 1
+        log(f"attempt-{count}: SESSDATA=secret-cookie")
+        if count > 3:
+            for _ in range(6): log("x" * 4000)
+        status = PartDownloadStatus.COMPLETED if count == 7 else PartDownloadStatus.FAILED
+        return DownloadBatchResult(PartDownloadResult(p, status) for p in parts)
+    monkeypatch.setattr("app.services.task_service.run_download", run)
+    for index in range(7):
+        manager.command("retry", task["task_id"])
+        manager.start_ready(); until(lambda: not manager.running)
+        detail = manager._public(manager.repo.get(task["task_id"]), True)
+        if index == 0:
+            assert detail["attempts"][0]["logs"] == "old failure"
+            assert detail["attempts"][0]["legacy"] and detail["attempts"][0]["state"] == "failed"
+        if index == 2:
+            assert [a["state"] for a in detail["attempts"]] == ["failed"] * 4
+            assert all(f"attempt-{i}" in detail["attempts"][i]["logs"] for i in range(1, 4))
+        assert "secret-cookie" not in json.dumps(detail)
+        assert len(detail["attempts"]) <= ATTEMPT_LIMIT
+        assert sum(len(a["logs"]) for a in detail["attempts"]) <= ATTEMPT_LIMIT * LOG_LIMIT
+        assert manager.snapshot()["tasks"][0]["attempts"] == []
+    assert detail["attempts_dropped"] == 3
+    assert detail["attempts"][-1]["state"] == "completed" and detail["attempts"][-1]["truncated"]
+    assert len({a["attempt_id"] for a in detail["attempts"]}) == ATTEMPT_LIMIT
+    path, config = manager.repo.path, manager.config
+    manager.close(); manager.wait()
+    reopened = TaskManager(lambda _: None, config, "history-reopened", path)
+    try:
+        assert reopened._public(reopened.repo.get(task["task_id"]), True)["attempts"] == detail["attempts"]
+    finally:
+        reopened.close(); reopened.wait()
 
 
 def test_batch_extraction_keeps_invalid_inputs_outside_valid_urls():

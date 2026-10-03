@@ -305,6 +305,23 @@ public static class NativeAcceptance
             await Snapshot("tasks-log-dialog-narrow-dark", true);
             logDialog.Hide();
             await logOperation;
+            var historyDialog = ((Views.TasksPage)page).CreateLogDialog("current attempt", [
+                new TaskAttempt("old-failure", 1789552000, 1789552060, "failed", "old failure evidence", true, true),
+                new TaskAttempt("new-success", 1789552100, 1789552160, "completed", "success evidence", false, false)], 3);
+            var historyPanel = (StackPanel)historyDialog.Content;
+            var historySelector = historyPanel.Children.OfType<ComboBox>().Single();
+            var historyText = historyPanel.Children.OfType<TextBox>().Single();
+            var historyOperation = historyDialog.ShowAsync();
+            await Task.Delay(200);
+            Check(historySelector.SelectedIndex == 0 && historyText.Text.Contains("success evidence") &&
+                !historyText.Text.Contains("old failure"), "native_log_history_latest_selected");
+            historySelector.SelectedIndex = 1;
+            Check(historyText.Text.Contains("old failure evidence") && historyText.Text.Contains("日志已截断") &&
+                !historyText.Text.Contains("success evidence"), "native_log_history_selection_and_truncation");
+            Check(historyPanel.Children.OfType<TextBlock>().Single().Text.Contains("已移除 3 轮"), "native_log_history_retention_notice");
+            await Snapshot("tasks-log-history-narrow-dark", true);
+            historyDialog.Hide();
+            await historyOperation;
             window.AppWindow.Resize(initialSize);
             root.RequestedTheme = ElementTheme.Light;
             await Snapshot("tasks-multiple-files-details-light", true);
