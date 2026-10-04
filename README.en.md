@@ -1,4 +1,4 @@
-> **3.6** saves separate batch configuration drafts and adds bounded long-media verification budgets with fair processing admission. See [3.6 release notes](docs/releases/v3.6.md).
+> **3.7** adds real-task recovery acceptance and preserves both initial failures and verified retry outputs. See [3.7 release notes](docs/releases/v3.7.md). Phone QR and accessibility acceptance remain pending.
 
 <div align="center">
 
@@ -17,7 +17,7 @@
 <p>
   <strong>Navigation</strong><br/>
   <a href="https://github.com/Qrzzzz/bili-downloader/releases/latest">Download</a> ·
-  <a href="./docs/releases/v3.0.md">v3.0 Release Notes</a> ·
+  <a href="./docs/releases/v3.7.md">v3.7 Release Notes</a> ·
   <a href="#features">Features</a> ·
   <a href="./docs/architecture/v2.5-winui.md">Architecture</a> ·
   <a href="./SECURITY.md">Security</a> ·
@@ -49,24 +49,24 @@
 
 Download the latest stable release from [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest).
 
-**v3.0** adds persistent tasks, parallel downloads, batch input, and explicit recovery after restart. Get published builds from GitHub Releases. See the [release notes](./docs/releases/v3.0.md) and [validation record](./docs/validation/v3.0.md). The 3.0 asset names are:
+**v3.7** publishes improved real-task acceptance tools and traceable recovery evidence while retaining persistent parallel downloads and batch drafts. See the [release notes](./docs/releases/v3.7.md) and [validation record](./docs/validation/v3.7.md). The 3.7 asset names are:
 
 | File                              | Purpose                                 |
 | --------------------------------- | --------------------------------------- |
-| `BiliDownloader.v3.0.win-x64.zip` | Complete Windows x64 application        |
-| `BiliDownloader.v3.0.sbom.json`   | Software bill of materials              |
+| `BiliDownloader.v3.7.win-x64.zip` | Complete Windows x64 application        |
+| `BiliDownloader.v3.7.sbom.json`   | Software bill of materials              |
 | `SHA256SUMS`                      | SHA-256 checksums for release artifacts |
 
 ### Installation
 
-1. Download `BiliDownloader.v3.0.win-x64.zip`.
+1. Download `BiliDownloader.v3.7.win-x64.zip`.
 2. **Fully extract** the ZIP instead of launching the executable from inside the archive.
 3. Keep the main executable, backend executable, and runtime files in their original directory structure.
 4. Configure FFmpeg as described below.
 5. Run:
 
 ```text
-BiliDownloader.v3.0.exe
+BiliDownloader.v3.7.exe
 ```
 
 The release package includes the required **.NET, Windows App SDK, and Python runtimes**. End users do not need to install these separately.
@@ -78,7 +78,7 @@ Bili Downloader Lite **does not download, install, or bundle FFmpeg**.
 Obtain `ffmpeg.exe` yourself from a lawful and trusted source, then either place it at:
 
 ```text
-BiliDownloader.v3.0.exe
+BiliDownloader.v3.7.exe
 tools/
 └── ffmpeg.exe
 ```
@@ -431,8 +431,8 @@ from the application directory. It does not search the system `PATH` for an arbi
 
 | Document                                                | Contents                                             |
 | ------------------------------------------------------- | ---------------------------------------------------- |
-| [v3.0 Release Notes](./docs/releases/v3.0.md)           | Current release changes                              |
-| [v3.0 Validation](./docs/validation/v3.0.md)            | Validation record for the current release            |
+| [v3.7 Release Notes](./docs/releases/v3.7.md)           | Current release changes                              |
+| [v3.7 Validation](./docs/validation/v3.7.md)            | Validation record for the current release            |
 | [WinUI Architecture](./docs/architecture/v2.5-winui.md) | Native Windows architecture and migration boundary   |
 | [IPC v1](./docs/architecture/ipc-v1.md)                 | WinUI ↔ Python protocol                              |
 | [Security Policy](./SECURITY.md)                        | Credentials, sensitive data, vulnerability reporting |
@@ -536,7 +536,7 @@ The current build output is written to:
 
 ```text
 dist\
-└── BiliDownloader.v3.0.win-x64\
+└── BiliDownloader.v3.7.win-x64\
 ```
 
 with a corresponding ZIP candidate.
@@ -545,7 +545,7 @@ Run the packaged smoke test with:
 
 ```powershell
 .\tools\package_smoke.ps1 `
-  -Executable .\dist\BiliDownloader.v3.0.win-x64\BiliDownloader.v3.0.exe
+  -Executable .\dist\BiliDownloader.v3.7.win-x64\BiliDownloader.v3.7.exe
 ```
 
 PR / main CI runs Python regression tests, WinUI compilation, and C# pipeline tests.
