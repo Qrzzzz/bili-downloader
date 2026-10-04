@@ -1348,8 +1348,13 @@ def download_videos(
                     _check_disk_space(target_dir, DownloadPlan((planned,), plan.requested_height, mode))
                     work_dir = target_dir
                     if controller.task_id:
+                        from app.services.task_staging import check_path
+                        # Cleanup and downloads share this lease across processes.
+                        stage_key = os.path.normcase(str(Path(target_dir).absolute()))
+                        resources.enter_context(resource_lease("staging:" + stage_key + ":" + controller.task_id, controller))
                         space_check = resources.enter_context(reserve_space(target_dir, planned.estimated_bytes, controller.task_owner, controller))
                         stage = Path(target_dir, ".bili-tasks", controller.task_id)
+                        check_path(stage.absolute())
                         stage.mkdir(parents=True, exist_ok=True)
                         work_dir = str(stage)
                     controller.set_phase("downloading")

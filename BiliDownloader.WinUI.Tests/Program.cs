@@ -42,7 +42,7 @@ try
         string[] ids = [];
         try
         {
-            await c.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.4" });
+            await c.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.5" });
             await c.RequestAsync("queue.pause");
             var list = new List<string>();
             for (int i = 0; i < 3; i++)
@@ -71,10 +71,23 @@ try
         var recovered = Client("tasks"); recovered.Start();
         try
         {
-            await recovered.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.4" });
+            await recovered.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.5" });
             var snapshot = Protocol.Read<TaskSnapshot>(await recovered.RequestAsync("tasks.list"));
             Check(snapshot.Tasks.Count(t => t.State == "interrupted") == 2, "Shutdown did not preserve incomplete work");
             Check(snapshot.Tasks.All(t => t.State != "downloading"), "Recovery started network work automatically");
+            string orphanId = Guid.NewGuid().ToString("N");
+            string stage = Path.Combine(profile, ".bili-tasks", orphanId);
+            Directory.CreateDirectory(stage);
+            await File.WriteAllTextAsync(Path.Combine(stage, "fixture.part"), "resume");
+            var scan = Protocol.Read<StagingScan>(await recovered.RequestAsync("staging.scan"));
+            var entry = scan.Entries.Single(e => e.TaskId == orphanId);
+            Check(entry.CanClean && entry.Category == "orphan" && entry.Bytes == 6, "Staging preview did not classify the orphan");
+            var cleaned = Protocol.Read<StagingReply>(await recovered.RequestAsync("staging.clean", new { entry_ids = new[] { entry.EntryId } }));
+            Check(cleaned.Results.Single().Status == "recycled" && !Directory.Exists(stage), "Staging cleanup did not quarantine the selected directory");
+            scan = Protocol.Read<StagingScan>(await recovered.RequestAsync("staging.scan"));
+            entry = scan.Entries.Single(e => e.TaskId == orphanId);
+            var restored = Protocol.Read<StagingReply>(await recovered.RequestAsync("staging.restore", new { entry_ids = new[] { entry.EntryId } }));
+            Check(restored.Results.Single().Status == "restored" && File.ReadAllText(Path.Combine(stage, "fixture.part")) == "resume", "Staging restore lost partial content");
         }
         finally { await recovered.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
     });
@@ -92,8 +105,8 @@ try
         var c = Client("real"); c.Start();
         try
         {
-            var hello = Protocol.Read<Hello>(await c.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.4" }));
-            Check(hello.BackendVersion == "3.4" && hello.ProtocolVersion == 2, "Version negotiation failed");
+            var hello = Protocol.Read<Hello>(await c.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.5" }));
+            Check(hello.BackendVersion == "3.5" && hello.ProtocolVersion == 2, "Version negotiation failed");
             Check(Directory.EnumerateDirectories(profile, "run-markers", SearchOption.AllDirectories).SelectMany(Directory.EnumerateFiles).Any(), "Backend did not acquire a running marker");
             string? operation = null;
             await Throws<BackendException>(() => c.RunAsync("parse.start", new { input = "invalid", credential_mode = "anonymous" }, id => operation = id));
@@ -107,7 +120,7 @@ try
         var restarted = Client("real"); restarted.Start();
         try
         {
-            var hello = Protocol.Read<Hello>(await restarted.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.4" }));
+            var hello = Protocol.Read<Hello>(await restarted.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.5" }));
             Check(hello.Settings is { DownloadMode: "audio_mp3", PreferredQuality: 1080, RememberDownloadPreferences: true, Theme: "dark" }, "Preferences did not survive backend restart");
         }
         finally { await restarted.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
@@ -119,7 +132,7 @@ try
             c.Event += e => events.Enqueue(e.Name); c.Start();
             try
             {
-                await c.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.4" });
+                await c.RequestAsync("hello", new { protocol_version = 2, frontend_version = "3.5" });
                 string? operation = null;
                 await Throws<BackendException>(() => c.RunAsync("diagnostics.run", null, id =>
                 {

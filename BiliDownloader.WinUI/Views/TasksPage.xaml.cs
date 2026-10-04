@@ -20,6 +20,93 @@ public sealed partial class TasksPage : Page
     private async void Reauthorize_Click(object sender, RoutedEventArgs e) => await Act(sender, "resume", true);
     private async void First_Click(object sender, RoutedEventArgs e) => await Act(sender, "reorder");
     private async void Remove_Click(object sender, RoutedEventArgs e) => await Act(sender, "remove");
+    private bool stagingDialogOpen;
+    private async void Staging_Click(object sender, RoutedEventArgs e)
+    {
+        if (stagingDialogOpen) return;
+        stagingDialogOpen = true;
+        try
+        {
+            await App.Session.ExecuteAsync(async () =>
+            {
+                var scan = Models.Protocol.Read<Models.StagingScan>(await App.Session.Client.RequestAsync("staging.scan"));
+                await CreateStagingDialog(scan).ShowAsync();
+            });
+        }
+        finally { stagingDialogOpen = false; }
+    }
+    internal ContentDialog CreateStagingDialog(Models.StagingScan scan)
+    {
+        var summary = new TextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
+        var notice = new TextBlock { Text = "仅扫描当前及任务使用过的目录。选择孤立残留或已完成暂存，再点击安全清理。活动任务与可恢复断点受保护。清理移入 .bili-tasks-recycle，可还原，仍占用磁盘；需要释放空间时可打开回收区，在资源管理器中自行删除。最终媒体保留。",
+            TextWrapping = TextWrapping.Wrap };
+        var list = new ListView { SelectionMode = ListViewSelectionMode.Multiple,
+            Height = Math.Clamp(XamlRoot.Size.Height - 380, 90, 300), HorizontalContentAlignment = HorizontalAlignment.Stretch };
+        list.ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load(
+            "<DataTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'><TextBlock Text='{Binding}' TextWrapping='Wrap' Margin='0,6'/></DataTemplate>");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(list, "暂存扫描预览，多选需要清理或还原的项");
+        var refresh = new Button { Content = "刷新扫描" };
+        var open = new Button { Content = "打开暂存回收区", IsEnabled = false };
+        var status = new TextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(status, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+        var panel = new StackPanel { Spacing = 8 };
+        panel.Children.Add(summary); panel.Children.Add(notice); panel.Children.Add(list);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        actions.Children.Add(refresh); actions.Children.Add(open); panel.Children.Add(actions); panel.Children.Add(status);
+        var dialog = new ContentDialog { XamlRoot = XamlRoot, RequestedTheme = ActualTheme, Title = "暂存管理",
+            Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto },
+            PrimaryButtonText = "安全清理所选", SecondaryButtonText = "还原所选", CloseButtonText = "关闭",
+            DefaultButton = ContentDialogButton.Close, IsPrimaryButtonEnabled = false, IsSecondaryButtonEnabled = false };
+        bool busy = false;
+        void Selection()
+        {
+            var selected = list.SelectedItems.Cast<Models.StagingEntry>().ToArray();
+            dialog.IsPrimaryButtonEnabled = !busy && selected.Length > 0 && selected.All(e => e.CanClean);
+            dialog.IsSecondaryButtonEnabled = !busy && selected.Length > 0 && selected.All(e => e.CanRestore);
+            open.IsEnabled = !busy && selected.Length == 1 && selected[0].Category == "recycled";
+        }
+        void Apply(Models.StagingScan value)
+        {
+            summary.Text = $"已扫描 {value.Entries.Length} 项 · 占用 {value.TotalBytes / 1048576d:0.##} MiB · 可清理 {value.CleanableBytes / 1048576d:0.##} MiB · 回收区 {value.RecycledBytes / 1048576d:0.##} MiB";
+            if (value.Errors.Length > 0 || value.Entries.Any(e => e.Category == "protected" && e.FileCount == 0))
+                summary.Text += "（扫描失败项未计入占用）";
+            list.ItemsSource = value.Entries;
+            status.Text = string.Join(Environment.NewLine, value.Errors);
+            Selection();
+        }
+        async Task Reload()
+        {
+            Apply(Models.Protocol.Read<Models.StagingScan>(await App.Session.Client.RequestAsync("staging.scan")));
+        }
+        async Task Run(Func<Task> work)
+        {
+            if (busy) return;
+            busy = true; refresh.IsEnabled = false; list.IsEnabled = false; Selection();
+            try { await App.Session.ExecuteAsync(work); }
+            finally { busy = false; refresh.IsEnabled = true; list.IsEnabled = true; Selection(); }
+        }
+        async Task Change(bool restore)
+        {
+            var ids = list.SelectedItems.Cast<Models.StagingEntry>().Select(e => e.EntryId).ToArray();
+            await Run(async () =>
+            {
+                var result = Models.Protocol.Read<Models.StagingReply>(await App.Session.Client.RequestAsync(
+                    restore ? "staging.restore" : "staging.clean", new { entry_ids = ids }));
+                await Reload();
+                status.Text = string.Join(Environment.NewLine, result.Results.Select(r =>
+                    (r.Status == "recycled" ? "已移入回收区：" : r.Status == "restored" ? "已还原：" : "未处理：") + r.Message)) +
+                    (string.IsNullOrWhiteSpace(status.Text) ? "" : Environment.NewLine + status.Text);
+            });
+        }
+        list.SelectionChanged += (_, _) => Selection();
+        refresh.Click += async (_, _) => await Run(Reload);
+        open.Click += async (_, _) => await Run(() => WindowsShellService.OpenFolderAsync(
+            System.IO.Directory.GetParent(list.SelectedItems.Cast<Models.StagingEntry>().Single().Path)!.Parent!.FullName));
+        dialog.PrimaryButtonClick += async (_, args) => { args.Cancel = true; await Change(false); };
+        dialog.SecondaryButtonClick += async (_, args) => { args.Cancel = true; await Change(true); };
+        Apply(scan);
+        return dialog;
+    }
     private async void Details_Click(object sender, RoutedEventArgs e)
     {
         var row = (TaskRow)((FrameworkElement)sender).DataContext;
