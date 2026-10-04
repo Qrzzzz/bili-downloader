@@ -27,6 +27,7 @@ def worker(report: Path, work: Path) -> int:
     from app.services.parse_service import parse_video
     from app.services.task_service import TaskManager
     from app.utils import probe_ffmpeg
+    from tools.public_task_lifecycle import accepted, inspect_task
     import certifi
 
     result = {"version": __version__, "python": platform.python_version(), "os": platform.system(),
@@ -85,6 +86,7 @@ def worker(report: Path, work: Path) -> int:
             if "task_id" not in entry:
                 continue
             task = manager.repo.get(entry["task_id"])
+            entry["first_attempt"] = inspect_task(task, ffmpeg.path)
             entry.update(state=task["state"], outputs=[], errors=[])
             for part in (task["result"] or {}).get("part_results", []):
                 if part.get("error"):
@@ -98,7 +100,9 @@ def worker(report: Path, work: Path) -> int:
                         capture_output=True, text=True, timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                     entry["outputs"].append({"name": Path(name).name, "bytes": Path(name).stat().st_size,
                         "ffprobe_exit": probe.returncode, "probe": json.loads(probe.stdout) if probe.returncode == 0 else None})
-        result["outcome"] = "passed" if all(t["state"] == "completed" and t.get("outputs") for t in result["tasks"]) else "failed"
+        result["initial_outcome"] = "passed" if len(result["tasks"]) == 2 and result["max_active"] == 2 and all(
+            "first_attempt" in t and accepted(t["first_attempt"], [1], t["mode"]) for t in result["tasks"]) else "failed"
+        result["outcome"] = result["initial_outcome"]
         save()
         # Retry failed parts once; retain the first real outcome above.
         retried = set()
@@ -116,6 +120,9 @@ def worker(report: Path, work: Path) -> int:
                 task = manager.repo.get(entry["task_id"])
                 entry.update(retry_state=task["state"] if entry["task_id"] in retried else "not_needed",
                     retained_attempts=len(task.get("attempts", [])))
+                entry["final"] = inspect_task(task, ffmpeg.path) if entry["task_id"] in retried else entry["first_attempt"]
+        result["outcome"] = "passed" if len(result["tasks"]) == 2 and result["max_active"] == 2 and all(
+            "final" in t and accepted(t["final"], [1], t["mode"]) for t in result["tasks"]) else "failed"
         save()
         return 0 if result["outcome"] == "passed" else 1
     finally:

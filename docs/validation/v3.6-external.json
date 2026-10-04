@@ -1,0 +1,1028 @@
+{
+  "date": "2026-10-04",
+  "source_commit": "722c69a0a21a6d6e3e053923ccb2124f642f15c3",
+  "scope": "v3.6 production Python backend with local opt-in acceptance tools; source evidence, not Release package acceptance",
+  "environment": {
+    "version": "3.6",
+    "python": "3.13.14",
+    "os": "Windows",
+    "tls": "OpenSSL 3.5.7 9 Jun 2026",
+    "certifi": "2026.07.22",
+    "certifi_tls": "passed",
+    "system_tls": "passed",
+    "tls_verification": true,
+    "credential_mode": "anonymous"
+  },
+  "parallel": {
+    "outcome": "passed",
+    "initial_outcome": "passed",
+    "max_active": 2,
+    "tasks": [
+      {
+        "source": "BV1GJ411x7h7",
+        "mode": "audio_video",
+        "first_state": "completed",
+        "retry_state": "not_needed",
+        "final": {
+          "state": "completed",
+          "task_id": "c14cd369c81d4ecc8dfbd9981ac19d38",
+          "attempts": [
+            {
+              "attempt_id": "420b7e37ffe84dbda96673ddd5cf48d4",
+              "state": "completed"
+            }
+          ],
+          "parts": [
+            {
+              "index": 1,
+              "status": "completed",
+              "file_count": 1,
+              "error_code": null
+            }
+          ],
+          "saved_files_consistent": true,
+          "outputs": [
+            {
+              "name": "P001-【官方 MV】Never Gonna Give You Up - Rick Astley-BV1GJ411x7h7-[video-mp4-360p].mp4",
+              "bytes": 9617090,
+              "sha256": "188c37a04f53f1b8bcda5e5f7e71549b2791dd0595558640ebbabc2e53840181",
+              "ffprobe_exit": 0,
+              "full_decode_exit": 0,
+              "probe": {
+                "programs": [],
+                "stream_groups": [],
+                "streams": [
+                  {
+                    "codec_type": "video",
+                    "height": 360,
+                    "bit_rate": "155883"
+                  },
+                  {
+                    "codec_type": "audio",
+                    "bit_rate": "201984"
+                  }
+                ],
+                "format": {
+                  "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+                  "duration": "212.308833"
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "source": "BV1kkbC6eEgm",
+        "mode": "audio_mp3",
+        "first_state": "completed",
+        "retry_state": "not_needed",
+        "final": {
+          "state": "completed",
+          "task_id": "bee9a0467ada47ce9cdd14ff12761eb8",
+          "attempts": [
+            {
+              "attempt_id": "cc3a1d72a06e4f7a8ed57276ac2c2998",
+              "state": "completed"
+            }
+          ],
+          "parts": [
+            {
+              "index": 1,
+              "status": "completed",
+              "file_count": 1,
+              "error_code": null
+            }
+          ],
+          "saved_files_consistent": true,
+          "outputs": [
+            {
+              "name": "P001-华强卖瓜-大厂版-BV1kkbC6eEgm-[audio-mp3-192k].mp3",
+              "bytes": 5730251,
+              "sha256": "52fa556d251a498c365e431a384ab0a8a699fea80bfac0148a7580cc8cd48070",
+              "ffprobe_exit": 0,
+              "full_decode_exit": 0,
+              "probe": {
+                "programs": [],
+                "stream_groups": [],
+                "streams": [
+                  {
+                    "codec_type": "audio",
+                    "bit_rate": "192000"
+                  }
+                ],
+                "format": {
+                  "format_name": "mp3",
+                  "duration": "238.698667"
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "observed_failure_retry": {
+    "source": "BV1kkbC6eEgm",
+    "mode": "audio_mp3",
+    "fault_injected": false,
+    "first_state": "failed",
+    "first_errors": [
+      {
+        "code": "output_permission",
+        "tls_certificate_error": false
+      }
+    ],
+    "root_cause": "not_determined; error classification does not establish underlying filesystem cause",
+    "final": {
+      "state": "completed",
+      "task_id": "0ebcb8b90323449e85c689532df9c755",
+      "attempts": [
+        {
+          "attempt_id": "e3673c25bedd4bb390948edb03c26926",
+          "state": "failed"
+        },
+        {
+          "attempt_id": "9ea12141647548c2aac18a8b637b7b78",
+          "state": "completed"
+        }
+      ],
+      "parts": [
+        {
+          "index": 1,
+          "status": "completed",
+          "file_count": 1,
+          "error_code": null
+        }
+      ],
+      "saved_files_consistent": true,
+      "outputs": [
+        {
+          "name": "P001-华强卖瓜-大厂版-BV1kkbC6eEgm-[audio-mp3-192k].mp3",
+          "bytes": 5730251,
+          "sha256": "52fa556d251a498c365e431a384ab0a8a699fea80bfac0148a7580cc8cd48070",
+          "ffprobe_exit": 0,
+          "full_decode_exit": 0,
+          "probe": {
+            "programs": [],
+            "stream_groups": [],
+            "streams": [
+              {
+                "codec_type": "audio",
+                "bit_rate": "192000"
+              }
+            ],
+            "format": {
+              "format_name": "mp3",
+              "duration": "238.698667"
+            }
+          }
+        }
+      ]
+    },
+    "outcome": "passed"
+  },
+  "single_part_lifecycle": [
+    {
+      "case": "cancel",
+      "mode": "audio_video",
+      "source": "BV1GJ411x7h7",
+      "indices": [
+        1
+      ],
+      "outcome": "passed",
+      "trigger": {
+        "phase": "downloading",
+        "downloaded_bytes": 1024
+      },
+      "task_id": "809b3538618148cd9d0b8daaecbd9737",
+      "before_resume": {
+        "state": "cancelled",
+        "task_id": "809b3538618148cd9d0b8daaecbd9737",
+        "attempts": [
+          {
+            "attempt_id": "1d062b85873240629041b01b193e32c8",
+            "state": "cancelled"
+          }
+        ],
+        "parts": [
+          {
+            "index": 1,
+            "status": "cancelled",
+            "file_count": 0,
+            "error_code": null
+          }
+        ],
+        "saved_files_consistent": true,
+        "outputs": []
+      },
+      "final": {
+        "state": "completed",
+        "task_id": "809b3538618148cd9d0b8daaecbd9737",
+        "attempts": [
+          {
+            "attempt_id": "1d062b85873240629041b01b193e32c8",
+            "state": "cancelled"
+          },
+          {
+            "attempt_id": "03e65cbd7103435aae0a1f44cc2195c3",
+            "state": "completed"
+          }
+        ],
+        "parts": [
+          {
+            "index": 1,
+            "status": "completed",
+            "file_count": 1,
+            "error_code": null
+          }
+        ],
+        "saved_files_consistent": true,
+        "outputs": [
+          {
+            "name": "P001-【官方 MV】Never Gonna Give You Up - Rick Astley-BV1GJ411x7h7-[video-mp4-360p].mp4",
+            "bytes": 9617090,
+            "sha256": "188c37a04f53f1b8bcda5e5f7e71549b2791dd0595558640ebbabc2e53840181",
+            "ffprobe_exit": 0,
+            "full_decode_exit": 0,
+            "probe": {
+              "programs": [],
+              "stream_groups": [],
+              "streams": [
+                {
+                  "codec_type": "video",
+                  "height": 360,
+                  "bit_rate": "155883"
+                },
+                {
+                  "codec_type": "audio",
+                  "bit_rate": "201984"
+                }
+              ],
+              "format": {
+                "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+                "duration": "212.308833"
+              }
+            }
+          }
+        ]
+      },
+      "worker_exit": 0
+    },
+    {
+      "case": "cancel",
+      "mode": "audio_mp3",
+      "source": "BV1GJ411x7h7",
+      "indices": [
+        1
+      ],
+      "outcome": "passed",
+      "trigger": {
+        "phase": "downloading",
+        "downloaded_bytes": 1024
+      },
+      "task_id": "4641d09e0cc441eba42742f5d32f8e44",
+      "before_resume": {
+        "state": "cancelled",
+        "task_id": "4641d09e0cc441eba42742f5d32f8e44",
+        "attempts": [
+          {
+            "attempt_id": "d76cdeb79d1245ef9bc55170e3e1d4b9",
+            "state": "cancelled"
+          }
+        ],
+        "parts": [
+          {
+            "index": 1,
+            "status": "cancelled",
+            "file_count": 0,
+            "error_code": null
+          }
+        ],
+        "saved_files_consistent": true,
+        "outputs": []
+      },
+      "final": {
+        "state": "completed",
+        "task_id": "4641d09e0cc441eba42742f5d32f8e44",
+        "attempts": [
+          {
+            "attempt_id": "d76cdeb79d1245ef9bc55170e3e1d4b9",
+            "state": "cancelled"
+          },
+          {
+            "attempt_id": "f07e22a8a81f40c2a4166bc42c1ec0f5",
+            "state": "completed"
+          }
+        ],
+        "parts": [
+          {
+            "index": 1,
+            "status": "completed",
+            "file_count": 1,
+            "error_code": null
+          }
+        ],
+        "saved_files_consistent": true,
+        "outputs": [
+          {
+            "name": "P001-【官方 MV】Never Gonna Give You Up - Rick Astley-BV1GJ411x7h7-[audio-mp3-192k].mp3",
+            "bytes": 5097229,
+            "sha256": "8cf85caa1441e279b707f61753cccdebc89eb5f79f81a28ba0dc552aed9bfa9e",
+            "ffprobe_exit": 0,
+            "full_decode_exit": 0,
+            "probe": {
+              "programs": [],
+              "stream_groups": [],
+              "streams": [
+                {
+                  "codec_type": "audio",
+                  "bit_rate": "192000"
+                }
+              ],
+              "format": {
+                "format_name": "mp3",
+                "duration": "212.309333"
+              }
+            }
+          }
+        ]
+      },
+      "worker_exit": 0
+    },
+    {
+      "case": "restart",
+      "mode": "audio_video",
+      "source": "BV1GJ411x7h7",
+      "indices": [
+        1
+      ],
+      "outcome": "passed",
+      "trigger": {
+        "phase": "downloading",
+        "downloaded_bytes": 1024
+      },
+      "task_id": "1b989dd5b3b343c698ad6ae60c777a1d",
+      "recovered_state": "interrupted",
+      "automatic_restart": false,
+      "final": {
+        "state": "completed",
+        "task_id": "1b989dd5b3b343c698ad6ae60c777a1d",
+        "attempts": [
+          {
+            "attempt_id": "4e4503152eb74f5393dbd696309ec332",
+            "state": "interrupted"
+          },
+          {
+            "attempt_id": "6b3fa2f9d23e4e90a50f0a304b11418a",
+            "state": "completed"
+          }
+        ],
+        "parts": [
+          {
+            "index": 1,
+            "status": "completed",
+            "file_count": 1,
+            "error_code": null
+          }
+        ],
+        "saved_files_consistent": true,
+        "outputs": [
+          {
+            "name": "P001-【官方 MV】Never Gonna Give You Up - Rick Astley-BV1GJ411x7h7-[video-mp4-360p].mp4",
+            "bytes": 9617090,
+            "sha256": "188c37a04f53f1b8bcda5e5f7e71549b2791dd0595558640ebbabc2e53840181",
+            "ffprobe_exit": 0,
+            "full_decode_exit": 0,
+            "probe": {
+              "programs": [],
+              "stream_groups": [],
+              "streams": [
+                {
+                  "codec_type": "video",
+                  "height": 360,
+                  "bit_rate": "155883"
+                },
+                {
+                  "codec_type": "audio",
+                  "bit_rate": "201984"
+                }
+              ],
+              "format": {
+                "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+                "duration": "212.308833"
+              }
+            }
+          }
+        ]
+      },
+      "worker_exit": 0
+    },
+    {
+      "case": "restart",
+      "mode": "audio_mp3",
+      "source": "BV1GJ411x7h7",
+      "indices": [
+        1
+      ],
+      "outcome": "passed",
+      "trigger": {
+        "phase": "downloading",
+        "downloaded_bytes": 1024
+      },
+      "task_id": "aa0f2fb6abfa4dc89a62805e2c0b957b",
+      "recovered_state": "interrupted",
+      "automatic_restart": false,
+      "final": {
+        "state": "completed",
+        "task_id": "aa0f2fb6abfa4dc89a62805e2c0b957b",
+        "attempts": [
+          {
+            "attempt_id": "c92f0fac4e544da084bab51de1ee9e1d",
+            "state": "interrupted"
+          },
+          {
+            "attempt_id": "95b6cac7bab54aa4861520efff2d3a58",
+            "state": "completed"
+          }
+        ],
+        "parts": [
+          {
+            "index": 1,
+            "status": "completed",
+            "file_count": 1,
+            "error_code": null
+          }
+        ],
+        "saved_files_consistent": true,
+        "outputs": [
+          {
+            "name": "P001-【官方 MV】Never Gonna Give You Up - Rick Astley-BV1GJ411x7h7-[audio-mp3-192k].mp3",
+            "bytes": 5097229,
+            "sha256": "8cf85caa1441e279b707f61753cccdebc89eb5f79f81a28ba0dc552aed9bfa9e",
+            "ffprobe_exit": 0,
+            "full_decode_exit": 0,
+            "probe": {
+              "programs": [],
+              "stream_groups": [],
+              "streams": [
+                {
+                  "codec_type": "audio",
+                  "bit_rate": "192000"
+                }
+              ],
+              "format": {
+                "format_name": "mp3",
+                "duration": "212.309333"
+              }
+            }
+          }
+        ]
+      },
+      "worker_exit": 0
+    }
+  ],
+  "multi_part_lifecycle": [
+    {
+      "case": "cancel",
+      "mode": "audio_video",
+      "source": "BV1uUa66yEG7",
+      "indices": [
+        1,
+        2
+      ],
+      "height": null,
+      "outcome": "passed",
+      "trigger": {
+        "phase": "downloading",
+        "part_index": 2,
+        "downloaded_bytes": 1024
+      },
+      "published_before_control": [
+        {
+          "name": "P001-巫师3重制版瘾头狼，剑法双修！解读在P2 p01 实战演示-BV1uUa66yEG7_p1-[video-mp4-best].mp4",
+          "sha256": "5e273871f8d28f7a795834ecc8673bc7553090d7ff8b9f39e2ccff8a988d07d0"
+        }
+      ],
+      "task_id": "6b80d08a3e3341b891dcbff0ba5b3478",
+      "before_resume": {
+        "state": "cancelled",
+        "task_id": "6b80d08a3e3341b891dcbff0ba5b3478",
+        "attempts": [
+          {
+            "attempt_id": "bc72c7a647bf4abfb1d4eeaa894b96f5",
+            "state": "cancelled"
+          }
+        ],
+        "parts": [
+          {
+            "index": 1,
+            "status": "completed",
+            "file_count": 1,
+            "error_code": null
+          },
+          {
+            "index": 2,
+            "status": "cancelled",
+            "file_count": 0,
+            "error_code": null
+          }
+        ],
+        "saved_files_consistent": true,
+        "outputs": [
+          {
+            "name": "P001-巫师3重制版瘾头狼，剑法双修！解读在P2 p01 实战演示-BV1uUa66yEG7_p1-[video-mp4-best].mp4",
+            "bytes": 19461356,
+            "sha256": "5e273871f8d28f7a795834ecc8673bc7553090d7ff8b9f39e2ccff8a988d07d0",
+            "ffprobe_exit": 0,
+            "full_decode_exit": 0,
+            "probe": {
+              "programs": [],
+              "stream_groups": [],
+              "streams": [
+                {
+                  "codec_type": "video",
+                  "height": 1080,
+                  "bit_rate": "2878466"
+                },
+                {
+                  "codec_type": "audio",
+                  "bit_rate": "94711"
+                }
+              ],
+              "format": {
+                "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+                "duration": "52.288000"
+              }
+            }
+          }
+        ]
+      },
+      "final": {
+        "state": "completed",
+        "task_id": "6b80d08a3e3341b891dcbff0ba5b3478",
+        "attempts": [
+          {
+            "attempt_id": "bc72c7a647bf4abfb1d4eeaa894b96f5",
+            "state": "cancelled"
+          },
+          {
+            "attempt_id": "87c3e0a476004f12a0fe43ae525790e5",
+            "state": "completed"
+          }
+        ],
+        "parts": [
+          {
+            "index": 1,
+            "status": "completed",
+            "file_count": 1,
+            "error_code": null
+          },
+          {
+            "index": 2,
+            "status": "completed",
+            "file_count": 1,
+            "error_code": null
+          }
+        ],
+        "saved_files_consistent": true,
+        "outputs": [
+          {
+            "name": "P001-巫师3重制版瘾头狼，剑法双修！解读在P2 p01 实战演示-BV1uUa66yEG7_p1-[video-mp4-best].mp4",
+            "bytes": 19461356,
+            "sha256": "5e273871f8d28f7a795834ecc8673bc7553090d7ff8b9f39e2ccff8a988d07d0",
+            "ffprobe_exit": 0,
+            "full_decode_exit": 0,
+            "probe": {
+              "programs": [],
+              "stream_groups": [],
+              "streams": [
+                {
+                  "codec_type": "video",
+                  "height": 1080,
+                  "bit_rate": "2878466"
+                },
+                {
+                  "codec_type": "audio",
+                  "bit_rate": "94711"
+                }
+              ],
+              "format": {
+                "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+                "duration": "52.288000"
+              }
+            }
+          },
+          {
+            "name": "P002-巫师3重制版瘾头狼，剑法双修！解读在P2 p02 构筑解读-BV1uUa66yEG7_p2-[video-mp4-best].mp4",
+            "bytes": 29688901,
+            "sha256": "786c52e6464c08dfa1428eaa0b097410171704ddfde6c4c75762e94284523838",
+            "ffprobe_exit": 0,
+            "full_decode_exit": 0,
+            "probe": {
+              "programs": [],
+              "stream_groups": [],
+              "streams": [
+                {
+                  "codec_type": "video",
+                  "height": 1080,
+                  "bit_rate": "557444"
+                },
+                {
+                  "codec_type": "audio",
+                  "bit_rate": "86273"
+                }
+              ],
+              "format": {
+                "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+                "duration": "364.352000"
+              }
+            }
+          }
+        ]
+      },
+      "retained_outputs_unchanged": true,
+      "worker_exit": 0
+    },
+    {
+      "case": "cancel",
+      "mode": "audio_mp3",
+      "source": "BV1uUa66yEG7",
+      "indices": [
+        1,
+        2
+      ],
+      "height": null,
+      "outcome": "passed",
+      "trigger": {
+        "phase": "downloading",
+        "part_index": 2,
+        "downloaded_bytes": 1024
+      },
+      "published_before_control": [
+        {
+          "name": "P001-巫师3重制版瘾头狼，剑法双修！解读在P2 p01 实战演示-BV1uUa66yEG7_p1-[audio-mp3-192k].mp3",
+          "sha256": "8000082a97361efcc75aa95572696e209aeb2db65f6696a172ae08cb2b238370"
+        }
+      ],
+      "task_id": "1f4157044d7f4dc99b18ae27c94c73c4",
+      "before_resume": {
+        "state": "cancelled",
+        "task_id": "1f4157044d7f4dc99b18ae27c94c73c4",
+        "attempts": [
+          {
+            "attempt_id": "1aca9393a03a4f41944a5f9d1c4381eb",
+            "state": "cancelled"
+          }
+        ],
+        "parts": [
+          {
+            "index": 1,
+            "status": "completed",
+            "file_count": 1,
+            "error_code": null
+          },
+          {
+            "index": 2,
+            "status": "cancelled",
+            "file_count": 0,
+            "error_code": null
+          }
+        ],
+        "saved_files_consistent": true,
+        "outputs": [
+          {
+            "name": "P001-巫师3重制版瘾头狼，剑法双修！解读在P2 p01 实战演示-BV1uUa66yEG7_p1-[audio-mp3-192k].mp3",
+            "bytes": 1256459,
+            "sha256": "8000082a97361efcc75aa95572696e209aeb2db65f6696a172ae08cb2b238370",
+            "ffprobe_exit": 0,
+            "full_decode_exit": 0,
+            "probe": {
+              "programs": [],
+              "stream_groups": [],
+              "streams": [
+                {
+                  "codec_type": "audio",
+                  "bit_rate": "192000"
+                }
+              ],
+              "format": {
+                "format_name": "mp3",
+                "duration": "52.288000"
+              }
+            }
+          }
+        ]
+      },
+      "final": {
+        "state": "completed",
+        "task_id": "1f4157044d7f4dc99b18ae27c94c73c4",
+        "attempts": [
+          {
+            "attempt_id": "1aca9393a03a4f41944a5f9d1c4381eb",
+            "state": "cancelled"
+          },
+          {
+            "attempt_id": "e47ef2330afa46799dbd42c4c995b97c",
+            "state": "completed"
+          }
+        ],
+        "parts": [
+          {
+            "index": 1,
+            "status": "completed",
+            "file_count": 1,
+            "error_code": null
+          },
+          {
+            "index": 2,
+            "status": "completed",
+            "file_count": 1,
+            "error_code": null
+          }
+        ],
+        "saved_files_consistent": true,
+        "outputs": [
+          {
+            "name": "P001-巫师3重制版瘾头狼，剑法双修！解读在P2 p01 实战演示-BV1uUa66yEG7_p1-[audio-mp3-192k].mp3",
+            "bytes": 1256459,
+            "sha256": "8000082a97361efcc75aa95572696e209aeb2db65f6696a172ae08cb2b238370",
+            "ffprobe_exit": 0,
+            "full_decode_exit": 0,
+            "probe": {
+              "programs": [],
+              "stream_groups": [],
+              "streams": [
+                {
+                  "codec_type": "audio",
+                  "bit_rate": "192000"
+                }
+              ],
+              "format": {
+                "format_name": "mp3",
+                "duration": "52.288000"
+              }
+            }
+          },
+          {
+            "name": "P002-巫师3重制版瘾头狼，剑法双修！解读在P2 p02 构筑解读-BV1uUa66yEG7_p2-[audio-mp3-192k].mp3",
+            "bytes": 8746187,
+            "sha256": "68d2c48f4c60461881df811fcb2bbcf4a35cf0f0ce68306793ae7e798eef9cd5",
+            "ffprobe_exit": 0,
+            "full_decode_exit": 0,
+            "probe": {
+              "programs": [],
+              "stream_groups": [],
+              "streams": [
+                {
+                  "codec_type": "audio",
+                  "bit_rate": "192000"
+                }
+              ],
+              "format": {
+                "format_name": "mp3",
+                "duration": "364.352000"
+              }
+            }
+          }
+        ]
+      },
+      "retained_outputs_unchanged": true,
+      "worker_exit": 0
+    },
+    {
+      "case": "restart",
+      "mode": "audio_video",
+      "source": "BV1uUa66yEG7",
+      "indices": [
+        1,
+        2
+      ],
+      "height": null,
+      "outcome": "passed",
+      "trigger": {
+        "phase": "downloading",
+        "part_index": 2,
+        "downloaded_bytes": 1024
+      },
+      "published_before_control": [
+        {
+          "name": "P001-巫师3重制版瘾头狼，剑法双修！解读在P2 p01 实战演示-BV1uUa66yEG7_p1-[video-mp4-best].mp4",
+          "sha256": "5e273871f8d28f7a795834ecc8673bc7553090d7ff8b9f39e2ccff8a988d07d0"
+        }
+      ],
+      "task_id": "696a9013e7e7496c84644af760503fdf",
+      "recovered_state": "interrupted",
+      "automatic_restart": false,
+      "final": {
+        "state": "completed",
+        "task_id": "696a9013e7e7496c84644af760503fdf",
+        "attempts": [
+          {
+            "attempt_id": "92b145816549465bb29f96787bbfe22c",
+            "state": "interrupted"
+          },
+          {
+            "attempt_id": "1f963e98fbd8411782baba09e16ada98",
+            "state": "completed"
+          }
+        ],
+        "parts": [
+          {
+            "index": 1,
+            "status": "completed",
+            "file_count": 1,
+            "error_code": null
+          },
+          {
+            "index": 2,
+            "status": "completed",
+            "file_count": 1,
+            "error_code": null
+          }
+        ],
+        "saved_files_consistent": true,
+        "outputs": [
+          {
+            "name": "P001-巫师3重制版瘾头狼，剑法双修！解读在P2 p01 实战演示-BV1uUa66yEG7_p1-[video-mp4-best].mp4",
+            "bytes": 19461356,
+            "sha256": "5e273871f8d28f7a795834ecc8673bc7553090d7ff8b9f39e2ccff8a988d07d0",
+            "ffprobe_exit": 0,
+            "full_decode_exit": 0,
+            "probe": {
+              "programs": [],
+              "stream_groups": [],
+              "streams": [
+                {
+                  "codec_type": "video",
+                  "height": 1080,
+                  "bit_rate": "2878466"
+                },
+                {
+                  "codec_type": "audio",
+                  "bit_rate": "94711"
+                }
+              ],
+              "format": {
+                "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+                "duration": "52.288000"
+              }
+            }
+          },
+          {
+            "name": "P002-巫师3重制版瘾头狼，剑法双修！解读在P2 p02 构筑解读-BV1uUa66yEG7_p2-[video-mp4-best].mp4",
+            "bytes": 29688901,
+            "sha256": "786c52e6464c08dfa1428eaa0b097410171704ddfde6c4c75762e94284523838",
+            "ffprobe_exit": 0,
+            "full_decode_exit": 0,
+            "probe": {
+              "programs": [],
+              "stream_groups": [],
+              "streams": [
+                {
+                  "codec_type": "video",
+                  "height": 1080,
+                  "bit_rate": "557444"
+                },
+                {
+                  "codec_type": "audio",
+                  "bit_rate": "86273"
+                }
+              ],
+              "format": {
+                "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+                "duration": "364.352000"
+              }
+            }
+          }
+        ]
+      },
+      "retained_outputs_unchanged": true,
+      "worker_exit": 0
+    },
+    {
+      "case": "restart",
+      "mode": "audio_mp3",
+      "source": "BV1uUa66yEG7",
+      "indices": [
+        1,
+        2
+      ],
+      "height": null,
+      "outcome": "passed",
+      "trigger": {
+        "phase": "downloading",
+        "part_index": 2,
+        "downloaded_bytes": 1024
+      },
+      "published_before_control": [
+        {
+          "name": "P001-巫师3重制版瘾头狼，剑法双修！解读在P2 p01 实战演示-BV1uUa66yEG7_p1-[audio-mp3-192k].mp3",
+          "sha256": "8000082a97361efcc75aa95572696e209aeb2db65f6696a172ae08cb2b238370"
+        }
+      ],
+      "task_id": "c1cf86aed4e8417b90f5d183f8473c4b",
+      "recovered_state": "interrupted",
+      "automatic_restart": false,
+      "final": {
+        "state": "completed",
+        "task_id": "c1cf86aed4e8417b90f5d183f8473c4b",
+        "attempts": [
+          {
+            "attempt_id": "4ee10358ff3240ddb664f0198d3c6c36",
+            "state": "interrupted"
+          },
+          {
+            "attempt_id": "2dd57a5d858f4bcbbecb109c21e110d7",
+            "state": "completed"
+          }
+        ],
+        "parts": [
+          {
+            "index": 1,
+            "status": "completed",
+            "file_count": 1,
+            "error_code": null
+          },
+          {
+            "index": 2,
+            "status": "completed",
+            "file_count": 1,
+            "error_code": null
+          }
+        ],
+        "saved_files_consistent": true,
+        "outputs": [
+          {
+            "name": "P001-巫师3重制版瘾头狼，剑法双修！解读在P2 p01 实战演示-BV1uUa66yEG7_p1-[audio-mp3-192k].mp3",
+            "bytes": 1256459,
+            "sha256": "8000082a97361efcc75aa95572696e209aeb2db65f6696a172ae08cb2b238370",
+            "ffprobe_exit": 0,
+            "full_decode_exit": 0,
+            "probe": {
+              "programs": [],
+              "stream_groups": [],
+              "streams": [
+                {
+                  "codec_type": "audio",
+                  "bit_rate": "192000"
+                }
+              ],
+              "format": {
+                "format_name": "mp3",
+                "duration": "52.288000"
+              }
+            }
+          },
+          {
+            "name": "P002-巫师3重制版瘾头狼，剑法双修！解读在P2 p02 构筑解读-BV1uUa66yEG7_p2-[audio-mp3-192k].mp3",
+            "bytes": 8746187,
+            "sha256": "68d2c48f4c60461881df811fcb2bbcf4a35cf0f0ce68306793ae7e798eef9cd5",
+            "ffprobe_exit": 0,
+            "full_decode_exit": 0,
+            "probe": {
+              "programs": [],
+              "stream_groups": [],
+              "streams": [
+                {
+                  "codec_type": "audio",
+                  "bit_rate": "192000"
+                }
+              ],
+              "format": {
+                "format_name": "mp3",
+                "duration": "364.352000"
+              }
+            }
+          }
+        ]
+      },
+      "retained_outputs_unchanged": true,
+      "worker_exit": 0
+    }
+  ],
+  "qr_protocol": {
+    "ok": true,
+    "outcome": "passed",
+    "generated": true,
+    "first_status": "waiting_scan",
+    "diagnostic": null
+  },
+  "manual": {
+    "phone_qr": {
+      "outcome": "awaiting_user_result"
+    },
+    "file_association": {
+      "outcome": "awaiting_user_result"
+    },
+    "clipboard": {
+      "outcome": "awaiting_user_result"
+    },
+    "screen_reader": {
+      "outcome": "awaiting_user_result"
+    },
+    "high_contrast": {
+      "outcome": "awaiting_user_result"
+    }
+  },
+  "overall": "partial_pending_manual"
+}
