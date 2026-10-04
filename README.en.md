@@ -1,4 +1,4 @@
-> **3.5** adds staging usage previews, recoverable cleanup and restore, and shared task phases and progress across windows. See [3.5 release notes](docs/releases/v3.5.md).
+> **3.6** saves separate batch configuration drafts and adds bounded long-media verification budgets with fair processing admission. See [3.6 release notes](docs/releases/v3.6.md).
 
 <div align="center">
 

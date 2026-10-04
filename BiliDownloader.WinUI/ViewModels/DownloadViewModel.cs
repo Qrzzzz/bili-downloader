@@ -26,6 +26,15 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     private bool adding;
     private string queueMessage = "";
     private readonly Dictionary<string, string> submissionTokens = [];
+    private BatchInputRow? activeBatch;
+    private BatchConfiguration? batchDefaults;
+    internal bool ApplyingConfiguration => applyingPreferences;
+    public string BatchEditorHint => activeBatch is null ? "" : activeBatch.Added
+        ? "此项目已入队，下载规格已冻结。可继续配置其他项目。"
+        : "正在配置：" + activeBatch.Title + "。修改自动保留在本批次草稿中。";
+    public string BatchDefaultsSummary => batchDefaults?.Summary("共用默认值") ?? "";
+    public bool CanEditSpecification => CanChoose && activeBatch?.Added != true;
+    public bool CanResetBatch => CanChoose && activeBatch is { Added: false };
     public ObservableCollection<BatchInputRow> BatchItems { get; } = [];
     public string QueueMessage { get => queueMessage; private set { Set(ref queueMessage, value); Refresh(); } }
     public Visibility QueueMessageVisibility => string.IsNullOrEmpty(QueueMessage) ? Visibility.Collapsed : Visibility.Visible;
@@ -48,6 +57,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
                 preferredHeight = value.Height;
                 RememberPreference(new { preferred_quality = preferredHeight });
             }
+            SaveBatchDraft();
             Refresh();
         }
     }
@@ -65,6 +75,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
         {
             if (value is not (0 or 1) || !Set(ref modeIndex, value)) return;
             if (!applyingPreferences) RememberPreference(new { download_mode = value == 1 ? "audio_mp3" : "audio_video" });
+            SaveBatchDraft();
             Refresh();
         }
     }
@@ -79,7 +90,10 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
         try
         {
             rememberPreferences = settings.RememberDownloadPreferences;
+            // Settings are application defaults; an open per-item draft is independent.
+            if (activeBatch is not null) return;
             ModeIndex = settings.DownloadMode == "audio_mp3" ? 1 : 0;
+            DownloadDirectory = settings.DownloadDir;
             preferredHeight = settings.PreferredQuality;
             SelectedFormat = ResolveFormat(Formats);
         }
@@ -92,7 +106,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     public string QualityHint => SelectedFormat is null && preferredHeight is not null
         ? $"此视频未提供偏好的 {preferredHeight}p，请选择其他画质后加入队列。原偏好会保留，直到你主动更改。"
         : "指定分辨率时严格匹配，不自动降档。";
-    public string DownloadDirectory { get => directory; set { if (Set(ref directory, value)) Refresh(); } }
+    public string DownloadDirectory { get => directory; set { if (Set(ref directory, value)) { SaveBatchDraft(); Refresh(); } } }
     public string Status { get => status; set => Set(ref status, value); }
     public string Logs { get => logs; private set => Set(ref logs, value); }
     public string Title => video?.Title ?? "";
@@ -106,7 +120,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     public string Metrics { get; private set; } = "";
     public bool CanParse => session.Available && !adding && !string.IsNullOrWhiteSpace(input);
     public bool CanDownload => session.Available && !adding && video is not null && SelectedParts.Count > 0 && !string.IsNullOrWhiteSpace(directory)
-        && (ModeIndex == 1 || SelectedFormat is not null);
+        && activeBatch?.Added != true && (ModeIndex == 1 || SelectedFormat is not null);
     public bool CanRetry => session.Available && result?.RetryAllowed == true && video is not null;
     public bool CanChoose => session.Available && !adding;
     public bool CanEditInput => !session.Closing && !IsDownloading && !adding;
@@ -147,6 +161,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     public void Invalidate()
     {
         inputRevision++;
+        activeBatch = null; batchDefaults = null;
         BatchItems.Clear(); QueueMessage = ""; submissionTokens.Clear();
         video = null; Thumbnail = null;
         if (result is not null) result = result with { RetryAllowed = false };
@@ -159,6 +174,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     {
         if (!CanParse) return;
         long revision = ++inputRevision;
+        activeBatch = null; batchDefaults = null; BatchItems.Clear(); submissionTokens.Clear(); QueueMessage = "";
         video = null; result = null; showResult = false; Thumbnail = null;
         SelectedParts.Clear(); Parts.Clear(); Formats.Clear(); SelectedFormat = null;
         Percent = 0; Metrics = "";
@@ -182,47 +198,98 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
 
     internal void ApplyVideo(VideoInfo parsed)
     {
+        activeBatch = null;
         video = parsed; result = null; showResult = false; Thumbnail = null;
-        SelectedParts.Clear(); Parts.Clear();
-        foreach (var p in parsed.Parts) Parts.Add(p);
         applyingPreferences = true;
         try
         {
+            SelectedParts.Clear(); Parts.Clear();
+            foreach (var p in parsed.Parts) Parts.Add(p);
             Formats.Clear();
             foreach (var f in parsed.Formats) Formats.Add(f);
             SelectedFormat = ResolveFormat(Formats);
+            if (parsed.Parts.Length > 0) SelectedParts.Add(DefaultPart(parsed));
         }
         finally { applyingPreferences = false; }
-        if (parsed.Parts.Length > 0) SelectedParts.Add(parsed.Parts.Any(p => p.Index == parsed.CurrentPartIndex) ? parsed.CurrentPartIndex : parsed.Parts[0].Index);
+        Refresh();
+    }
+
+    private static int DefaultPart(VideoInfo parsed) => parsed.Parts.Any(p => p.Index == parsed.CurrentPartIndex)
+        ? parsed.CurrentPartIndex : parsed.Parts[0].Index;
+    private BatchConfiguration CurrentConfiguration() => new(ModeIndex, preferredHeight, directory, SelectedParts.Order().ToArray());
+    public void SaveBatchDraft()
+    {
+        if (!applyingPreferences && activeBatch is { Added: false } row)
+            row.SaveDraft(CurrentConfiguration());
+    }
+    public void ApplyBatchDefaults()
+    {
+        if (!CanResetBatch) return;
+        SaveBatchDraft();
+        batchDefaults = CurrentConfiguration() with { PartIndices = [] };
+        foreach (var row in BatchItems.Where(r => r.Video is not null && !r.Added && !r.HasOverride))
+            row.UseDefaults(batchDefaults with { PartIndices = [DefaultPart(row.Video!)] });
+        QueueMessage = "已将当前模式、画质和目录设为共用默认值。单项覆盖与已入队任务保留。";
+        Refresh();
+    }
+    public void ResetBatchDraft()
+    {
+        if (!CanResetBatch || batchDefaults is null) return;
+        var row = activeBatch!;
+        row.UseDefaults(batchDefaults with { PartIndices = [DefaultPart(row.Video!)] });
+        LoadBatchDraft(row);
+    }
+    private void LoadBatchDraft(BatchInputRow row)
+    {
+        ApplyVideo(row.Video!);
+        applyingPreferences = true;
+        try
+        {
+            activeBatch = row;
+            var draft = row.Draft!;
+            ModeIndex = draft.ModeIndex; preferredHeight = draft.Height; DownloadDirectory = draft.Directory;
+            SelectedFormat = ResolveFormat(Formats);
+            SelectedParts.Clear(); SelectedParts.UnionWith(draft.PartIndices);
+        }
+        finally { applyingPreferences = false; }
         Refresh();
     }
 
     public async Task ParseBatchAsync()
     {
         if (!CanParse) return;
+        batchDefaults = CurrentConfiguration() with { PartIndices = [] };
+        activeBatch = null; submissionTokens.Clear();
         long revision = ++inputRevision;
         BatchItems.Clear(); QueueMessage = ""; video = null; showResult = false;
         Status = "正在逐项解析…"; Refresh();
         var batch = Protocol.Read<BatchParseResult>(await session.RunAsync("parse.batch", new { input, credential_mode = CredentialIndex == 0 ? "saved" : "anonymous" }));
         if (revision != inputRevision || session.Closing) return;
-        foreach (var row in batch.Items) BatchItems.Add(new BatchInputRow(row));
+        foreach (var item in batch.Items)
+        {
+            var row = new BatchInputRow(item);
+            if (item.Video is { Parts.Length: > 0 } parsed)
+                row.UseDefaults(batchDefaults with { PartIndices = [DefaultPart(parsed)] });
+            BatchItems.Add(row);
+        }
         QueueMessage = $"解析成功 {BatchItems.Count(r => r.Video is not null)} / {BatchItems.Count}。默认只选择链接指向的分 P，可逐项配置。";
         var first = BatchItems.FirstOrDefault(r => r.Video is not null);
-        if (first?.Video is { } parsed) ApplyVideo(parsed);
+        if (first is not null) LoadBatchDraft(first);
         Refresh();
     }
 
     public void ConfigureBatch(BatchInputRow row)
     {
-        if (row.Video is { } parsed && CanChoose) { ApplyVideo(parsed); QueueMessage = "正在配置：" + parsed.Title; }
+        if (row.CanConfigure && row.Draft is not null && CanChoose)
+        { SaveBatchDraft(); LoadBatchDraft(row); QueueMessage = "正在配置：" + row.Title; }
     }
 
-    private async Task<TaskReply> EnqueueVideoAsync(VideoInfo parsed, int[] indices, string? formatId)
+    private async Task<TaskReply> EnqueueVideoAsync(VideoInfo parsed, BatchConfiguration draft, string? formatId)
     {
-        string key = System.Text.Json.JsonSerializer.Serialize(new { parsed.ParseId, indices, formatId, ModeIndex, directory });
+        string key = System.Text.Json.JsonSerializer.Serialize(new { parsed.ParseId, draft, formatId });
         if (!submissionTokens.TryGetValue(key, out var token)) submissionTokens[key] = token = Guid.NewGuid().ToString("N");
         var reply = Protocol.Read<TaskReply>(await session.Client.RequestAsync("tasks.create", new { parse_id = parsed.ParseId,
-            part_indices = indices, format_id = formatId, download_mode = ModeIndex == 0 ? "audio_video" : "audio_mp3", download_dir = directory, token }));
+            part_indices = draft.PartIndices, format_id = formatId, download_mode = draft.ModeIndex == 0 ? "audio_video" : "audio_mp3", download_dir = draft.Directory, token }));
         session.Tasks.Upsert(reply.Task);
         return reply;
     }
@@ -230,10 +297,12 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     public async Task EnqueueAsync()
     {
         if (!CanDownload) return;
+        SaveBatchDraft();
+        var draft = CurrentConfiguration();
         adding = true; Refresh();
         try
         {
-            var reply = await EnqueueVideoAsync(video!, SelectedParts.Order().ToArray(), SelectedFormat?.FormatId);
+            var reply = await EnqueueVideoAsync(video!, draft, draft.ModeIndex == 0 ? SelectedFormat?.FormatId : null);
             QueueMessage = reply.Duplicate ? "此任务已存在，可在任务页查看。" : "已加入队列。可继续添加视频，或前往任务页查看。";
             foreach (var row in BatchItems.Where(r => r.Video?.ParseId == video!.ParseId)) row.MarkAdded();
             await session.Tasks.ReloadAsync();
@@ -244,18 +313,24 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     public async Task EnqueueBatchAsync()
     {
         if (!CanAddBatch) return;
+        SaveBatchDraft();
+        var submissions = BatchItems.Where(r => r.Video is not null && !r.Added)
+            .Select(r => (Row: r, Draft: r.Draft! with { PartIndices = r.Draft!.PartIndices.ToArray() })).ToArray();
         adding = true; Refresh();
         int count = 0;
         try
         {
-            foreach (var row in BatchItems.Where(r => r.Video is not null && !r.Added).ToArray())
+            foreach (var (row, draft) in submissions)
             {
                 var parsed = row.Video!;
-                var format = ResolveFormat(parsed.Formats);
-                if (ModeIndex == 0 && format is null) { row.SetMessage("所选画质不可用，请逐项配置。"); continue; }
+                var format = draft.Height is { } height ? parsed.Formats.FirstOrDefault(f => f.Height == height)
+                    : parsed.Formats.FirstOrDefault(f => f.Height is null);
+                if (draft.ModeIndex == 0 && format is null) { row.SetMessage($"所选画质不可用（{draft.Height}p），请逐项配置。"); continue; }
+                if (draft.PartIndices.Length == 0 || string.IsNullOrWhiteSpace(draft.Directory))
+                { row.SetMessage("请选择分 P 并填写保存目录。"); continue; }
                 try
                 {
-                    await EnqueueVideoAsync(parsed, [parsed.CurrentPartIndex], format?.FormatId);
+                    await EnqueueVideoAsync(parsed, draft, draft.ModeIndex == 0 ? format?.FormatId : null);
                     row.MarkAdded(); count++;
                 }
                 catch (BackendException ex) { row.SetMessage(ex.Message); }
@@ -320,13 +395,30 @@ public sealed record OutputFileItem(string Path)
     public override string ToString() => Name;
 }
 
+public sealed record BatchConfiguration(int ModeIndex, int? Height, string Directory, int[] PartIndices)
+{
+    public string Summary(string source) => $"{source} · {(ModeIndex == 1 ? "MP3 · 192 kbps" : Height is { } h ? $"MP4 · {h}p（严格）" : "MP4 · 最高可用")}" +
+        (PartIndices.Length == 0 ? "" : " · " + string.Join("、", PartIndices.Select(p => $"P{p}"))) + " · " + Directory;
+}
+
 public sealed class BatchInputRow(BatchParseItem item) : ViewModelBase
 {
     public VideoInfo? Video => item.Video;
     public string Title => item.Video?.Title ?? item.Input;
     public string Message { get; private set; } = item.Message;
     public bool Added { get; private set; }
+    public bool HasOverride { get; private set; }
+    public BatchConfiguration? Draft { get; private set; }
+    public string ConfigurationSummary => Draft?.Summary(Added ? "已冻结" : HasOverride ? "单项覆盖" : "共用默认值") ?? "";
     public bool CanConfigure => Video is not null && !Added;
     public void MarkAdded() { Added = true; Message = "已加入队列"; Refresh(); }
     public void SetMessage(string text) { Message = text; Refresh(); }
+    public void UseDefaults(BatchConfiguration value)
+    { if (Added) return; Draft = value; HasOverride = false; Message = item.Message; Refresh(); }
+    public void SaveDraft(BatchConfiguration value)
+    {
+        if (Added || Draft is null || (Draft.ModeIndex == value.ModeIndex && Draft.Height == value.Height &&
+            Draft.Directory == value.Directory && Draft.PartIndices.SequenceEqual(value.PartIndices))) return;
+        Draft = value; HasOverride = true; Message = "草稿已保留"; Refresh();
+    }
 }

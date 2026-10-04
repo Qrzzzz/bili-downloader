@@ -47,8 +47,13 @@ public sealed partial class DownloadPage : Page
     }
     private void Parts_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (updatingSelection) return;
-        Model.SelectedParts.Clear(); foreach (VideoPart p in PartsList.SelectedItems) Model.SelectedParts.Add(p.Index); Model.Refresh();
+        if (updatingSelection || Model.ApplyingConfiguration) return;
+        // WinUI may publish the change before SelectedItems reflects the final
+        // collection, especially after replacing the list while loading a draft.
+        foreach (VideoPart p in e.RemovedItems) Model.SelectedParts.Remove(p.Index);
+        foreach (VideoPart p in e.AddedItems) Model.SelectedParts.Add(p.Index);
+        Model.SaveBatchDraft();
+        Model.Refresh();
     }
     private async void Parse_Click(object sender, RoutedEventArgs e) => await App.Session.ExecuteAsync(Model.ParseAsync);
     private async void Input_KeyDown(object sender, KeyRoutedEventArgs e) { if (e.Key == VirtualKey.Enter && Model.CanParse) { e.Handled = true; await App.Session.ExecuteAsync(Model.ParseAsync); } }
@@ -57,8 +62,12 @@ public sealed partial class DownloadPage : Page
     private async void BatchParse_Click(object sender, RoutedEventArgs e) => await App.Session.ExecuteAsync(Model.ParseBatchAsync);
     private async void AddBatch_Click(object sender, RoutedEventArgs e) => await App.Session.ExecuteAsync(Model.EnqueueBatchAsync);
     private void ConfigureBatch_Click(object sender, RoutedEventArgs e) => Model.ConfigureBatch((BatchInputRow)((FrameworkElement)sender).DataContext);
+    private void ApplyBatchDefaults_Click(object sender, RoutedEventArgs e) => Model.ApplyBatchDefaults();
+    private void ResetBatchDraft_Click(object sender, RoutedEventArgs e) => Model.ResetBatchDraft();
     private void Tasks_Click(object sender, RoutedEventArgs e) => App.Session.ShowTasks();
     private async void Cancel_Click(object sender, RoutedEventArgs e) => await App.Session.ExecuteAsync(App.Session.CancelAsync);
-    private void SelectAll_Click(object sender, RoutedEventArgs e) => PartsList.SelectAll();
-    private void SelectNone_Click(object sender, RoutedEventArgs e) => PartsList.SelectedItems.Clear();
+    private void SelectAll_Click(object sender, RoutedEventArgs e)
+    { Model.SelectedParts.UnionWith(Model.Parts.Select(p => p.Index)); Model.SaveBatchDraft(); Model.Refresh(); }
+    private void SelectNone_Click(object sender, RoutedEventArgs e)
+    { Model.SelectedParts.Clear(); Model.SaveBatchDraft(); Model.Refresh(); }
 }

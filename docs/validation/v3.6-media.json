@@ -1,0 +1,280 @@
+{
+  "os": "Windows-11-10.0.26300-SP0",
+  "python": "3.13.14",
+  "ffmpeg": "ffmpeg version 8.0-essentials_build-www.gyan.dev Copyright (c) 2000-2025 the FFmpeg developers",
+  "fixed_baseline_seconds": 300.0,
+  "samples": [
+    {
+      "name": "synthetic-360-3600s.mp4",
+      "bytes": 185711727,
+      "decoder_threads": "default",
+      "valid": true,
+      "wall_seconds": 5.249,
+      "processes": [
+        {
+          "cpu_seconds": 0.03125,
+          "read_bytes": 4905521,
+          "write_bytes": 417
+        },
+        {
+          "cpu_seconds": 44.09375,
+          "read_bytes": 186715247,
+          "write_bytes": 0
+        }
+      ],
+      "duration_seconds": 3600.08099,
+      "source": "synthetic_loop"
+    },
+    {
+      "name": "synthetic-360-3600s.mp4",
+      "bytes": 185711727,
+      "decoder_threads": 2,
+      "valid": true,
+      "wall_seconds": 16.797,
+      "processes": [
+        {
+          "cpu_seconds": 0.046875,
+          "read_bytes": 4905521,
+          "write_bytes": 417
+        },
+        {
+          "cpu_seconds": 38.453125,
+          "read_bytes": 186715247,
+          "write_bytes": 0
+        }
+      ],
+      "duration_seconds": 3600.08099,
+      "source": "synthetic_loop"
+    },
+    {
+      "name": "synthetic-1080-600s.mp4",
+      "bytes": 169550826,
+      "decoder_threads": "default",
+      "valid": true,
+      "wall_seconds": 3.924,
+      "processes": [
+        {
+          "cpu_seconds": 0.03125,
+          "read_bytes": 1858406,
+          "write_bytes": 418
+        },
+        {
+          "cpu_seconds": 52.03125,
+          "read_bytes": 170554346,
+          "write_bytes": 0
+        }
+      ],
+      "duration_seconds": 600.079688,
+      "source": "synthetic_loop"
+    },
+    {
+      "name": "synthetic-1080-600s.mp4",
+      "bytes": 169550826,
+      "decoder_threads": 2,
+      "valid": true,
+      "wall_seconds": 18.145,
+      "processes": [
+        {
+          "cpu_seconds": 0.015625,
+          "read_bytes": 1858406,
+          "write_bytes": 418
+        },
+        {
+          "cpu_seconds": 35.9375,
+          "read_bytes": 170554346,
+          "write_bytes": 0
+        }
+      ],
+      "duration_seconds": 600.079688,
+      "source": "synthetic_loop"
+    },
+    {
+      "name": "synthetic-2160-300s.mp4",
+      "bytes": 308185707,
+      "decoder_threads": "default",
+      "valid": true,
+      "wall_seconds": 8.271,
+      "processes": [
+        {
+          "cpu_seconds": 0.03125,
+          "read_bytes": 2096513,
+          "write_bytes": 418
+        },
+        {
+          "cpu_seconds": 107.5625,
+          "read_bytes": 309189227,
+          "write_bytes": 0
+        }
+      ],
+      "duration_seconds": 300.073177,
+      "source": "synthetic_loop"
+    },
+    {
+      "name": "synthetic-2160-300s.mp4",
+      "bytes": 308185707,
+      "decoder_threads": 2,
+      "valid": true,
+      "wall_seconds": 38.608,
+      "processes": [
+        {
+          "cpu_seconds": 0.0625,
+          "read_bytes": 2096513,
+          "write_bytes": 418
+        },
+        {
+          "cpu_seconds": 74.359375,
+          "read_bytes": 309189227,
+          "write_bytes": 0
+        }
+      ],
+      "duration_seconds": 300.073177,
+      "source": "synthetic_loop"
+    },
+    {
+      "name": "synthetic-3600s.mp3",
+      "bytes": 86401610,
+      "decoder_threads": "default",
+      "valid": true,
+      "wall_seconds": 1.635,
+      "processes": [
+        {
+          "cpu_seconds": 0.03125,
+          "read_bytes": 1036288,
+          "write_bytes": 277
+        },
+        {
+          "cpu_seconds": 3.4375,
+          "read_bytes": 87405130,
+          "write_bytes": 0
+        }
+      ],
+      "duration_seconds": 3600.0,
+      "source": "synthetic_audio"
+    },
+    {
+      "name": "synthetic-3600s.mp3",
+      "bytes": 86401610,
+      "decoder_threads": 2,
+      "valid": true,
+      "wall_seconds": 1.638,
+      "processes": [
+        {
+          "cpu_seconds": 0.03125,
+          "read_bytes": 1036288,
+          "write_bytes": 277
+        },
+        {
+          "cpu_seconds": 3.453125,
+          "read_bytes": 87405130,
+          "write_bytes": 0
+        }
+      ],
+      "duration_seconds": 3600.0,
+      "source": "synthetic_audio"
+    },
+    {
+      "name": "P001-\u3010\u5b98\u65b9 MV\u3011Never Gonna Give You Up - Rick Astley-BV1GJ411x7h7-[video-mp4-360p].mp4",
+      "bytes": 9617090,
+      "decoder_threads": "default",
+      "valid": true,
+      "wall_seconds": 2.751,
+      "processes": [
+        {
+          "cpu_seconds": 0.078125,
+          "read_bytes": 1135948,
+          "write_bytes": 417
+        },
+        {
+          "cpu_seconds": 6.421875,
+          "read_bytes": 10620610,
+          "write_bytes": 0
+        }
+      ],
+      "duration_seconds": 212.308833,
+      "source": "cached_real_download"
+    },
+    {
+      "name": "P001-\u3010\u5b98\u65b9 MV\u3011Never Gonna Give You Up - Rick Astley-BV1GJ411x7h7-[video-mp4-360p].mp4",
+      "bytes": 9617090,
+      "decoder_threads": 2,
+      "valid": true,
+      "wall_seconds": 2.941,
+      "processes": [
+        {
+          "cpu_seconds": 0.03125,
+          "read_bytes": 1135948,
+          "write_bytes": 417
+        },
+        {
+          "cpu_seconds": 5.03125,
+          "read_bytes": 10620610,
+          "write_bytes": 0
+        }
+      ],
+      "duration_seconds": 212.308833,
+      "source": "cached_real_download"
+    }
+  ],
+  "concurrent_queue": [
+    {
+      "name": "synthetic-2160-300s.mp4",
+      "bytes": 308185707,
+      "decoder_threads": "default",
+      "valid": true,
+      "wall_seconds": 8.529,
+      "processes": [
+        {
+          "cpu_seconds": 0.03125,
+          "read_bytes": 2096513,
+          "write_bytes": 418
+        },
+        {
+          "cpu_seconds": 109.78125,
+          "read_bytes": 309189227,
+          "write_bytes": 0
+        }
+      ],
+      "queue_wait_seconds": 0.002
+    },
+    {
+      "name": "synthetic-3600s.mp3",
+      "bytes": 86401610,
+      "decoder_threads": "default",
+      "valid": true,
+      "wall_seconds": 1.635,
+      "processes": [
+        {
+          "cpu_seconds": 0.015625,
+          "read_bytes": 1036288,
+          "write_bytes": 277
+        },
+        {
+          "cpu_seconds": 3.390625,
+          "read_bytes": 87405130,
+          "write_bytes": 0
+        }
+      ],
+      "queue_wait_seconds": 8.134
+    },
+    {
+      "name": "synthetic-1080-600s.mp4",
+      "bytes": 169550826,
+      "decoder_threads": "default",
+      "valid": true,
+      "wall_seconds": 3.7,
+      "processes": [
+        {
+          "cpu_seconds": 0.015625,
+          "read_bytes": 1858406,
+          "write_bytes": 418
+        },
+        {
+          "cpu_seconds": 48.234375,
+          "read_bytes": 170554346,
+          "write_bytes": 0
+        }
+      ],
+      "queue_wait_seconds": 9.016
+    }
+  ]
+}
