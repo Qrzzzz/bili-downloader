@@ -1,4 +1,4 @@
-> **3.7** adds real-task recovery acceptance and preserves both initial failures and verified retry outputs. See [3.7 release notes](docs/releases/v3.7.md). Phone QR and accessibility acceptance remain pending.
+> **3.7** adds real-task recovery acceptance and preserves both initial failures and verified retry outputs. See [3.7 release notes](docs/releases/v3.7.md). The user confirmed the five manual acceptance checks on 2026-10-04; see the [acceptance record](docs/validation/v3.6-external.md).
 
 <div align="center">
 
