@@ -34,7 +34,16 @@ public static class NativeAcceptance
         }
         void Check(bool ok, string name)
         {
-            if (!ok) throw new InvalidOperationException("Native UI acceptance: " + name);
+            if (!ok)
+            {
+                File.WriteAllText(Path.Combine(output, "native-failure.json"), JsonSerializer.Serialize(new { check = name,
+                    selected_parts = App.Session.Download.SelectedParts.ToArray(),
+                    applying = App.Session.Download.ApplyingConfiguration,
+                    enabled = App.Session.Download.CanEditSpecification,
+                    part_lists = Elements(frame).OfType<ListView>().Where(l => l.Name == "PartsList").Select(l => new {
+                        items = l.Items.Count, selected = l.SelectedItems.Count, l.IsEnabled, l.IsLoaded }) }));
+                throw new InvalidOperationException("Native UI acceptance: " + name);
+            }
             uiChecks.Add(name);
         }
         async Task Snapshot(string name, bool fixture)
@@ -57,12 +66,17 @@ public static class NativeAcceptance
             int windows = NativeWindowCapture.VisibleWindowCount();
             Check(windows == 1, name + "/single_native_window");
             await NativeWindowCapture.CaptureAsync(window, Path.Combine(output, name + ".png"));
+            if (name.StartsWith("batch-", StringComparison.Ordinal))
+                await NativeWindowCapture.CaptureContentAsync(root, Path.Combine(output, name + "-content.png"));
             snapshots.Add(new { name, fixture, theme = root.ActualTheme.ToString(), width = root.ActualWidth, height = root.ActualHeight, visible_window_count = windows, controls = items });
             controls.AddRange(items);
         }
         async Task InvokeButton(string content)
         {
             var button = Elements(frame).OfType<Button>().First(b => b.Content as string == content);
+            button.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0.5 });
+            root.UpdateLayout();
+            await Task.Delay(150);
             var peer = new ButtonAutomationPeer(button);
             ((IInvokeProvider)peer.GetPattern(PatternInterface.Invoke)).Invoke();
             await Task.Delay(50);
@@ -172,11 +186,49 @@ public static class NativeAcceptance
         var video = new VideoInfo("native-fixture", 1, "原生界面验收示例：长标题与多分 P 的下载流程", "示例 UP 主", 3723, "BV1nativeFixture", 1, false,
             [new(1, "第一部分：准备与开始", 123, "p1"), new(2, "第二部分：较长的中文分 P 标题也应该完整显示并可选择", 3600, "p2")],
             [new("0", "最佳可用画质", null, "per_part"), new("1", "1080p", 1080, "per_part")]);
+        var batchA = new ViewModels.BatchInputRow(new("fixture-a", "解析成功", video));
+        var batchB = new ViewModels.BatchInputRow(new("fixture-b", "解析成功", video with { ParseId = "native-batch-b", Title = "第二项：仅下载 MP3" }));
+        foreach (var row in new[] { batchA, batchB })
+        {
+            row.UseDefaults(new(0, null, output, [1])); model.BatchItems.Add(row);
+        }
+        model.ConfigureBatch(batchA); model.ModeIndex = 0;
+        model.SelectedFormat = model.Formats.Single(f => f.Height == 1080);
+        model.SelectedParts.UnionWith([1, 2]); model.SaveBatchDraft();
+        model.ConfigureBatch(batchB); model.ModeIndex = 1;
+        model.DownloadDirectory = Path.Combine(output, "第二项音频目录");
+        model.ConfigureBatch(batchA);
+        await model.WaitForPreferenceSaveAsync();
+        Check(model.SelectedParts.SetEquals([1, 2]) && model.SelectedFormat?.Height == 1080 &&
+            model.ModeIndex == 0 && batchB.ConfigurationSummary.Contains("MP3"), "native_batch_switch_preserves_independent_drafts");
+        window.AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(1024 * root.XamlRoot.RasterizationScale), (int)(800 * root.XamlRoot.RasterizationScale)));
+        root.RequestedTheme = ElementTheme.Light;
+        await Task.Delay(300);
+        var batchExpander = Elements(frame).OfType<Expander>().First(e => e.Header as string == "批量待添加项目");
+        batchExpander.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 });
+        await Snapshot("batch-drafts-light", true);
+        Check(Elements(frame).OfType<TextBlock>().Any(t => t.Text == batchA.ConfigurationSummary), "native_batch_summary_is_rendered");
+        root.RequestedTheme = ElementTheme.Dark;
+        window.AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(640 * root.XamlRoot.RasterizationScale), (int)(480 * root.XamlRoot.RasterizationScale)));
+        await Task.Delay(300);
+        await Snapshot("batch-drafts-narrow-dark", true);
+        model.ConfigureBatch(batchB);
+        Elements(frame).First(e => AutomationProperties.GetAutomationId(e) == "DownloadMode").StartBringIntoView(
+            new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 });
+        await Snapshot("batch-editor-narrow-dark", true);
+        Check(model.ModeIndex == 1 && model.SelectedParts.SetEquals([1]), "native_batch_editor_restores_selected_part");
+        model.Input = "BV1nativeFixture2";
+        model.ModeIndex = 0;
+        await model.WaitForPreferenceSaveAsync();
+        root.RequestedTheme = ElementTheme.Light;
+        window.AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(1024 * root.XamlRoot.RasterizationScale), (int)(800 * root.XamlRoot.RasterizationScale)));
+        await Task.Delay(300);
         model.ApplyVideo(video);
         ScrollTop();
         await Snapshot("parsed-light", true);
         var partsExpander = Elements(frame).OfType<Expander>().First(e => e.Header as string == model.SelectionSummary);
         partsExpander.IsExpanded = true;
+        partsExpander.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 });
         await Task.Delay(150);
         await InvokeButton("全选");
         Check(model.SelectedParts.SetEquals([1, 2]), "native_select_all");

@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -198,6 +199,9 @@ OUTPUT_ID_MAX_BYTES = 48
 OUTPUT_COLLISION_LIMIT = 1000
 MEDIA_PROBE_TIMEOUT = 10.0
 MEDIA_VERIFY_TIMEOUT = 300.0
+MEDIA_VERIFY_MAX_TIMEOUT = 1800.0
+MEDIA_VERIFY_DURATION_FACTOR = 0.5
+MEDIA_VERIFY_READ_RATE = 16 * 1024 * 1024
 
 
 def base_ydl_options(
@@ -636,6 +640,7 @@ class DownloadController:
         self.task_id: str | None = None
         self.task_owner: str | None = None
         self.media_held = False
+        self.verification_progress: Callable[[str], None] | None = None
 
     @property
     def cancelled(self) -> bool:
@@ -985,6 +990,27 @@ class _MediaMetadata:
     video_heights: tuple[int, ...]
     has_audio: bool
     audio_bitrates: tuple[int, ...] = ()
+    duration_seconds: float | None = None
+
+
+def _media_duration(value: Any) -> float | None:
+    try:
+        if isinstance(value, bool):
+            return None
+        duration = float(value)
+        return duration if math.isfinite(duration) and duration > 0 else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _verification_budget(metadata: _MediaMetadata, size: int) -> float:
+    # Local 4K/30 tests measured 0.136 seconds per media-second even with two
+    # decoder threads. Half the duration plus conservative disk-read allowance
+    # gives headroom; it is a bounded policy, not a hardware performance promise.
+    if metadata.duration_seconds is None:
+        return MEDIA_VERIFY_TIMEOUT
+    return min(MEDIA_VERIFY_MAX_TIMEOUT, max(MEDIA_VERIFY_TIMEOUT,
+        30.0 + metadata.duration_seconds * MEDIA_VERIFY_DURATION_FACTOR + max(0, size) / MEDIA_VERIFY_READ_RATE))
 
 
 def _truncate_filename_component(value: str, maximum_bytes: int) -> str:
@@ -1073,7 +1099,7 @@ def _probe_media(
                 "-v",
                 "error",
                 "-show_entries",
-                "format=format_name:stream=codec_type,height,bit_rate",
+                "format=format_name,duration:stream=codec_type,height,bit_rate",
                 "-of",
                 "json",
                 str(path),
@@ -1107,6 +1133,7 @@ def _probe_media(
                     any(isinstance(stream, dict) and stream.get("codec_type") == "audio" for stream in streams),
                     tuple(int(stream.get("bit_rate") or 0) for stream in streams
                           if isinstance(stream, dict) and stream.get("codec_type") == "audio"),
+                    _media_duration((payload.get("format") or {}).get("duration")),
                 )
             except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
                 pass
@@ -1143,7 +1170,9 @@ def _probe_media(
         for line in audio_lines
         for match in [re.search(r"\b(\d+) kb/s\b", line)]
     )
-    return _MediaMetadata(containers, bool(video_lines), heights, bool(audio_lines), bitrates)
+    duration_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", output)
+    duration = _media_duration(sum(float(v) * scale for v, scale in zip(duration_match.groups(), (3600, 60, 1)))) if duration_match else None
+    return _MediaMetadata(containers, bool(video_lines), heights, bool(audio_lines), bitrates, duration)
 
 
 def _matches_output_spec_unlocked(
@@ -1170,7 +1199,7 @@ def _matches_output_spec_unlocked(
         [str(Path(ffmpeg_path).resolve()), "-hide_banner", "-nostdin", "-v", "fatal",
          "-xerror", "-err_detect", "explode", "-i", str(path),
          "-map", "0:a?", "-map", "0:v?", "-f", "null", "-"],
-        controller, timeout=MEDIA_VERIFY_TIMEOUT,
+        controller, timeout=_verification_budget(metadata, before.st_size),
     )
     after = path.stat()
     return (completed is not None and completed.returncode == 0
@@ -1194,7 +1223,11 @@ def _media_slot(controller: DownloadController | None):
 
 def _matches_output_spec(path: Path, plan: DownloadPlan, ffmpeg_path: str,
                          controller: DownloadController | None = None) -> bool:
+    if controller and controller.verification_progress:
+        controller.verification_progress("waiting_resources")
     with _media_slot(controller):
+        if controller and controller.verification_progress:
+            controller.verification_progress("verifying")
         return _matches_output_spec_unlocked(path, plan, ffmpeg_path, controller)
 
 
@@ -1292,7 +1325,16 @@ def download_videos(
                 captured: list[str] = []
                 postprocessing_started = False
                 resources = ExitStack()
+                media_resources = resources.enter_context(ExitStack())
                 space_check = None
+
+                def verification_progress(phase: str) -> None:
+                    controller.set_phase(phase)
+                    progress_hook({"phase": phase, "part_index": part.index,
+                                   "part_number": ordinal, "part_count": len(plan.parts),
+                                   "cancel_requested": controller.cancelled})
+
+                controller.verification_progress = verification_progress if controller.task_id else None
 
                 def download_hook(status: dict[str, Any]) -> None:
                     if controller.cancelled and not postprocessing_started:
@@ -1309,7 +1351,7 @@ def download_videos(
                         controller.set_phase("waiting_resources")
                         progress_hook({"phase": "waiting_resources", "part_index": part.index,
                                        "part_number": ordinal, "part_count": len(plan.parts)})
-                        resources.enter_context(_media_slot(controller))
+                        media_resources.enter_context(_media_slot(controller))
                     postprocessing_started = True
                     controller.set_phase("converting" if mode is DownloadMode.AUDIO_MP3 else "merging")
                     progress.postprocess(ordinal, part, status)
@@ -1389,6 +1431,10 @@ def download_videos(
                         emitter(f"开始下载 P{part.index}：{sanitize_windows_filename(part.title)}")
                     with _youtube_dl(opts) as ydl:
                         info = _require_info(ydl.extract_info(part.url, download=True))
+                    # End the merge/conversion stage before queueing verification.
+                    # Existing waiters get the next FIFO admission opportunity.
+                    deferred_cancel = postprocessing_started and controller.cancelled
+                    media_resources.close()
                     reported_files = _existing_output_paths(info, captured)
                     expected_path = Path(work_dir, expected_output.name).resolve()
                     if str(expected_path) not in reported_files or not expected_path.is_file():
@@ -1396,8 +1442,12 @@ def download_videos(
                     # A cancel already deferred through merge/conversion must also
                     # let this file finish bounded integrity verification. Ordinary
                     # verification (including existing-file reuse) stays cancellable.
-                    deferred_cancel = postprocessing_started and controller.cancelled
-                    verification_controller = None if deferred_cancel else controller
+                    verification_controller = controller
+                    if deferred_cancel:
+                        verification_controller = DownloadController()
+                        verification_controller.task_id = controller.task_id
+                        verification_controller.task_owner = controller.task_owner
+                        verification_controller.verification_progress = controller.verification_progress
                     if not deferred_cancel:
                         controller.set_phase("verifying")
                         if controller.task_id:

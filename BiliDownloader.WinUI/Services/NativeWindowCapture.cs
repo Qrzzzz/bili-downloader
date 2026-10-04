@@ -56,4 +56,22 @@ internal static class NativeWindowCapture
         encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, (uint)width, (uint)height, 96, 96, data);
         await encoder.FlushAsync();
     }
+
+    // Explicit acceptance only: GPU/occlusion can make PrintWindow return a
+    // blank client area. Keep an independently rendered XAML surface as well.
+    internal static async Task CaptureContentAsync(FrameworkElement root, string path)
+    {
+        var target = new Microsoft.UI.Xaml.Media.Imaging.RenderTargetBitmap();
+        await target.RenderAsync(root);
+        var pixels = await target.GetPixelsAsync();
+        byte[] data = new byte[pixels.Length];
+        using (var reader = Windows.Storage.Streams.DataReader.FromBuffer(pixels)) reader.ReadBytes(data);
+        File.WriteAllBytes(path, []);
+        var file = await StorageFile.GetFileFromPathAsync(path);
+        using var stream = await file.OpenAsync(FileAccessMode.ReadWrite);
+        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+        encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore,
+            (uint)target.PixelWidth, (uint)target.PixelHeight, 96, 96, data);
+        await encoder.FlushAsync();
+    }
 }

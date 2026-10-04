@@ -137,7 +137,6 @@ public sealed class ApplicationSession : ViewModelBase
         Settings.Load(settings, discardDraft);
         if (applyDownloadPreferences)
         {
-            Download.DownloadDirectory = settings.DownloadDir;
             Download.ApplyPreferences(settings);
         }
         PreviewTheme(Settings.CurrentTheme);

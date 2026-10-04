@@ -7,6 +7,8 @@ import math
 import os
 import shutil
 import threading
+import time
+from uuid import uuid4
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -57,6 +59,10 @@ def owner_alive(owner: str) -> bool:
 
 @contextmanager
 def resource_lease(name: str, controller=None):
+    if name == "media-processing":
+        with _fair_media_lease(controller):
+            yield
+        return
     lease = FileLease(name)
     wait = threading.Event()
     try:
@@ -69,6 +75,70 @@ def resource_lease(name: str, controller=None):
         yield
     finally:
         lease.close()
+
+
+@contextmanager
+def _fair_media_lease(controller):
+    """FIFO stage admission with crash-safe OS ownership, across instances.
+
+    Retain the original media-processing lock for compatibility with older
+    processes. Ticket files alone never establish liveness or own the slot.
+    """
+    root = app_data_dir() / "media-waiters"
+    root.mkdir(exist_ok=True)
+    ticket = None
+    owner_name = uuid4().hex
+    owner = FileLease("media-ticket:" + owner_name)
+    slot = FileLease("media-processing")
+    if not owner.acquire():
+        raise RuntimeError("无法取得媒体排队租约")
+    wait = threading.Event()
+    try:
+        with resource_lease("media-admission", controller):
+            sequence = max([time.time_ns()] + [int(p.name.split("-", 1)[0]) + 1 for p in root.glob("*.ticket")])
+            ticket = root / f"{sequence:020d}-{owner_name}.ticket"
+            ticket.touch()
+        while True:
+            with resource_lease("media-admission", controller):
+                # A killed waiter leaves a ticket, but cannot retain its OS lock.
+                for pending in sorted(root.glob("*.ticket")):
+                    key = pending.stem.split("-", 1)[1]
+                    if pending != ticket:
+                        probe = FileLease("media-ticket:" + key)
+                        try:
+                            if probe.acquire():
+                                pending.unlink(missing_ok=True)
+                                continue
+                        finally:
+                            probe.close()
+                            if not pending.exists():
+                                try:
+                                    probe.path.unlink(missing_ok=True)
+                                except OSError:
+                                    pass
+                    if pending == ticket and slot.acquire():
+                        ticket.unlink()
+                        ticket = None
+                    break
+            if ticket is None:
+                if controller and controller.cancelled:
+                    raise DownloadCancelled("任务已取消")
+                yield
+                return
+            wait.wait(0.05)
+    finally:
+        slot.close()
+        try:
+            with resource_lease("media-admission"):
+                if ticket is not None:
+                    ticket.unlink(missing_ok=True)
+                owner.close()
+                try:
+                    owner.path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        finally:
+            owner.close()
 
 
 @contextmanager

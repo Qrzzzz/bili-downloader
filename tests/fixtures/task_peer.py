@@ -18,7 +18,8 @@ def parse(value, *args):
     if not name.endswith("1"):
         formats.append(FormatChoice("1080p", "bestvideo[height=1080]+bestaudio/best[height=1080]", 1080, "exact_height"))
     formats.append(FormatChoice("720p", "bestvideo[height=720]+bestaudio/best[height=720]", 720, "exact_height"))
-    return VideoInfoResult(name, "fixture", 1, "", [VideoPart(1, name, url, 1, "p1")],
+    return VideoInfoResult(name, "fixture", 2, "", [VideoPart(1, name, url, 1, "p1"),
+        VideoPart(2, name + " second", url + "?p=2", 1, "p2")],
                            formats, raw_id=name, source_url=url)
 
 

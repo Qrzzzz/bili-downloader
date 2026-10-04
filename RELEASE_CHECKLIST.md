@@ -54,6 +54,6 @@ python -m pip check
 
 # 仅需验证打包时执行；普通开发构建会如实标记 dirty 状态
 .\build.ps1
-.\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v3.5.win-x64\BiliDownloader.v3.5.exe
-.\build\.venv\Scripts\python.exe tools\audit_release_artifact.py --executable .\dist\BiliDownloader.v3.5.win-x64.zip --expected-version 3.5
+.\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v3.6.win-x64\BiliDownloader.v3.6.exe
+.\build\.venv\Scripts\python.exe tools\audit_release_artifact.py --executable .\dist\BiliDownloader.v3.6.win-x64.zip --expected-version 3.6
 ```

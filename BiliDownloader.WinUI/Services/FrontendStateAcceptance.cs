@@ -296,11 +296,18 @@ internal static class FrontendStateAcceptance
                 "native_vm_batch_skips_unavailable_preference_without_downgrade");
             session.Settings.PreferredQuality = session.Settings.QualityOptions.Single(q => q.Height is null);
             await session.Settings.SaveAsync();
+            Check(!session.Download.BatchItems[1].HasOverride && session.Download.BatchItems[1].Draft?.Height == 1080,
+                "native_vm_settings_do_not_overwrite_batch_draft");
+            session.Download.ConfigureBatch(session.Download.BatchItems[1]);
+            session.Download.SelectedFormat = session.Download.Formats.Single(f => f.Height is null);
             await session.Download.EnqueueBatchAsync();
             Check(session.Tasks.Items.Any(r => r.Value.FormatLabel.Contains("1080p")) && session.Tasks.Items.Any(r => r.Value.FormatLabel.Contains("最高可用")),
                 "native_vm_best_quality_per_item_and_queued_spec_unchanged");
             Check(session.Tasks.Items.Count == 2 && session.Tasks.Items.All(r => r.Value.State == "queued"), "native_vm_batch_durable_enqueue");
             Check(session.Download.BatchItems.All(r => r.Added), "native_vm_batch_marks_submitted");
+            Check(!session.Download.CanDownload && !session.Download.CanEditSpecification, "native_vm_added_draft_is_frozen");
+            await session.Download.EnqueueBatchAsync();
+            Check(session.Tasks.Items.Count == 2, "native_vm_successful_rows_are_not_resubmitted");
             await session.Tasks.TogglePauseAsync();
             await Task.Delay(300);
             await session.Tasks.ReloadAsync();
@@ -316,6 +323,47 @@ internal static class FrontendStateAcceptance
             await session.Download.ParseAsync();
             await session.Download.EnqueueAsync();
             Check(session.Tasks.Items.Count == 3 && session.Download.CanParse, "native_vm_add_while_downloading");
+            await session.Tasks.TogglePauseAsync();
+            session.Download.Input = "BV1234567893\nBV1234567894";
+            await session.Download.ParseBatchAsync();
+            var a = session.Download.BatchItems[0]; var b = session.Download.BatchItems[1];
+            session.Download.ConfigureBatch(a);
+            session.Download.ModeIndex = 0;
+            session.Download.SelectedFormat = session.Download.Formats.Single(f => f.Height == 1080);
+            session.Download.DownloadDirectory = Path.Combine(profile, "draft-a");
+            session.Download.SelectedParts.UnionWith([1, 2]); session.Download.SaveBatchDraft();
+            session.Download.ConfigureBatch(b);
+            session.Download.ModeIndex = 1;
+            string blockedDirectory = Path.Combine(profile, "blocked-folder");
+            File.WriteAllText(blockedDirectory, "isolated failure fixture");
+            session.Download.DownloadDirectory = blockedDirectory;
+            session.Download.ConfigureBatch(a);
+            Check(session.Download.ModeIndex == 0 && session.Download.SelectedFormat?.Height == 1080 &&
+                session.Download.DownloadDirectory.EndsWith("draft-a") && session.Download.SelectedParts.SetEquals([1, 2]) &&
+                a.ConfigurationSummary.Contains("单项覆盖"), "native_vm_a_b_a_restores_full_draft");
+            await session.Download.EnqueueBatchAsync();
+            Check(a.Added && !b.Added && b.Draft?.ModeIndex == 1 && b.Draft.Directory == blockedDirectory &&
+                session.Tasks.Items.Count == 4, "native_vm_partial_create_failure_retains_draft");
+            session.Download.ConfigureBatch(b);
+            session.Download.DownloadDirectory = Path.Combine(profile, "draft-b");
+            await session.Download.EnqueueBatchAsync();
+            Check(session.Tasks.Items.Count == 5 && b.Added && session.Tasks.Items.Any(t =>
+                t.Value.OutputDir.EndsWith("draft-a") && t.Value.PartCount == 2 && t.Value.FormatLabel.Contains("1080p")) &&
+                session.Tasks.Items.Any(t => t.Value.OutputDir.EndsWith("draft-b") && t.Value.FormatLabel.Contains("MP3")),
+                "native_vm_retry_freezes_each_spec_without_duplicate_success");
+            session.Download.Input = "BV1234567895\nBV1234567896";
+            await session.Download.ParseBatchAsync();
+            a = session.Download.BatchItems[0]; b = session.Download.BatchItems[1];
+            session.Download.ConfigureBatch(a); session.Download.ModeIndex = 1;
+            session.Download.DownloadDirectory = Path.Combine(profile, "common");
+            session.Download.ApplyBatchDefaults();
+            Check(a.HasOverride && !b.HasOverride && b.Draft?.ModeIndex == 1 && b.Draft.Directory.EndsWith("common"),
+                "native_vm_apply_defaults_preserves_overrides");
+            session.Download.ResetBatchDraft();
+            Check(!a.HasOverride && session.Download.SelectedParts.SetEquals([1]), "native_vm_reset_restores_default_part");
+            session.Download.SelectedParts.Clear(); session.Download.SaveBatchDraft();
+            await session.Download.EnqueueBatchAsync();
+            Check(!a.Added && b.Added && a.Message.Contains("分 P"), "native_vm_empty_selection_is_per_item_failure");
         }
         finally { await session.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
     }

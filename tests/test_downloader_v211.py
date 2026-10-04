@@ -26,6 +26,8 @@ def test_cancel_preserves_only_verified_outputs(media, monkeypatch, tmp_path, mo
     selector = "bestaudio/best" if audio else "bestvideo[height=240]+bestaudio"
     plan = d.DownloadPlan(tuple(d.PlannedPart(p, selector) for p in parts), None if audio else 240, mode)
     controller = d.DownloadController()
+    controller.task_id = "v36-local-integrity"
+    controller.task_owner = "v36-local-owner"
     calls, waiting, events, probes = [], [], [], []
     monkeypatch.setattr(d, "require_ffmpeg", lambda: media.ffmpeg)
     monkeypatch.setattr(d, "prepare_download_plan", lambda *a, **k: plan)
