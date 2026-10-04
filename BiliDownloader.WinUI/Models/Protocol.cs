@@ -70,5 +70,15 @@ public sealed record TaskAttempt(string AttemptId, double StartedAt, double? End
 public sealed record TaskSnapshot(bool Paused, int MaxParallel, DownloadTask[] Tasks, long Revision);
 public sealed record TaskChange(DownloadTask Task, long Revision, bool Paused = false);
 public sealed record TaskReply(DownloadTask Task, bool Duplicate = false);
+public sealed record StagingEntry(string EntryId, string TaskId, string Path, string Title, long Bytes,
+    int FileCount, string Category, string Message, bool CanClean, bool CanRestore)
+{
+    public string CategoryText => Category switch { "active" => "活动任务", "recoverable" => "可恢复断点",
+        "orphan" => "孤立残留", "completed" => "已完成暂存", "recycled" => "暂存回收区", _ => "已保护" };
+    public override string ToString() => $"{CategoryText} · {Bytes / 1048576d:0.##} MiB · {Title}\n{Path}\n{Message}";
+}
+public sealed record StagingScan(StagingEntry[] Entries, string[] Errors, long TotalBytes, long CleanableBytes, long RecycledBytes);
+public sealed record StagingResult(string EntryId, string Status, string Message);
+public sealed record StagingReply(StagingResult[] Results);
 public sealed record BatchParseItem(string Input, string Message, VideoInfo? Video);
 public sealed record BatchParseResult(BatchParseItem[] Items);

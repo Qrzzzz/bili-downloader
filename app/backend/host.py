@@ -206,6 +206,13 @@ class Backend:
             fields(params, set())
             return session_status(), None
 
+        if method == "staging.scan":
+            fields(params, set())
+            return self.task_manager().staging.scan(), None
+        if method in {"staging.clean", "staging.restore"}:
+            fields(params, {"entry_ids"}, {"entry_ids"})
+            return self.task_manager().staging.apply(params["entry_ids"], restore=method == "staging.restore"), None
+
         if method in {"tasks.list", "queue.pause", "queue.resume"}:
             fields(params, set())
             manager = self.task_manager()

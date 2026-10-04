@@ -241,6 +241,7 @@ public static class NativeAcceptance
             var taskA = new DownloadTask("native-task-a", "attempt-1", "课程学习：从第一章到第五章", "MP4 · 1080p", 5, "anonymous", output,
                 "downloading", "", 1, 0, 1, false, null, "", new("downloading", 2, 2, 5, 54, 32, 10485760, 52428800, null, 3145728, 12, false));
             var taskB = taskA with { TaskId = "native-task-b", Title = "音乐现场 · 保存音频", FormatLabel = "MP3 · 192 kbps", PartCount = 1, Position = 2,
+                Foreign = true,
                 Progress = new("downloading", 1, 1, 1, 68, 68, 8388608, 12582912, null, 1048576, 4, false) };
             fixtureQueue.Apply(new TaskSnapshot(false, 2, [taskA, taskB, taskA with { TaskId = "native-task-c", Title = "稍后下载的视频", State = "queued", Position = 3, Progress = null }], 1));
             page.DataContext = fixtureQueue;
@@ -252,6 +253,9 @@ public static class NativeAcceptance
             Check(taskNavigation.InfoBadge.Value == 3 && taskNavigation.InfoBadge.Visibility == Visibility.Visible, "native_queue_badge_bound_count");
             Check(AutomationProperties.GetName(taskNavigation).Contains("3 个"), "native_queue_badge_accessible_name");
             Check(fixtureQueue.Items.Count == 3 && fixtureQueue.Items.Count(t => t.Active) == 2, "native_parallel_task_rows");
+            var foreignRow = fixtureQueue.Items.Single(r => r.Value.Foreign);
+            Check(foreignRow.Percent == 68 && foreignRow.StateText.Contains("其他窗口") && !foreignRow.CanCancel,
+                "native_foreign_progress_and_owner_label");
             navigation.SelectedItem = navigation.MenuItems[0];
             await Snapshot("download-with-queue-badge", true);
             Check(taskNavigation.InfoBadge.Value == 3 && Visible(taskNavigation.InfoBadge), "native_badge_visible_on_other_page");
@@ -322,6 +326,39 @@ public static class NativeAcceptance
             await Snapshot("tasks-log-history-narrow-dark", true);
             historyDialog.Hide();
             await historyOperation;
+            var stagingDialog = ((Views.TasksPage)page).CreateStagingDialog(new StagingScan([
+                new StagingEntry("active", "task-a", Path.Combine(output, ".bili-tasks", "task-a"), "其他窗口正在下载", 1048576, 2, "active", "暂存文件被其他窗口占用，不能清理。", false, false),
+                new StagingEntry("resume", "task-b", Path.Combine(output, ".bili-tasks", "task-b"), "可以继续的任务", 2097152, 3, "recoverable", "继续任务会使用这些断点，已保留。", false, false),
+                new StagingEntry("orphan", "task-c", Path.Combine(output, ".bili-tasks", "task-c"), "无关联任务", 524288, 1, "orphan", "移入暂存回收区后可还原。", true, false),
+                new StagingEntry("recycled", "task-d", Path.Combine(output, ".bili-tasks-recycle", "recycle-id", "task-d"), "无关联任务", 524288, 1, "recycled", "保存在暂存回收区；占用仍计入磁盘，可还原。", false, true)
+                ], ["测试目录：无权限，未提供清理。"], 4194304, 524288, 524288));
+            var stagingPanel = (StackPanel)((ScrollViewer)stagingDialog.Content).Content;
+            var stagingList = stagingPanel.Children.OfType<ListView>().Single();
+            var stagingOperation = stagingDialog.ShowAsync();
+            await Task.Delay(200);
+            Check(!stagingDialog.IsPrimaryButtonEnabled && !stagingDialog.IsSecondaryButtonEnabled, "native_staging_empty_selection_disabled");
+            stagingList.SelectedItems.Add(stagingList.Items[0]);
+            Check(!stagingDialog.IsPrimaryButtonEnabled && !stagingDialog.IsSecondaryButtonEnabled, "native_staging_active_protected");
+            stagingList.SelectedItems.Clear(); stagingList.SelectedItems.Add(stagingList.Items[1]);
+            Check(!stagingDialog.IsPrimaryButtonEnabled, "native_staging_resume_protected");
+            stagingList.SelectedItems.Clear(); stagingList.SelectedItems.Add(stagingList.Items[2]);
+            Check(stagingDialog.IsPrimaryButtonEnabled && !stagingDialog.IsSecondaryButtonEnabled, "native_staging_orphan_cleanable");
+            await Snapshot("tasks-staging-preview-narrow-dark", true);
+            stagingList.SelectedItems.Add(stagingList.Items[0]);
+            Check(!stagingDialog.IsPrimaryButtonEnabled, "native_staging_mixed_protected_selection_disabled");
+            stagingList.SelectedItems.Clear(); stagingList.SelectedItems.Add(stagingList.Items[3]);
+            Check(!stagingDialog.IsPrimaryButtonEnabled && stagingDialog.IsSecondaryButtonEnabled, "native_staging_restore_only_recycled");
+            Check(stagingPanel.Children.OfType<TextBlock>().Any(t => t.Text.Contains("仍占用磁盘")) &&
+                stagingPanel.Children.OfType<TextBlock>().Any(t => t.Text.Contains("无权限")), "native_staging_retained_space_and_errors_visible");
+            Check(stagingPanel.Children.OfType<TextBlock>().Any(t => t.Text.Contains("失败项未计入")), "native_staging_incomplete_usage_explicit");
+            stagingDialog.Hide(); await stagingOperation;
+            root.RequestedTheme = ElementTheme.Light;
+            stagingDialog.RequestedTheme = ElementTheme.Light;
+            window.AppWindow.Resize(initialSize);
+            stagingOperation = stagingDialog.ShowAsync();
+            await Task.Delay(200);
+            await Snapshot("tasks-staging-preview-light", true);
+            stagingDialog.Hide(); await stagingOperation;
             window.AppWindow.Resize(initialSize);
             root.RequestedTheme = ElementTheme.Light;
             await Snapshot("tasks-multiple-files-details-light", true);

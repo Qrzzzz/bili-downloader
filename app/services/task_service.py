@@ -63,6 +63,7 @@ class TaskRepository:
             raise ValueError("任务数据库版本不兼容，请使用匹配的应用版本。")
         self.db.execute("CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, token TEXT UNIQUE NOT NULL, data TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS submissions (token TEXT PRIMARY KEY, task_id TEXT NOT NULL, identity TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS staging_roots (path TEXT PRIMARY KEY)")
         self.db.execute("PRAGMA user_version=1")
         self.db.commit()
 
@@ -102,6 +103,8 @@ class TaskManager:
         self.closed = False
         self.epoch = 0
         self.storage_failed = False
+        from app.services.task_staging import TaskStaging
+        self.staging = TaskStaging(self)
         self.recover()
 
     def recover(self) -> None:
@@ -110,7 +113,7 @@ class TaskManager:
             self.repo.db.execute("BEGIN IMMEDIATE")
             for task in self.repo.all():
                 if task["state"] in ACTIVE | {"queued"} and not owner_alive(task["owner"]):
-                    task.update(state="interrupted", message="上次运行未完成，请确认后继续。")
+                    task.update(state="interrupted", progress=None, message="上次运行未完成，请确认后继续。")
                     for attempt in attempt_history(task):
                         if attempt.get("ended_at") is None:
                             attempt.update(state="interrupted", ended_at=time.time())
@@ -193,6 +196,7 @@ class TaskManager:
                     "position": max((t["position"] for t in tasks), default=0) + 1,
                     "result": None, "logs": "", "spec": spec, "identity": identity}
             self._save(task)
+            self.repo.db.execute("INSERT OR IGNORE INTO staging_roots VALUES(?)", (str(Path(config.download_dir).absolute()),))
             self.repo.db.execute("INSERT INTO submissions VALUES(?,?,?)", (token, task["task_id"], identity))
         return {"task": self._public(task), "duplicate": False}
 
@@ -248,21 +252,68 @@ class TaskManager:
             task = self.repo.get(task_id)
         spec = task["spec"]
         last = 0.0
+        persisted = 0.0
+        persisted_state = ""
+        persisted_value = None
+        pending_timer = None
+
+        def flush_pending(timer):
+            nonlocal pending_timer, persisted, persisted_state, persisted_value
+            with self.lock:
+                if pending_timer is not timer:
+                    return
+                pending_timer = None
+                if task_id not in self.running or self.closed or self.storage_failed:
+                    return
+                try:
+                    current = self.repo.get(task_id)
+                    current.update(self.live.get(task_id, {}))
+                    with self.repo.db:
+                        self._save(current)
+                    persisted = time.monotonic()
+                    persisted_state, persisted_value = current["state"], current.get("progress")
+                    self._changed(current)
+                except (sqlite3.Error, OSError):
+                    self.storage_failed, self.paused = True, True
+                    for other, _ in self.running.values():
+                        other.cancel()
+                    self.live[task_id] = {"state": "interrupted", "progress": None,
+                        "message": "任务进度无法保存，请释放空间并重新打开应用。"}
+                    self._changed(task)
 
         def progress(data):
-            nonlocal last
+            nonlocal last, persisted, persisted_state, persisted_value, pending_timer
             now = time.monotonic()
-            if data.get("phase") == "downloading" and now - last < 0.25:
-                return
-            last = now
             value = progress_dto(data)
             with self.lock:
-                current = self.repo.get(task_id)
                 phase = value["phase"]
                 # A per-P terminal never terminates the owning task.
                 state = "cancelling" if controller.cancelled else phase if phase in ACTIVE else "preparing"
                 self.live[task_id] = {"progress": value, "state": state}
-                self._changed(current)
+                # Publish phase changes immediately; continuous percentages write
+                # at most once per second, independently of local UI events.
+                phase_changed = state != persisted_state
+                save_now = phase_changed or now - persisted >= 1.0
+                notify_now = phase != "downloading" or phase_changed or now - last >= 0.25
+                current = self.repo.get(task_id) if save_now or notify_now else None
+                if save_now:
+                    if pending_timer is not None:
+                        pending_timer.cancel()
+                        pending_timer = None
+                    current.update(state=state, progress=value)
+                    with self.repo.db:
+                        self._save(current)
+                    persisted, persisted_state, persisted_value = now, state, value
+                elif pending_timer is None and value != persisted_value:
+                    # Trailing flush also publishes a last sparse callback when
+                    # the source pauses. At most one timer per running task.
+                    timer = threading.Timer(max(0.01, 1.0 - (now - persisted)), lambda: flush_pending(timer))
+                    timer.daemon = True
+                    pending_timer = timer
+                    timer.start()
+                if notify_now:
+                    last = now
+                    self._changed(current)
 
         def log(text):
             with self.lock, self.repo.db:
@@ -342,12 +393,16 @@ class TaskManager:
                         message=redact_sensitive(str(exc))[:2048])
         finally:
             with self.lock:
+                if pending_timer is not None:
+                    pending_timer.cancel()
+                    pending_timer = None
                 try:
                     current = self.repo.get(task_id)
                     task["logs"] = current["logs"]
                     task["attempts"] = attempt_history(current)
                     task["attempts_dropped"] = current.get("attempts_dropped", 0)
                     task["revision"] = current["revision"]
+                    task["progress"] = None
                     if self.closing and task["state"] != "completed":
                         task["state"] = "interrupted"
                     task["attempts"][-1].update(state=task["state"], ended_at=time.time())
@@ -364,6 +419,9 @@ class TaskManager:
                     self._changed(task)
                 finally:
                     self.running.pop(task_id, None)
+            if task["state"] == "completed":
+                from app.services.task_staging import reclaim_empty
+                reclaim_empty(spec["directory"], task_id)
             self.start_ready()
 
     def command(self, action: str, task_id: str, reauthorize: bool = False) -> dict:
@@ -397,7 +455,7 @@ class TaskManager:
                         identity = json.loads(task["identity"])
                         identity[-1] = generation
                         task["identity"] = json.dumps(identity)
-                task.update(owner=self.owner, state="queued", message="等待下载")
+                task.update(owner=self.owner, state="queued", progress=None, message="等待下载")
             elif action == "reorder":
                 if task["state"] != "queued":
                     raise ProtocolError("task_state", "只能调整等待任务。")
@@ -405,6 +463,7 @@ class TaskManager:
             elif action == "remove":
                 if task_id in self.running or task["state"] == "queued":
                     raise ProtocolError("task_state", "请先取消任务，再移除记录。")
+                self.repo.db.execute("INSERT OR IGNORE INTO staging_roots VALUES(?)", (str(Path(task["spec"]["directory"]).absolute()),))
                 self.repo.db.execute("DELETE FROM tasks WHERE id=?", (task_id,))
                 self.repo.db.execute("DELETE FROM submissions WHERE task_id=?", (task_id,))
                 return {"removed": task_id}

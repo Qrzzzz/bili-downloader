@@ -70,7 +70,10 @@
                     </Border>
                 </DataTemplate></ListView.ItemTemplate>
             </ListView>
-            <Button Grid.Row="1" Content="清理已完成记录" Click="Clear_Click" Margin="0,12,0,0" IsEnabled="{Binding CanClearCompleted}" Visibility="{Binding ClearVisibility}" ToolTipService.ToolTip="只清理任务记录，保留已下载的文件。"/>
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12" Margin="0,12,0,0">
+                <Button Content="暂存管理" Click="Staging_Click" IsEnabled="{Binding CanManage}" AutomationProperties.AutomationId="TaskStaging"/>
+                <Button Content="清理已完成记录" Click="Clear_Click" IsEnabled="{Binding CanClearCompleted}" Visibility="{Binding ClearVisibility}" ToolTipService.ToolTip="只清理任务记录，保留已下载的文件。"/>
+            </StackPanel>
         </Grid>
     </Grid>
 </Page>

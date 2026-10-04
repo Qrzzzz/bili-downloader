@@ -1,12 +1,14 @@
 # IPC v2：持久任务与并行队列
 
-应用版本 3.1，协议版本 2。私有 stdin/stdout JSONL 的编码、大小、字段拒绝、错误分类、ACK 在 worker 事件之前、单操作终态、EOF 收尾和前后端精确版本握手继续沿用 [IPC v1](ipc-v1.md)。v1 客户端不能连接 v2 后端。
+应用版本 3.5，协议版本 2。私有 stdin/stdout JSONL 的编码、大小、字段拒绝、错误分类、ACK 在 worker 事件之前、单操作终态、EOF 收尾和前后端精确版本握手继续沿用 [IPC v1](ipc-v1.md)。v1 客户端不能连接 v2 后端。
 
 ## 状态所有权
 
 前台解析、扫码、诊断仍是可取消的短期 operation；下载使用持久 task。解析与下载可以同时执行，下载不占用前台 `ApplicationSession.Busy`。后端保留最多 100 份解析结果；新输入只撤销编辑器当前解析，已经入队的任务不依赖它。最多保留 500 条任务记录，一次最多解析 50 个视频，一个任务最多选择 1000 个分 P。
 
-SQLite `tasks.sqlite3` 存储任务快照、执行轮次、逐 P 结果和有界脱敏日志；WAL、FULL synchronous、事务与唯一提交标识确保先落盘再确认。进度是可替换的内存状态，列表摘要不携带完整日志或逐 P 结果，展开时使用 `tasks.get`。旧配置 schema 1 兼容新增 `max_parallel`（默认 2，范围 1—3）。
+SQLite `tasks.sqlite3` 存储任务快照、执行轮次、逐 P 结果和有界脱敏日志；WAL、FULL synchronous、事务与唯一提交标识确保先落盘再确认。进度在所属窗口保留内存快照，同时共享持久化最近阶段与进度；阶段变化立即保存，同阶段连续进度最多每秒保存一次。窗口沿用两秒轮询，持续进度通常在三秒内可见，终态与恢复清除过期进度，列表摘要不携带完整日志或逐 P 结果，展开时使用 `tasks.get`。旧配置 schema 1 兼容新增 `max_parallel`（默认 2，范围 1—3）。
+
+每个在途任务至多一个延迟补写计时器，确保回调暂停前的最后一次进度也在一秒节流窗口结束时保存。新阶段会取消旧计时器，任务结束取消待补写；计时器复核身份、运行状态及存储状态，避免终态或关闭数据库后写入旧进度。所属窗口本地下载事件仍最多每 250 ms 刷新一次。
 
 ## 请求
 
@@ -21,6 +23,8 @@ SQLite `tasks.sqlite3` 存储任务快照、执行轮次、逐 P 结果和有界
 | tasks.resume | task_id、reauthorize? | `{task}`，执行所有尚未成功的 P |
 | tasks.reorder | task_id | `{task}`，将等待任务移到队首 |
 | tasks.remove | task_id | `{removed:task_id}`；先取消再移除，文件保留 |
+| staging.scan | {} | `{entries,errors,total_bytes,cleanable_bytes,recycled_bytes}`；预览分类、占用、任务关联及保护原因 |
+| staging.clean / staging.restore | entry_ids | `{results:[{entry_id,status,message}]}`；仅接受本窗口当前预览的标识，最多 1000 项，预览五分钟有效 |
 | queue.pause / queue.resume | {} | 完整列表摘要；暂停不取消在途工作 |
 | settings.update | download_dir?、theme?、max_parallel?、remember_download_preferences?、download_mode?、preferred_quality? | 原子保存后的完整设置 |
 | settings.remember | download_mode?、preferred_quality? | 自动记忆开启时原子保存；关闭时返回原设置，不写入 |
@@ -54,3 +58,9 @@ SQLite `tasks.sqlite3` 存储任务快照、执行轮次、逐 P 结果和有界
 每实例持有 OS 文件租约；恢复时只将租约已释放实例的非终态任务标记为 interrupted。其他窗口的任务只读，不能重复领取；确认恢复使用 SQLite 事务认领。启动不自动联网恢复，正常关闭停止调度、取消并等待全部 worker 后关闭存储。异常退出由 OS 释放租约，下次启动继续恢复。存储失败暂停调度并协作取消在途任务，提示重新打开，不声称已经成功持久化结果。
 
 旧 `download.start/retry` 保留用于已有单任务服务回归；3.0 界面的正式下载入口为 `tasks.create`。
+
+## 暂存管理（3.5）
+
+新增 `staging_roots` 表记录任务使用过的下载目录，数据库 user_version 仍为 1，旧任务 JSON 与旧客户端可读取。扫描当前目录及已记录目录；一次最多 1000 项、20,000 个目录/文件节点，不访问公网。列表分类为 active、recoverable、orphan、completed、recycled、protected。扫描不是写入授权，清理使用 SQLite `BEGIN IMMEDIATE` 与下载器共享的逐任务暂存 OS 租约，重新核对任务状态、路径归属、文件树和预览指纹；链接、Windows 重解析点、特殊文件和扫描失败项关闭清理。
+
+清理只将所选 orphan/completed 目录同卷重命名到 `.bili-tasks-recycle/<entry_id>/<task_id>`，可还原；回收区仍占用磁盘，应用不执行永久删除。还原不会覆盖原路径或处理活动任务。权限、锁定、变化和目标冲突逐项返回 protected；成功返回 recycled/restored。应用重启可重新扫描回收区，不依赖上次的内存预览。删除任务记录不删除文件，成功任务只用非递归 rmdir 回收空暂存目录。

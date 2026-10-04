@@ -213,6 +213,11 @@ internal static class FrontendStateAcceptance
             session.Tasks.Disconnected();
             Check(session.Tasks.PendingCount == 0, "queue_badge_does_not_claim_disconnected_download_is_running");
             session.Tasks.Apply(new TaskSnapshot(false, 2, [], 17));
+            session.Tasks.Apply(new TaskSnapshot(false, 2, [sampleTask with { Foreign = true, Revision = 10 }], 18));
+            var foreignRow = session.Tasks.Items.Single();
+            Check(foreignRow.Percent == 25 && foreignRow.StateText.Contains("其他窗口") && !foreignRow.CanCancel &&
+                !foreignRow.CanReorder && !foreignRow.CanRemove, "foreign_task_progress_visible_but_actions_disabled");
+            session.Tasks.Apply(new TaskSnapshot(false, 2, [], 19));
             var terminalEvents = new System.Collections.Concurrent.ConcurrentQueue<string>();
             client.Event += e => { if (e.Name.StartsWith("operation.")) terminalEvents.Enqueue(e.Name); };
             await session.ExecuteAsync(async () =>

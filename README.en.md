@@ -1,4 +1,4 @@
-> **3.4** revalidates saved outputs before recovery, retains logs for the last five attempts, and starts real download acceptance. See [3.4 release notes](docs/releases/v3.4.md).
+> **3.5** adds staging usage previews, recoverable cleanup and restore, and shared task phases and progress across windows. See [3.5 release notes](docs/releases/v3.5.md).
 
 <div align="center">
 
