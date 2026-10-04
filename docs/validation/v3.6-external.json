@@ -1009,20 +1009,35 @@
   },
   "manual": {
     "phone_qr": {
-      "outcome": "awaiting_user_result"
+      "outcome": "passed",
+      "assessment_method": "user_report",
+      "confirmed_on": "2026-10-04",
+      "confirmation": "验收通过"
     },
     "file_association": {
-      "outcome": "awaiting_user_result"
+      "outcome": "passed",
+      "assessment_method": "user_report",
+      "confirmed_on": "2026-10-04",
+      "confirmation": "验收通过"
     },
     "clipboard": {
-      "outcome": "awaiting_user_result"
+      "outcome": "passed",
+      "assessment_method": "user_report",
+      "confirmed_on": "2026-10-04",
+      "confirmation": "验收通过"
     },
     "screen_reader": {
-      "outcome": "awaiting_user_result"
+      "outcome": "passed",
+      "assessment_method": "user_report",
+      "confirmed_on": "2026-10-04",
+      "confirmation": "验收通过"
     },
     "high_contrast": {
-      "outcome": "awaiting_user_result"
+      "outcome": "passed",
+      "assessment_method": "user_report",
+      "confirmed_on": "2026-10-04",
+      "confirmation": "验收通过"
     }
   },
-  "overall": "partial_pending_manual"
+  "overall": "passed_with_user_reported_manual_acceptance"
 }
