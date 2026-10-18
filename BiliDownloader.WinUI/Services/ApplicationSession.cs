@@ -59,8 +59,10 @@ public sealed class ApplicationSession : ViewModelBase
             else Shell.IsOpen = false;
             foreach (var text in hello.ConfigDiagnostics) Download.AppendLog(text);
             Changed();
-            if (!hello.SafeMode && hello.Status.Code is not "none") await Account.ValidateAsync();
+            if (!hello.SafeMode && hello.Status.Code is not "none") await Account.ValidateAsync(false);
             await Tasks.ReloadAsync();
+            if (hello.ConfigDiagnostics.Length > 0)
+                Shell.Notify("部分配置未能读取，已使用可用设置。请查看诊断或日志。", InfoBarSeverity.Warning);
             taskTimer = Dispatcher.CreateTimer();
             taskTimer.Interval = TimeSpan.FromSeconds(2);
             taskTimer.Tick += async (_, _) => await ExecuteAsync(Tasks.ReloadAsync);
@@ -125,6 +127,7 @@ public sealed class ApplicationSession : ViewModelBase
             {
                 var result = await Client.RequestAsync("auth.qr.refresh", new { operation_id = operationId });
                 Account.ExpectGeneration(result.GetProperty("minimum_generation").GetInt32());
+                Shell.Notify("已请求刷新二维码，请使用新二维码扫码。", InfoBarSeverity.Informational);
             }
             catch { Account.CancelRefresh(); throw; }
         }

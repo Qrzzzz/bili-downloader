@@ -12,13 +12,17 @@ from app.config import AppConfig
 
 
 class FakeResponse:
-    def __init__(self, payload: object, *, status: int = 200) -> None:
+    def __init__(self, payload: object, *, status: int = 200, url: str = "") -> None:
         self.payload = payload
         self.status_code = status
+        self.url = url
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
-            raise requests.HTTPError(f"status={self.status_code}")
+            raise requests.HTTPError(f"status={self.status_code}", response=self)
+
+    def close(self) -> None:
+        pass
 
     def json(self) -> object:
         return self.payload
@@ -79,6 +83,52 @@ def test_manual_update_check_returns_safe_failure(get: Any) -> None:
     assert result.update_available is False
     assert result.release_url is None
     assert result.message.startswith("检查更新失败")
+
+
+@pytest.mark.parametrize("failure", [403, 429, "timeout"])
+@pytest.mark.parametrize(("tag", "available"), [("v3.8", True), ("v3.7", False)])
+def test_update_check_uses_public_release_redirect_when_api_unavailable(failure: Any, tag: str, available: bool) -> None:
+    calls = []
+
+    def get(url: str, **kwargs: Any) -> FakeResponse:
+        calls.append(url)
+        if url == diagnostics.LATEST_RELEASE_API:
+            if failure == "timeout":
+                raise requests.Timeout()
+            return FakeResponse({}, status=failure)
+        assert kwargs["stream"] is True
+        assert kwargs["timeout"] == 10
+        return FakeResponse({}, url=diagnostics.RELEASE_URL_PREFIX + "tag/" + tag)
+
+    result = diagnostics.check_latest_release("3.7", get=get)
+    assert calls == [diagnostics.LATEST_RELEASE_API, diagnostics.RELEASE_URL_PREFIX + "latest"]
+    assert result.latest_version == tag[1:]
+    assert result.update_available is available
+    assert result.release_url == diagnostics.RELEASE_URL_PREFIX + "tag/" + tag
+
+
+@pytest.mark.parametrize("url", ["https://example.com/releases/tag/v9.9", diagnostics.RELEASE_URL_PREFIX + "latest",
+                                 diagnostics.RELEASE_URL_PREFIX + "tag/v9.9?untrusted=1",
+                                 diagnostics.RELEASE_URL_PREFIX + "tag/invalid"])
+def test_update_fallback_rejects_invalid_release_redirect(url: str) -> None:
+    result = diagnostics.check_latest_release("3.7", get=lambda target, **_: (
+        FakeResponse({}, status=403) if target == diagnostics.LATEST_RELEASE_API else FakeResponse({}, url=url)))
+    assert result.latest_version is None
+    assert result.release_url is None
+    assert "版本信息无效" in result.message
+
+
+@pytest.mark.parametrize(("error", "message"), [(requests.Timeout(), "超时"),
+                                               (requests.ConnectionError(), "网络或代理"),
+                                               (requests.HTTPError(response=FakeResponse({}, status=403)), "额度")])
+def test_update_failure_explains_action_instead_of_exception_type(error: Exception, message: str) -> None:
+    def get(*_: Any, **__: Any) -> FakeResponse:
+        raise error
+
+    result = diagnostics.check_latest_release("3.7", get=get)
+    assert message in result.message
+    assert "打开发行页面" in result.message
+    assert type(error).__name__ not in result.message
 
 
 def test_report_redacts_credentials_and_home_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

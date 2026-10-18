@@ -43,7 +43,7 @@ public sealed class SettingsViewModel(ApplicationSession session) : ViewModelBas
     public string SaveStatus => saving ? "正在保存…" : HasChanges ? "有未保存的更改。" : "设置已保存。";
     public string DiagnosticText { get => diagnosticText; set { if (Set(ref diagnosticText, value)) Refresh(); } }
     public string UpdateText { get => updateText; set => Set(ref updateText, value); }
-    public string? ReleaseUrl { get; private set; }
+    public string? ReleaseUrl { get; private set; } = "https://github.com/Qrzzzz/bili-downloader/releases/latest";
 
     public void Load(AppSettings settings, bool discardDraft = false)
     {
@@ -102,7 +102,10 @@ public sealed class SettingsViewModel(ApplicationSession session) : ViewModelBas
         var result = Protocol.Read<DiagnosticReport>(await session.RunAsync("diagnostics.run"));
         Diagnostics.Clear(); foreach (var item in result.Items) Diagnostics.Add(item);
         DiagnosticText = result.Text;
-        session.Shell.Notify("环境诊断完成。", InfoBarSeverity.Success);
+        bool failed = result.Items.Any(i => i.Status == "failed");
+        bool warned = result.Items.Any(i => i.Status == "warning");
+        session.Shell.Notify(failed ? "环境诊断发现问题，请查看诊断结果。" : warned ? "环境诊断完成，有项目需要留意。" : "环境诊断完成，各项检查正常。",
+            failed ? InfoBarSeverity.Error : warned ? InfoBarSeverity.Warning : InfoBarSeverity.Success);
     }
     public async Task CheckUpdateAsync()
     {
@@ -111,7 +114,9 @@ public sealed class SettingsViewModel(ApplicationSession session) : ViewModelBas
         try
         {
             var result = Protocol.Read<UpdateResult>(await session.RunAsync("updates.check"));
-            UpdateText = result.Message; ReleaseUrl = result.ReleaseUrl;
+            UpdateText = result.Message; ReleaseUrl = result.ReleaseUrl ?? "https://github.com/Qrzzzz/bili-downloader/releases/latest";
+            session.Shell.Notify(UpdateText, result.LatestVersion is null ? InfoBarSeverity.Error
+                : result.UpdateAvailable ? InfoBarSeverity.Informational : InfoBarSeverity.Success);
         }
         catch { UpdateText = "检查失败，请稍后重试。"; throw; }
         finally { Refresh(); }

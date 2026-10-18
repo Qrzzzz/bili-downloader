@@ -183,6 +183,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
         if (revision != inputRevision || session.Closing) return;
         ApplyVideo(parsed);
         Status = "解析完成，请选择下载规格。"; Refresh();
+        session.Shell.Notify(Status, InfoBarSeverity.Success);
         if (parsed.ThumbnailAvailable)
         {
             Status = "正在加载封面…";
@@ -192,7 +193,12 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
                 var decoded = await WindowsShellService.DecodeImageAsync(image.GetProperty("base64").GetString()!);
                 if (revision == inputRevision && !session.Closing) Thumbnail = decoded;
             }
-            catch (Exception ex) { AppendLog("封面加载失败，解析结果仍可下载。"); FrontendLog.Write(ex); }
+            catch (Exception ex)
+            {
+                AppendLog("封面加载失败，解析结果仍可下载。"); FrontendLog.Write(ex);
+                if (revision == inputRevision && !session.Closing)
+                    session.Shell.Notify("封面加载失败，视频已解析，可继续下载。", InfoBarSeverity.Warning);
+            }
         }
     }
 
@@ -230,6 +236,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
         foreach (var row in BatchItems.Where(r => r.Video is not null && !r.Added && !r.HasOverride))
             row.UseDefaults(batchDefaults with { PartIndices = [DefaultPart(row.Video!)] });
         QueueMessage = "已将当前模式、画质和目录设为共用默认值。单项覆盖与已入队任务保留。";
+        session.Shell.Notify(QueueMessage, InfoBarSeverity.Success);
         Refresh();
     }
     public void ResetBatchDraft()
@@ -238,6 +245,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
         var row = activeBatch!;
         row.UseDefaults(batchDefaults with { PartIndices = [DefaultPart(row.Video!)] });
         LoadBatchDraft(row);
+        session.Shell.Notify("此项目已恢复共用默认配置。", InfoBarSeverity.Success);
     }
     private void LoadBatchDraft(BatchInputRow row)
     {
@@ -275,6 +283,9 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
         QueueMessage = $"解析成功 {BatchItems.Count(r => r.Video is not null)} / {BatchItems.Count}。默认只选择链接指向的分 P，可逐项配置。";
         var first = BatchItems.FirstOrDefault(r => r.Video is not null);
         if (first is not null) LoadBatchDraft(first);
+        int succeeded = BatchItems.Count(r => r.Video is not null);
+        session.Shell.Notify(QueueMessage, succeeded == BatchItems.Count && succeeded > 0 ? InfoBarSeverity.Success
+            : succeeded == 0 ? InfoBarSeverity.Error : InfoBarSeverity.Warning);
         Refresh();
     }
 
@@ -306,6 +317,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
             QueueMessage = reply.Duplicate ? "此任务已存在，可在任务页查看。" : "已加入队列。可继续添加视频，或前往任务页查看。";
             foreach (var row in BatchItems.Where(r => r.Video?.ParseId == video!.ParseId)) row.MarkAdded();
             await session.Tasks.ReloadAsync();
+            session.Shell.Notify(QueueMessage, reply.Duplicate ? InfoBarSeverity.Informational : InfoBarSeverity.Success);
         }
         finally { adding = false; Refresh(); }
     }
@@ -337,6 +349,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
             }
             QueueMessage = $"已加入 {count} 个任务。未成功的项目可查看提示后重试。";
             await session.Tasks.ReloadAsync();
+            session.Shell.Notify(QueueMessage, count == submissions.Length ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
         }
         finally { adding = false; Refresh(); }
     }
@@ -353,10 +366,11 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
                 credential_mode = CredentialIndex == 0 ? "saved" : "anonymous", download_dir = directory });
         if (session.Closing) return;
         ApplyResult(Protocol.Read<BatchResult>(value));
-        session.Shell.Notify(Status, result!.Outcome == "completed" ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
+        session.Shell.Notify(Status, result!.Outcome == "completed" ? InfoBarSeverity.Success
+            : result.Outcome == "failed" ? InfoBarSeverity.Error : InfoBarSeverity.Warning);
         try { session.ApplySettings(Protocol.Read<AppSettings>(await session.Client.RequestAsync("settings.get"))); }
         catch (Exception ex) { FrontendLog.Write(ex); }
-        if (result.PartResults.Any(p => p.Error?.Code is "login_invalid" or "access_403")) await session.Account.ValidateAsync();
+        if (result.PartResults.Any(p => p.Error?.Code is "login_invalid" or "access_403")) await session.Account.ValidateAsync(false);
     }
 
     internal void ApplyResult(BatchResult value)

@@ -38,7 +38,7 @@ public sealed partial class TasksPage : Page
     internal ContentDialog CreateStagingDialog(Models.StagingScan scan)
     {
         var summary = new TextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
-        var notice = new TextBlock { Text = "仅扫描当前及任务使用过的目录。选择孤立残留或已完成暂存，再点击安全清理。活动任务与可恢复断点受保护。清理移入 .bili-tasks-recycle，可还原，仍占用磁盘；需要释放空间时可打开回收区，在资源管理器中自行删除。最终媒体保留。",
+        var notice = new TextBlock { Text = "这里列出下载产生的临时文件，不会删除已下载的视频或音频。正在下载和继续下载需要的文件会保留。\n移入暂存回收区后可还原，但仍占用磁盘。要释放空间，请选中回收区中的一项，点击“打开暂存回收区”后手动删除。\n扫描当前及历史下载目录。暂存回收区是应用自己的文件夹，并非 Windows 回收站。",
             TextWrapping = TextWrapping.Wrap };
         var list = new ListView { SelectionMode = ListViewSelectionMode.Multiple,
             Height = Math.Clamp(XamlRoot.Size.Height - 380, 90, 300), HorizontalContentAlignment = HorizontalAlignment.Stretch };
@@ -48,16 +48,22 @@ public sealed partial class TasksPage : Page
         var refresh = new Button { Content = "刷新扫描" };
         var open = new Button { Content = "打开暂存回收区", IsEnabled = false };
         var status = new TextBlock { TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
+        var feedback = new InfoBar { IsOpen = false };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(status, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         var panel = new StackPanel { Spacing = 8 };
-        panel.Children.Add(summary); panel.Children.Add(notice); panel.Children.Add(list);
+        panel.Children.Add(feedback); panel.Children.Add(summary); panel.Children.Add(notice); panel.Children.Add(list);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         actions.Children.Add(refresh); actions.Children.Add(open); panel.Children.Add(actions); panel.Children.Add(status);
         var dialog = new ContentDialog { XamlRoot = XamlRoot, RequestedTheme = ActualTheme, Title = "暂存管理",
             Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto },
-            PrimaryButtonText = "安全清理所选", SecondaryButtonText = "还原所选", CloseButtonText = "关闭",
+            PrimaryButtonText = "移入暂存回收区", SecondaryButtonText = "还原所选", CloseButtonText = "关闭",
             DefaultButton = ContentDialogButton.Close, IsPrimaryButtonEnabled = false, IsSecondaryButtonEnabled = false };
         bool busy = false;
+        void Notify(string text, InfoBarSeverity severity)
+        {
+            feedback.Message = text; feedback.Severity = severity; feedback.IsOpen = true;
+            App.Session.Shell.Notify(text, severity);
+        }
         void Selection()
         {
             var selected = list.SelectedItems.Cast<Models.StagingEntry>().ToArray();
@@ -67,11 +73,13 @@ public sealed partial class TasksPage : Page
         }
         void Apply(Models.StagingScan value)
         {
-            summary.Text = $"已扫描 {value.Entries.Length} 项 · 占用 {value.TotalBytes / 1048576d:0.##} MiB · 可清理 {value.CleanableBytes / 1048576d:0.##} MiB · 回收区 {value.RecycledBytes / 1048576d:0.##} MiB";
+            summary.Text = $"找到 {value.Entries.Length} 个临时文件夹 · 共 {value.TotalBytes / 1048576d:0.##} MiB\n可移入回收区 {value.CleanableBytes / 1048576d:0.##} MiB · 已在回收区 {value.RecycledBytes / 1048576d:0.##} MiB";
             if (value.Errors.Length > 0 || value.Entries.Any(e => e.Category == "protected" && e.FileCount == 0))
                 summary.Text += "（扫描失败项未计入占用）";
             list.ItemsSource = value.Entries;
-            status.Text = string.Join(Environment.NewLine, value.Errors);
+            status.Text = string.Join(Environment.NewLine, value.Errors.Concat(value.Entries
+                .Where(e => e.Category == "protected" && !string.IsNullOrWhiteSpace(e.Message)).Select(e => e.Message)).Distinct());
+            if (!string.IsNullOrWhiteSpace(status.Text)) Notify("部分目录或文件无法处理，请查看扫描结果。", InfoBarSeverity.Warning);
             Selection();
         }
         async Task Reload()
@@ -82,7 +90,12 @@ public sealed partial class TasksPage : Page
         {
             if (busy) return;
             busy = true; refresh.IsEnabled = false; list.IsEnabled = false; Selection();
-            try { await App.Session.ExecuteAsync(work); }
+            try { await work(); }
+            catch (Exception ex)
+            {
+                App.Session.Report(ex);
+                feedback.Message = App.Session.Shell.Message; feedback.Severity = InfoBarSeverity.Error; feedback.IsOpen = true;
+            }
             finally { busy = false; refresh.IsEnabled = true; list.IsEnabled = true; Selection(); }
         }
         async Task Change(bool restore)
@@ -93,15 +106,30 @@ public sealed partial class TasksPage : Page
                 var result = Models.Protocol.Read<Models.StagingReply>(await App.Session.Client.RequestAsync(
                     restore ? "staging.restore" : "staging.clean", new { entry_ids = ids }));
                 await Reload();
+                bool incompleteScan = !string.IsNullOrWhiteSpace(status.Text);
                 status.Text = string.Join(Environment.NewLine, result.Results.Select(r =>
                     (r.Status == "recycled" ? "已移入回收区：" : r.Status == "restored" ? "已还原：" : "未处理：") + r.Message)) +
                     (string.IsNullOrWhiteSpace(status.Text) ? "" : Environment.NewLine + status.Text);
+                int count = result.Results.Count(r => r.Status == (restore ? "restored" : "recycled"));
+                Notify($"已{(restore ? "还原" : "移入暂存回收区")} {count} 项。" +
+                    (count < ids.Length ? "部分项目未处理，请查看处理结果。" : restore ? "" : "文件可还原，仍占用磁盘空间。") +
+                    (incompleteScan ? "部分目录扫描失败，请查看扫描结果。" : ""),
+                    count == ids.Length && !incompleteScan ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
             });
         }
         list.SelectionChanged += (_, _) => Selection();
-        refresh.Click += async (_, _) => await Run(Reload);
-        open.Click += async (_, _) => await Run(() => WindowsShellService.OpenFolderAsync(
-            System.IO.Directory.GetParent(list.SelectedItems.Cast<Models.StagingEntry>().Single().Path)!.Parent!.FullName));
+        refresh.Click += async (_, _) => await Run(async () =>
+        {
+            await Reload();
+            Notify(string.IsNullOrWhiteSpace(status.Text) ? "扫描完成。" : "扫描完成，部分目录无法读取，请查看扫描结果。",
+                string.IsNullOrWhiteSpace(status.Text) ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
+        });
+        open.Click += async (_, _) => await Run(async () =>
+        {
+            await WindowsShellService.OpenFolderAsync(
+                System.IO.Directory.GetParent(list.SelectedItems.Cast<Models.StagingEntry>().Single().Path)!.Parent!.FullName);
+            Notify("已打开暂存回收区。", InfoBarSeverity.Success);
+        });
         dialog.PrimaryButtonClick += async (_, args) => { args.Cancel = true; await Change(false); };
         dialog.SecondaryButtonClick += async (_, args) => { args.Cancel = true; await Change(true); };
         Apply(scan);
@@ -149,7 +177,10 @@ public sealed partial class TasksPage : Page
         ScrollViewer.SetVerticalScrollBarVisibility(text, ScrollBarVisibility.Auto);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(text, "此任务的脱敏日志");
         var dialog = new ContentDialog { XamlRoot = XamlRoot, RequestedTheme = ActualTheme, Title = "任务日志",
-            Content = text, PrimaryButtonText = "复制日志", CloseButtonText = "关闭", DefaultButton = ContentDialogButton.Close };
+            PrimaryButtonText = "复制日志", CloseButtonText = "关闭", DefaultButton = ContentDialogButton.Close };
+        var clipboardFeedback = new InfoBar { IsOpen = false };
+        var basicPanel = new StackPanel { Spacing = 8 };
+        basicPanel.Children.Add(clipboardFeedback); basicPanel.Children.Add(text); dialog.Content = basicPanel;
         if (attempts is { Length: > 0 })
         {
             var selector = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -183,12 +214,17 @@ public sealed partial class TasksPage : Page
             var panel = new StackPanel { Spacing = 8 };
             panel.Children.Add(new TextBlock { Text = $"当前保留 {attempts.Length} 轮（最多 5 轮），每轮最多 16,000 字符。已移除 {dropped} 轮历史。", TextWrapping = TextWrapping.Wrap });
             panel.Children.Add(selector);
+            basicPanel.Children.Remove(clipboardFeedback);
+            panel.Children.Add(clipboardFeedback);
+            basicPanel.Children.Remove(text);
             panel.Children.Add(text);
             dialog.Content = panel;
         }
         dialog.PrimaryButtonClick += (_, args) =>
         {
             WindowsShellService.Copy(text.Text);
+            clipboardFeedback.Message = App.Session.Shell.Message;
+            clipboardFeedback.Severity = App.Session.Shell.Severity; clipboardFeedback.IsOpen = true;
             args.Cancel = true;
         };
         return dialog;

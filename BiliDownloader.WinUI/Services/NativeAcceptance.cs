@@ -141,6 +141,26 @@ public static class NativeAcceptance
         bool statusPreserved = session.Shell.Message == "原生验收：跨页状态保留";
         session.Shell.IsOpen = false;
         await Snapshot("account-dark", false);
+        if (Environment.GetCommandLineArgs().Contains("--ui-regression"))
+        {
+            var accountView = (Page)frame.Content!;
+            object? accountContext = accountView.DataContext;
+            var feedbackAccount = new ViewModels.AccountViewModel(session);
+            feedbackAccount.ApplyStatus(new LoginStatus("verified", "测试夹具：登录凭据已验证", "native-feedback-fixture"));
+            accountView.DataContext = feedbackAccount;
+            foreach (var (severity, text) in new[] {
+                (InfoBarSeverity.Success, "验证成功，当前登录状态有效。"),
+                (InfoBarSeverity.Warning, "部分项目未处理，请查看结果。"),
+                (InfoBarSeverity.Error, "操作失败，请检查网络后重试。") })
+            {
+                session.Shell.Notify(text, severity); root.UpdateLayout();
+                var banner = Elements(root).OfType<InfoBar>().Single(b => AutomationProperties.GetAutomationId(b) == "GlobalStatus");
+                Check(banner.IsOpen && banner.Severity == severity && Visible(banner), "native_banner_" + severity + "_visible");
+                await Snapshot("account-feedback-" + severity.ToString().ToLowerInvariant(), true);
+            }
+            accountView.DataContext = accountContext;
+            session.Shell.IsOpen = false;
+        }
         navigation.SelectedItem = navigation.SettingsItem;
         await Task.Delay(250);
         Check(session.Settings.HasChanges && session.Settings.DownloadDirectory.EndsWith("draft-downloads"), "settings_draft_survives_real_navigation");
@@ -356,8 +376,16 @@ public static class NativeAcceptance
             var logDialog = ((Views.TasksPage)page).CreateLogDialog(string.Join(Environment.NewLine, Enumerable.Repeat("P3：网络中断，请重试。", 30)));
             var logOperation = logDialog.ShowAsync();
             await Task.Delay(200);
-            Check(logDialog.Content is TextBox { IsReadOnly: true, TextWrapping: TextWrapping.Wrap }, "native_task_log_readonly_wrapping");
-            Check(((TextBox)logDialog.Content).Text.Split('\r', '\n').Count(line => line.Length > 0) == 30, "native_task_log_preserves_all_lines");
+            var logPanel = (StackPanel)logDialog.Content;
+            var logText = logPanel.Children.OfType<TextBox>().Single();
+            Check(logText is { IsReadOnly: true, TextWrapping: TextWrapping.Wrap }, "native_task_log_readonly_wrapping");
+            Check(logText.Text.Split('\r', '\n').Count(line => line.Length > 0) == 30, "native_task_log_preserves_all_lines");
+            var copyLog = Elements(logDialog).OfType<Button>().First(b => b.Content as string == "复制日志");
+            ((IInvokeProvider)new ButtonAutomationPeer(copyLog).GetPattern(PatternInterface.Invoke)).Invoke();
+            await Task.Delay(150);
+            var copied = logPanel.Children.OfType<InfoBar>().Single();
+            Check(copied.IsOpen && copied.Severity == InfoBarSeverity.Success && copied.Message.Contains("复制"),
+                "native_log_copy_result_visible_inside_dialog");
             await Snapshot("tasks-log-dialog-narrow-dark", true);
             logDialog.Hide();
             await logOperation;
@@ -403,6 +431,8 @@ public static class NativeAcceptance
             Check(stagingPanel.Children.OfType<TextBlock>().Any(t => t.Text.Contains("仍占用磁盘")) &&
                 stagingPanel.Children.OfType<TextBlock>().Any(t => t.Text.Contains("无权限")), "native_staging_retained_space_and_errors_visible");
             Check(stagingPanel.Children.OfType<TextBlock>().Any(t => t.Text.Contains("失败项未计入")), "native_staging_incomplete_usage_explicit");
+            Check(stagingPanel.Children.OfType<InfoBar>().Single() is { IsOpen: true, Severity: InfoBarSeverity.Warning },
+                "native_staging_scan_warning_inside_dialog");
             stagingDialog.Hide(); await stagingOperation;
             root.RequestedTheme = ElementTheme.Light;
             stagingDialog.RequestedTheme = ElementTheme.Light;

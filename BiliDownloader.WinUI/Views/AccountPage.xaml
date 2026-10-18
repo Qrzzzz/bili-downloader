@@ -26,8 +26,8 @@
                         </StackPanel>
                     </StackPanel>
                     <StackPanel Visibility="{Binding ManageVisibility}" Spacing="12">
-                        <Button Content="验证登录态" Click="Validate_Click" IsEnabled="{Binding CanManage}"/>
-                        <Button Content="退出并清除本机登录态" Click="Clear_Click" IsEnabled="{Binding CanManage}" AutomationProperties.AutomationId="ClearLogin"/>
+                        <Button Content="验证登录状态" Click="Validate_Click" IsEnabled="{Binding CanManage}"/>
+                        <Button Content="退出登录并清除本机凭据" Click="Clear_Click" IsEnabled="{Binding CanManage}" AutomationProperties.AutomationId="ClearLogin"/>
                     </StackPanel>
                 </StackPanel>
             </Border>

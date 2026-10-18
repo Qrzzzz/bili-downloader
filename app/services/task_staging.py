@@ -97,14 +97,14 @@ class TaskStaging:
     @staticmethod
     def _classification(task: dict | None, directory: Path) -> tuple[str, str]:
         if task is None:
-            return "orphan", "无关联任务记录；清理后可还原文件，但不会重建任务。"
+            return "orphan", "下载列表中已没有对应任务。这些临时文件可移入回收区；还原只放回文件，不会恢复下载列表中的任务。"
         if os.path.normcase(str(Path(task["spec"]["directory"]).absolute())) != os.path.normcase(str(directory)):
             return "protected", "任务路径已变化；原路径暂存保留，不能清理。"
         if task["state"] in IN_FLIGHT:
             return "active", "等待或执行中的任务，不能清理。"
         if task["state"] != "completed":
             return "recoverable", "继续任务会使用这些断点，已保留。"
-        return "completed", "任务已完成；仅处理暂存，保留最终媒体。"
+        return "completed", "下载已完成，这些临时文件可移入回收区。已下载的视频或音频会保留。"
 
     def scan(self) -> dict:
         with self.manager.lock, self.manager.repo.db:

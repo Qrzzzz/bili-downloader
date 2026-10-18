@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using BiliDownloader.WinUI.Models;
 using BiliDownloader.WinUI.Services;
 
@@ -122,7 +123,15 @@ public sealed class TasksViewModel(ApplicationSession session) : ViewModelBase
     }
     public void Upsert(DownloadTask task)
     {
-        if (rows.TryGetValue(task.TaskId, out var row)) { if (task.Revision >= row.Value.Revision) row.Update(task); }
+        if (rows.TryGetValue(task.TaskId, out var row))
+        {
+            if (task.Revision < row.Value.Revision) return;
+            bool changed = task.State != row.Value.State;
+            row.Update(task);
+            if (changed && task.State is "completed" or "partial" or "failed" or "cancelled" or "interrupted" or "blocked")
+                session.Shell.Notify($"{task.Title}：{row.StateText}。" + task.Message,
+                    task.State == "completed" ? InfoBarSeverity.Success : task.State == "failed" ? InfoBarSeverity.Error : InfoBarSeverity.Warning);
+        }
         else rows[task.TaskId] = new TaskRow(task, session);
     }
     private void Refilter()
@@ -149,17 +158,36 @@ public sealed class TasksViewModel(ApplicationSession session) : ViewModelBase
         }
         finally { refreshing = false; }
     }
-    public async Task TogglePauseAsync() => Apply(Protocol.Read<TaskSnapshot>(await session.Client.RequestAsync(Paused ? "queue.resume" : "queue.pause")));
+    public async Task TogglePauseAsync()
+    {
+        Apply(Protocol.Read<TaskSnapshot>(await session.Client.RequestAsync(Paused ? "queue.resume" : "queue.pause")));
+        session.Shell.Notify(Paused ? "队列已暂停；正在执行的任务会继续。" : "队列已继续。", InfoBarSeverity.Success);
+    }
     public async Task ActAsync(TaskRow row, string action, bool reauthorize = false)
     {
         await session.Client.RequestAsync("tasks." + action, new { task_id = row.Id, reauthorize });
         await ReloadAsync();
+        session.Shell.Notify(action switch
+        {
+            "cancel" => $"已请求取消“{row.Title}”，请等待任务安全结束。",
+            "resume" => $"已提交继续下载请求：{row.Title}。",
+            "retry" => $"已提交重试请求：{row.Title}。",
+            "remove" => "任务记录已移除，下载文件已保留。",
+            "reorder" => "任务已移至队首。",
+            _ => "任务操作已完成。"
+        }, action == "cancel" ? InfoBarSeverity.Warning : InfoBarSeverity.Success);
     }
     public async Task ClearCompletedAsync()
     {
+        int count = 0;
         foreach (var row in rows.Values.Where(r => r.Value.State == "completed" && r.CanRemove).ToArray())
+        {
             await session.Client.RequestAsync("tasks.remove", new { task_id = row.Id });
+            count++;
+        }
         await ReloadAsync();
+        session.Shell.Notify(count > 0 ? $"已清理 {count} 条已完成记录，下载文件已保留。" : "没有可清理的已完成记录。",
+            count > 0 ? InfoBarSeverity.Success : InfoBarSeverity.Informational);
     }
     public void Disconnected()
     {
