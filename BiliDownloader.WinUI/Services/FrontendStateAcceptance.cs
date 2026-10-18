@@ -49,6 +49,7 @@ internal static class FrontendStateAcceptance
 
             parse = model.ParseAsync(); await WaitUntil(() => session.CanCancel); await CompleteAsync(video); await parse;
             Check(model.CanDownload && model.SelectedParts.SetEquals([1]), "parse_selects_current_part");
+            Check(session.Shell.IsOpen && session.Shell.Severity == InfoBarSeverity.Success, "parse_success_has_success_bar");
             model.SelectedParts.Clear(); model.Refresh();
             Check(!model.CanDownload, "empty_selection_disables_download");
             model.SelectedParts.Add(1); model.ModeIndex = 1;
@@ -108,6 +109,21 @@ internal static class FrontendStateAcceptance
             Check(!model.CanRetry && model.RetryVisibility == Visibility.Collapsed, "new_input_invalidates_retry");
 
             var settings = session.Settings;
+            foreach (var (status, severity) in new[] { ("ok", InfoBarSeverity.Success), ("warning", InfoBarSeverity.Warning), ("failed", InfoBarSeverity.Error) })
+            {
+                Task diagnostic = settings.DiagnoseAsync(); await WaitUntil(() => session.CanCancel);
+                await CompleteAsync(new DiagnosticReport([new("测试检查", status, "检查结果", "")], "诊断结果")); await diagnostic;
+                Check(session.Shell.IsOpen && session.Shell.Severity == severity, "diagnostics_" + status + "_matches_severity");
+            }
+            foreach (var (latest, available, severity) in new (string?, bool, InfoBarSeverity)[]
+                { ("3.8", false, InfoBarSeverity.Success), ("3.9", true, InfoBarSeverity.Informational), (null, false, InfoBarSeverity.Error) })
+            {
+                Task update = settings.CheckUpdateAsync(); await WaitUntil(() => session.CanCancel);
+                await CompleteAsync(new UpdateResult("3.8", latest, latest is null ? null : "https://github.com/Qrzzzz/bili-downloader/releases/tag/v" + latest, available, "更新检查结果"));
+                await update;
+                Check(session.Shell.IsOpen && session.Shell.Severity == severity && settings.ReleaseUrl is not null,
+                    "update_" + (latest ?? "failed") + "_matches_severity_and_manual_link");
+            }
             var preferencesVideo = video with { Formats = [new("best", "最高可用", null, "best_per_part"), new("high", "1080p", 1080, "exact_height"), new("low", "720p", 720, "exact_height")] };
             model.ApplyVideo(preferencesVideo);
             model.SelectedFormat = model.Formats.Single(f => f.Height == 1080);
@@ -161,6 +177,11 @@ internal static class FrontendStateAcceptance
             Check(settings.HasChanges && settings.CanSave && preview == "dark", "failed_save_retains_draft_restores_saved_theme");
             session.Account.ApplyStatus(new LoginStatus("verified", "已验证", "fixture"));
             Check(session.Account.LoginVisibility == Visibility.Collapsed && session.Account.CanManage, "signed_in_actions");
+            session.Shell.IsOpen = false;
+            Task verification = session.Account.ValidateAsync(); await WaitUntil(() => session.CanCancel);
+            await CompleteAsync(new LoginStatus("verified", "已验证", "fixture")); await verification;
+            Check(session.Shell.IsOpen && session.Shell.Severity == InfoBarSeverity.Success &&
+                  session.Shell.Message.Contains("验证成功"), "account_validation_shows_native_success_bar");
             Task login = session.Account.LoginAsync(); await WaitUntil(() => session.CanCancel);
             await CompleteAsync(new { code = "success", friendly = "", detail = "", status = new LoginStatus("verified", "已验证并保存", "qr-generation") });
             await login;
@@ -178,6 +199,8 @@ internal static class FrontendStateAcceptance
                 Task validate = session.Account.ValidateAsync(); await WaitUntil(() => session.CanCancel);
                 await CompleteAsync(new LoginStatus(code, "凭据已改变", code == "local_pending" ? "new-generation" : null));
                 await validate;
+                Check(session.Shell.IsOpen && session.Shell.Severity == InfoBarSeverity.Warning,
+                      "account_" + code + "_validation_never_shows_success");
                 Check(!model.CanDownload && !model.CanRetry && session.Account.StatusTitle != "已登录" &&
                       session.Account.LoginVisibility == Visibility.Visible, "account_" + code + "_revokes_stale_parse");
                 Check(session.Account.CanManage == (code != "none"), "account_" + code + "_management_matches_credentials");
@@ -194,6 +217,10 @@ internal static class FrontendStateAcceptance
             Check(session.Tasks.PendingCount == 2 && session.Tasks.BadgeVisibility == Visibility.Visible, "queue_badge_counts_running");
             Check(session.Available && model.CanEditInput && session.Tasks.Items.Count == 2, "parallel_queue_does_not_lock_input");
             session.Tasks.Changed(new TaskChange(sampleTask with { State = "cancelled", Revision = 2 }, 11));
+            Check(session.Shell.IsOpen && session.Shell.Severity == InfoBarSeverity.Warning, "task_cancelled_has_warning");
+            session.Shell.IsOpen = false;
+            session.Tasks.Changed(new TaskChange(sampleTask with { State = "cancelled", Revision = 2 }, 11));
+            Check(!session.Shell.IsOpen, "duplicate_task_event_does_not_repeat_banner");
             Check(session.Tasks.Items[0].CanResume && session.Tasks.Items[1].CanCancel, "task_cancel_does_not_change_other_row");
             session.Tasks.Apply(new TaskSnapshot(false, 2, [sampleTask], 9));
             Check(session.Tasks.Items.Count == 2 && session.Tasks.Items[0].Value.State == "cancelled", "stale_snapshot_cannot_replace_new_task_event");
@@ -208,6 +235,7 @@ internal static class FrontendStateAcceptance
             session.Tasks.Apply(new TaskSnapshot(true, 2, [sampleTask with { State = "queued" }], 14));
             Check(session.Tasks.PendingCount == 1 && session.Tasks.BadgeVisibility == Visibility.Visible, "queue_badge_keeps_paused_waiting_tasks");
             session.Tasks.Changed(new TaskChange(sampleTask with { State = "completed", Revision = 2 }, 15));
+            Check(session.Shell.IsOpen && session.Shell.Severity == InfoBarSeverity.Success, "task_completed_has_success");
             Check(session.Tasks.PendingCount == 0 && session.Tasks.BadgeVisibility == Visibility.Collapsed, "queue_badge_hides_when_completed");
             session.Tasks.Apply(new TaskSnapshot(false, 2, [secondTask], 16));
             session.Tasks.Disconnected();
@@ -218,6 +246,14 @@ internal static class FrontendStateAcceptance
             Check(foreignRow.Percent == 25 && foreignRow.StateText.Contains("其他窗口") && !foreignRow.CanCancel &&
                 !foreignRow.CanReorder && !foreignRow.CanRemove, "foreign_task_progress_visible_but_actions_disabled");
             session.Tasks.Apply(new TaskSnapshot(false, 2, [], 19));
+            session.Tasks.Apply(new TaskSnapshot(false, 2, [sampleTask], 20));
+            session.Tasks.Changed(new TaskChange(sampleTask with { State = "failed", Message = "网络超时", Revision = 2 }, 21));
+            Check(session.Shell.IsOpen && session.Shell.Severity == InfoBarSeverity.Error && session.Shell.Message.Contains("网络超时"),
+                "task_failure_has_error_reason");
+            session.Shell.IsOpen = false;
+            session.Tasks.Apply(new TaskSnapshot(false, 2, [sampleTask with { State = "failed", Revision = 2 }], 21));
+            Check(!session.Shell.IsOpen, "polling_same_task_state_does_not_repeat_banner");
+            session.Tasks.Apply(new TaskSnapshot(false, 2, [], 22));
             var terminalEvents = new System.Collections.Concurrent.ConcurrentQueue<string>();
             client.Event += e => { if (e.Name.StartsWith("operation.")) terminalEvents.Enqueue(e.Name); };
             await session.ExecuteAsync(async () =>

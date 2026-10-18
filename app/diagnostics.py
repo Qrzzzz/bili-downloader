@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import unquote
 
 import requests
 import segno
@@ -21,6 +22,37 @@ from .utils import FFmpegProbeStatus, probe_ffmpeg
 
 LATEST_RELEASE_API = "https://api.github.com/repos/Qrzzzz/bili-downloader/releases/latest"
 RELEASE_URL_PREFIX = "https://github.com/Qrzzzz/bili-downloader/releases/"
+
+
+def _release_from_page(get: Callable[..., Any]) -> dict[str, str]:
+    # GitHub redirects this public page to its latest release without using API quota.
+    response = get(RELEASE_URL_PREFIX + "latest", headers={"User-Agent": "BiliDownloaderLite"},
+                   timeout=10, stream=True)
+    try:
+        response.raise_for_status()
+        url = response.url
+        match = re.fullmatch(re.escape(RELEASE_URL_PREFIX) + r"tag/([^/?#]+)", url)
+        if not match:
+            raise ValueError("发行页面未返回有效版本")
+        return {"tag_name": unquote(match[1]), "html_url": url}
+    finally:
+        response.close()
+
+
+def _update_error(exc: Exception) -> str:
+    if isinstance(exc, requests.Timeout):
+        reason = "连接 GitHub 超时"
+    elif isinstance(exc, requests.ConnectionError):
+        reason = "无法连接 GitHub，请检查网络或代理设置"
+    elif isinstance(exc, requests.HTTPError):
+        code = getattr(exc.response, "status_code", None)
+        reason = ("GitHub 请求额度已用尽或访问受限" if code in (403, 429)
+                  else f"GitHub 返回 HTTP {code}" if code else "GitHub 暂时无法访问")
+    elif isinstance(exc, requests.RequestException):
+        reason = "访问 GitHub 失败，请检查网络或代理设置"
+    else:
+        reason = "GitHub 返回的版本信息无效"
+    return f"检查更新失败：{reason}。可点击“打开发行页面”手动查看。"
 
 
 class DiagnosticStatus(str, Enum):
@@ -85,13 +117,17 @@ def check_latest_release(
     get: Callable[..., Any] = requests.get,
 ) -> UpdateCheckResult:
     try:
-        response = get(
-            LATEST_RELEASE_API,
-            headers={"Accept": "application/vnd.github+json", "User-Agent": "BiliDownloaderLite"},
-            timeout=10,
-        )
-        response.raise_for_status()
-        payload = response.json()
+        try:
+            response = get(
+                LATEST_RELEASE_API,
+                headers={"Accept": "application/vnd.github+json", "User-Agent": "BiliDownloaderLite"},
+                timeout=10,
+            )
+            response.raise_for_status()
+        except requests.RequestException:
+            payload = _release_from_page(get)
+        else:
+            payload = response.json()
         if not isinstance(payload, dict):
             raise ValueError("GitHub 返回内容不是对象")
         tag = payload.get("tag_name")
@@ -108,7 +144,7 @@ def check_latest_release(
             latest_version=None,
             release_url=None,
             update_available=False,
-            message=f"检查更新失败：{type(exc).__name__}",
+            message=_update_error(exc),
         )
 
     latest_version = tag.removeprefix("v").removeprefix("V")

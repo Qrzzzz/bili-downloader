@@ -65,7 +65,8 @@ public sealed class AccountViewModel(ApplicationSession session) : ViewModelBase
         if (code == "success") session.Download.Invalidate();
         Refresh();
     }
-    public async Task ValidateAsync()
+    public Task ValidateAsync() => ValidateAsync(true);
+    public async Task ValidateAsync(bool notify)
     {
         if (!CanManage) return;
         Status = "正在验证登录状态…";
@@ -74,6 +75,9 @@ public sealed class AccountViewModel(ApplicationSession session) : ViewModelBase
             var result = Protocol.Read<LoginStatus>(await session.RunAsync("session.validate"));
             ApplyStatus(result);
             if (result.Code is "invalid" or "none") session.Download.Invalidate();
+            if (notify || result.Code != "verified")
+                session.Shell.Notify(result.Code == "verified" ? "验证成功，当前登录状态有效。" : result.Text,
+                    result.Code == "verified" ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
         }
         catch { Status = "验证未完成，请稍后重试。"; throw; }
     }
