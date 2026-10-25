@@ -24,6 +24,16 @@ def generate(python_sbom: Path, assets_path: Path, package: Path, version: str) 
     for item in components:
         item.setdefault("properties", []).append({"name": "bili:inventory-basis", "value": "hash-locked Python build environment"})
     references = [item["bom-ref"] for item in components]
+    distribution_info = package / "distribution-info.json"
+    if distribution_info.is_file():
+        info = json.loads(distribution_info.read_text(encoding="utf-8"))
+        ref = "extractor:7zip@" + info["extractor_version"]
+        components.append({"type": "application", "name": "7-Zip GUI self-extractor", "version": info["extractor_version"],
+                           "bom-ref": ref, "licenses": [{"license": {"id": "LGPL-2.1-or-later"}}],
+                           "hashes": [{"alg": "SHA-256", "content": info["stub_sha256"]}],
+                           "externalReferences": [{"type": "vcs", "url": info["extractor_source"]}],
+                           "properties": [{"name": "bili:inventory-basis", "value": "outer EXE stub; icon, VERSIONINFO, asInvoker manifest and Chinese dialog resources replaced"}]})
+        references.append(ref)
     nuget = {}
     for identity, library in sorted(assets["libraries"].items()):
         if library["type"] != "package":

@@ -156,6 +156,11 @@ $env:BILI_VERSION_FILE = $versionInfoPath
 $env:BILI_BUILD_METADATA = $buildInfoPath
 $env:PYINSTALLER_CONFIG_DIR = Join-Path $Root "build\pyinstaller-cache"
 
+# These are disposable PyInstaller outputs. PowerShell's scoped -Force removal
+# handles read-only directory attributes that shutil.rmtree cannot remove on Windows.
+Remove-ScopedBuildDirectory -Name "build\BiliDownloader.Backend"
+Remove-ScopedBuildDirectory -Name "dist\BiliDownloader.Backend"
+
 # Dependency discovery must not pick up unrelated DLLs from developer tools on
 # PATH (for example another application's ICU or FFmpeg build).
 $previousPath = $env:PATH
@@ -211,7 +216,11 @@ Remove-ScopedBuildDirectory -Name "dist\$packageName"
 Invoke-CheckedNative -FilePath $venvPython -ArgumentList @(
     "tools\assemble_windows_package.py", "--version", $version, "--frontend", "build\winui-publish",
     "--backend", "dist\BiliDownloader.Backend", "--metadata", $buildInfoPath, "--output", "dist\$packageName"
-) -Step "Assemble and archive Windows package"
+) -Step "Assemble Windows package directory"
+Invoke-CheckedNative -FilePath $venvPython -ArgumentList @(
+    "tools\portable_sfx.py", "--version", $version, "--package", "dist\$packageName",
+    "--output", "dist\$packageName.exe"
+) -Step "Build portable self-extracting EXE"
 $dirtyLabel = if ($isDirty) { " dirty" } else { "" }
-Write-Host "Build done: dist\$packageName.zip"
+Write-Host "Build done: dist\$packageName.exe"
 Write-Host "Version: $version  Git: $commit$dirtyLabel"

@@ -23,8 +23,10 @@ def main() -> int:
         raise ValueError("Version must use exactly MAJOR.MINOR")
 
     directory = args.directory.resolve()
+    if (directory / f"BiliDownloader.v{args.version}.win-x64.zip").exists():
+        raise FileExistsError("Stale ZIP artifact is not allowed for EXE-only releases; remove it explicitly")
     names = [
-        f"BiliDownloader.v{args.version}.win-x64.zip",
+        f"BiliDownloader.v{args.version}.win-x64.exe",
         f"BiliDownloader.v{args.version}.sbom.json",
     ]
     missing = [name for name in names if not (directory / name).is_file()]

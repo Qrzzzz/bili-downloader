@@ -1,4 +1,4 @@
-> **3.8** adds native success, warning, and error feedback throughout the app, fixes update checks when GitHub API requests are limited, and clarifies staging cleanup and restoration. See [3.8 release notes](docs/releases/v3.8.md).
+> **3.9 candidate** adds a Chinese GUI self-extracting EXE for one-time portable extraction; application packages use EXE only from 3.9 onward. See [3.9 release notes](docs/releases/v3.9.md).
 
 <div align="center">
 
@@ -17,7 +17,7 @@
 <p>
   <strong>Navigation</strong><br/>
   <a href="https://github.com/Qrzzzz/bili-downloader/releases/latest">Download</a> ·
-  <a href="./docs/releases/v3.8.md">v3.8 Release Notes</a> ·
+  <a href="./docs/releases/v3.9.md">v3.9 Release Notes</a> ·
   <a href="#features">Features</a> ·
   <a href="./docs/architecture/v2.5-winui.md">Architecture</a> ·
   <a href="./SECURITY.md">Security</a> ·
@@ -49,25 +49,30 @@
 
 Download the latest stable release from [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest).
 
-**v3.8** provides native feedback for parsing, queue actions, task results, account management, diagnostics, updates, clipboard, and file operations. Staging dialogs show results directly and explain that recyclable temporary files still occupy disk space. See the [release notes](./docs/releases/v3.8.md) and [validation record](./docs/validation/v3.8.md). The 3.8 asset names are:
+3.9 is currently a local candidate, not a published release. The names below describe candidate artifacts and the planned release format.
+
+**v3.9** adds one-time portable extraction. Open the outer EXE, choose a directory, extract, then run the application inside the resulting folder. See the [release notes](./docs/releases/v3.9.md) and [validation record](./docs/validation/v3.9.md). The 3.9 asset names are:
 
 | File                              | Purpose                                 |
 | --------------------------------- | --------------------------------------- |
-| `BiliDownloader.v3.8.win-x64.zip` | Complete Windows x64 application        |
-| `BiliDownloader.v3.8.sbom.json`   | Software bill of materials              |
+| `BiliDownloader.v3.9.win-x64.exe` | Recommended self-extracting package      |
+| `BiliDownloader.v3.9.sbom.json`   | Software bill of materials              |
 | `SHA256SUMS`                      | SHA-256 checksums for release artifacts |
 
 ### Installation
 
-1. Download `BiliDownloader.v3.8.win-x64.zip`.
-2. **Fully extract** the ZIP instead of launching the executable from inside the archive.
+1. Download `BiliDownloader.v3.9.win-x64.exe`.
+2. Run the outer EXE and extract into a fresh writable directory. Open the resulting folder and run `BiliDownloader.v3.9.exe`; the extractor does not automatically launch the app.
 3. Keep the main executable, backend executable, and runtime files in their original directory structure.
 4. Configure FFmpeg as described below.
+
 5. Run:
 
 ```text
-BiliDownloader.v3.8.exe
+BiliDownloader.v3.9.exe
 ```
+
+Keep the old version until the new one works. Do not overwrite a running copy. User-provided FFmpeg is not copied automatically. Cancellation or extraction errors can leave partial files: retry in a fresh empty directory. Settings, credentials, task records, and downloads keep their existing storage locations.
 
 The release package includes the required **.NET, Windows App SDK, and Python runtimes**. End users do not need to install these separately.
 
@@ -78,7 +83,7 @@ Bili Downloader Lite **does not download, install, or bundle FFmpeg**.
 Obtain `ffmpeg.exe` yourself from a lawful and trusted source, then either place it at:
 
 ```text
-BiliDownloader.v3.8.exe
+BiliDownloader.v3.9.exe
 tools/
 └── ffmpeg.exe
 ```
@@ -431,8 +436,8 @@ from the application directory. It does not search the system `PATH` for an arbi
 
 | Document                                                | Contents                                             |
 | ------------------------------------------------------- | ---------------------------------------------------- |
-| [v3.8 Release Notes](./docs/releases/v3.8.md)           | Current release changes                              |
-| [v3.8 Validation](./docs/validation/v3.8.md)            | Validation record for the current release            |
+| [v3.9 Release Notes](./docs/releases/v3.9.md)           | Current release changes                              |
+| [v3.9 Validation](./docs/validation/v3.9.md)            | Validation record for the current release            |
 | [WinUI Architecture](./docs/architecture/v2.5-winui.md) | Native Windows architecture and migration boundary   |
 | [IPC v1](./docs/architecture/ipc-v1.md)                 | WinUI ↔ Python protocol                              |
 | [Security Policy](./SECURITY.md)                        | Credentials, sensitive data, vulnerability reporting |
@@ -536,16 +541,16 @@ The current build output is written to:
 
 ```text
 dist\
-└── BiliDownloader.v3.8.win-x64\
+└── BiliDownloader.v3.9.win-x64\
 ```
 
-with a corresponding ZIP candidate.
+with a corresponding self-extracting EXE candidate.
 
 Run the packaged smoke test with:
 
 ```powershell
 .\tools\package_smoke.ps1 `
-  -Executable .\dist\BiliDownloader.v3.8.win-x64\BiliDownloader.v3.8.exe
+  -Executable .\dist\BiliDownloader.v3.9.win-x64\BiliDownloader.v3.9.exe
 ```
 
 PR / main CI runs Python regression tests, WinUI compilation, and C# pipeline tests.

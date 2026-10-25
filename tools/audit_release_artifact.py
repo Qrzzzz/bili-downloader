@@ -49,9 +49,29 @@ def audit(
     if not re.fullmatch(r"\d+\.\d+", expected_version):
         raise ValueError("Expected version must use exactly MAJOR.MINOR")
     expected_root = f"BiliDownloader.v{expected_version}.win-x64"
-    if executable.name not in {expected_root, expected_root + ".zip"}:
-        raise ValueError(f"Artifact must be named {expected_root!r} or its ZIP")
+    if executable.name not in {expected_root, expected_root + ".zip", expected_root + ".exe"}:
+        raise ValueError(f"Artifact must be named {expected_root!r}, its ZIP, or its self-extracting EXE")
     with tempfile.TemporaryDirectory(prefix="bili-package-audit-") as temporary:
+        if executable.suffix.lower() == ".exe":
+            try:
+                from .portable_sfx import prepare_tools, extract_for_audit, verify_payload_manifest
+            except ImportError:
+                from portable_sfx import prepare_tools, extract_for_audit, verify_payload_manifest
+            tools, _ = prepare_tools()
+            package = extract_for_audit(executable, Path(temporary), expected_version, tools)
+            verify_payload_manifest(package, expected_version)
+            result = audit(package, expected_version, expected_commit, require_clean)
+            info = json.loads((package / "distribution-info.json").read_text(encoding="utf-8"))
+            if not isinstance(info.get("stub_size"), int) or not 0 < info["stub_size"] <= 2 * 1024 * 1024:
+                raise ValueError("Invalid SFX stub size")
+            with executable.open("rb") as handle:
+                stub = handle.read(info["stub_size"])
+            if (info["format"] != "7zip-gui-sfx" or info["app_version"] != expected_version or
+                not info["extract_only"] or hashlib.sha256(stub).hexdigest() != info["stub_sha256"]):
+                raise ValueError("SFX stub identity differs from package metadata")
+            result.update(artifact=executable.name, size_bytes=executable.stat().st_size, sha256=_sha256(executable), format="sfx",
+                          payload_manifest_verified=True)
+            return result
         if executable.is_dir():
             packaged = {p.relative_to(executable).as_posix(): p for p in executable.rglob("*") if p.is_file()}
             read = lambda name: packaged[name].read_bytes()

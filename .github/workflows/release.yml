@@ -1,9 +1,9 @@
-name: Release v3.8
+name: Release v3.9
 
 on:
   push:
     tags:
-      - v3.8
+      - v3.9
 
 permissions:
   contents: read
@@ -22,10 +22,10 @@ jobs:
       attestations: write
     env:
       PYTHONUTF8: "1"
-      RELEASE_VERSION: "3.8"
-      RELEASE_TAG: v3.8
-      RELEASE_TITLE: Bili Downloader Lite v3.8
-      RELEASE_ASSET: BiliDownloader.v3.8.win-x64.zip
+      RELEASE_VERSION: "3.9"
+      RELEASE_TAG: v3.9
+      RELEASE_TITLE: Bili Downloader Lite v3.9
+      RELEASE_ASSET: BiliDownloader.v3.9.win-x64.exe
       GH_TOKEN: ${{ github.token }}
 
     steps:
@@ -55,10 +55,11 @@ jobs:
 
       - name: Verify package behavior
         shell: powershell
-        timeout-minutes: 4
+        timeout-minutes: 6
         run: |
           $artifact = "dist/BiliDownloader.v$env:RELEASE_VERSION.win-x64/BiliDownloader.v$env:RELEASE_VERSION.exe"
           .\tools\package_smoke.ps1 -Executable $artifact
+          .\tools\sfx_smoke.ps1 -Executable "dist/$env:RELEASE_ASSET" -Version $env:RELEASE_VERSION
 
       - name: Measure and audit bundled contents
         shell: powershell
@@ -88,15 +89,15 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
-            dist/BiliDownloader.v3.8.win-x64.zip
-            dist/BiliDownloader.v3.8.sbom.json
+            dist/BiliDownloader.v3.9.win-x64.exe
+            dist/BiliDownloader.v3.9.sbom.json
             dist/SHA256SUMS
 
       - name: Verify attestations before publication
         shell: powershell
         run: |
           gh attestation verify "dist/$env:RELEASE_ASSET" --repo $env:GITHUB_REPOSITORY --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref $env:GITHUB_REF --source-digest $env:GITHUB_SHA
-          if ($LASTEXITCODE -ne 0) { throw "ZIP attestation verification failed with exit code $LASTEXITCODE" }
+          if ($LASTEXITCODE -ne 0) { throw "EXE attestation verification failed with exit code $LASTEXITCODE" }
           gh attestation verify "dist/BiliDownloader.v$env:RELEASE_VERSION.sbom.json" --repo $env:GITHUB_REPOSITORY --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref $env:GITHUB_REF --source-digest $env:GITHUB_SHA
           if ($LASTEXITCODE -ne 0) { throw "SBOM attestation verification failed with exit code $LASTEXITCODE" }
           gh attestation verify "dist/SHA256SUMS" --repo $env:GITHUB_REPOSITORY --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref $env:GITHUB_REF --source-digest $env:GITHUB_SHA
@@ -105,7 +106,7 @@ jobs:
       - name: Publish GitHub Release
         shell: powershell
         run: |
-          gh release create $env:RELEASE_TAG "dist/$env:RELEASE_ASSET" "dist/BiliDownloader.v$env:RELEASE_VERSION.sbom.json" "dist/SHA256SUMS" --verify-tag --title $env:RELEASE_TITLE --notes-file "docs/releases/v3.8.md" --latest
+          gh release create $env:RELEASE_TAG "dist/$env:RELEASE_ASSET" "dist/BiliDownloader.v$env:RELEASE_VERSION.sbom.json" "dist/SHA256SUMS" --verify-tag --title $env:RELEASE_TITLE --notes-file "docs/releases/v3.9.md" --latest
           if ($LASTEXITCODE -ne 0) { throw "GitHub Release creation failed with exit code $LASTEXITCODE" }
 
       # These are the same local files verified above; API digests bind the

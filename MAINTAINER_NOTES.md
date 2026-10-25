@@ -3,8 +3,15 @@
 ## 当前 CI 与验收策略
 
 - 当前检查范围以 [发布检查清单](./RELEASE_CHECKLIST.md) 为准；下面的版本小节记录已发布版本的行为边界。
-- PR/main 执行 Python 回归、真实 WinUI 编译和 C# 管道测试；最终目录/ZIP 组包、package smoke 和归档审计集中在 Release。
+- PR/main 执行 Python 回归、真实 WinUI 编译和 C# 管道测试；最终目录/EXE 组包、package smoke 和归档审计集中在 Release。
 - 真实扫码、下载、界面截图和许可证复核按相关改动触发；公网探测仅手动运行。无关变更不要求重复人工验收。
+
+## v3.9 便携自解压候选
+
+- 基于 v3.8 / main `ae7ff4f`，在 `codex/v3.9-portable-sfx` 制作本地候选；用户随后授权提交并推送版本分支，并要求以后不保留 ZIP；本轮不创建标签或发布 Release。
+- 官方 7-Zip 26.05 GUI SFX 只负责持久目录解压，中文化主窗口并加入显式 asInvoker；不采用临时解压后启动的 installer SFX，也不提供覆盖升级或自动启动。
+- 从 3.9 起只生成并上传 EXE 应用包，保留 SBOM 与 SHA256SUMS 两份附属资产。包内清单记录文件大小和 SHA-256，独立验证实际解压结果；三项资产的校验和、审计与构建来源验证同步。工具固定在 `tools/portable-sfx.lock.json`，不安装到系统。
+- 已完成与尚待人工的项目分别记录在 [3.9 验证记录](./docs/validation/v3.9.md)；目录覆盖、磁盘不足等未验结果不能以解析或启动通过替代。
 
 ## v3.8 原生操作反馈与更新检查
 
@@ -192,7 +199,7 @@
 
 ## 归档与仓库禁入项
 
-提交内容不包含以下本机数据或产物；最终目录/ZIP、Python 后端 CArchive 和内嵌 PYZ 由归档审计共同检查：
+提交内容不包含以下本机数据或产物；最终目录/EXE、Python 后端 CArchive 和内嵌 PYZ 由归档审计共同检查：
 
 - Playwright Python 包、driver/Node、`ms-playwright`、Chromium/Chrome/Edge runtime、Electron executable/runtime。
 - PySide6、Shiboken、PyQt 和 Qt Widgets。Windows App SDK 自带的互操作库按实际依赖与许可证记录，不误报为浏览器运行时。

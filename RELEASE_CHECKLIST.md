@@ -11,10 +11,11 @@
 ## 每次发布必须完成
 
 - [ ] 已获得发布授权，候选提交已记录；适用的 Quality checks 通过，提交内容不含凭据、日志、用户配置或本机产物。
-- [ ] 源码版本、目标 tag、提交、前端 EXE/ZIP 名称和 Release 标题一致；不移动、覆盖或删除任何已公开标签和 Release。
+- [ ] 源码版本、目标 tag、提交、前端和外层 EXE 名称和 Release 标题一致；不移动、覆盖或删除任何已公开标签和 Release。
 - [ ] Release 从干净的 Windows x64 / Python 3.13 环境构建一次；哈希锁安装、`pip check`、tag/commit 与 PE 元数据由 `build.ps1` 校验。
-- [ ] 最终目录包的 package smoke 和 ZIP 审计通过：真实 WinUI 启动、前后端退出，PE/程序集版本和提交一致，不夹带 Qt、凭据、日志、浏览器运行时或 FFmpeg。
-- [ ] 生成 ZIP、联合 CycloneDX SBOM、`SHA256SUMS`；SBOM 包含 NuGet、Python、.NET runtime 和实际文件摘要，许可证资料随包交付；发布前为三份资产生成并验证 attestation。
+- [ ] 最终目录包和自解压实际产物的 package smoke、EXE 审计通过：真实 WinUI 启动、前后端退出，PE/程序集版本和提交一致，不夹带 Qt、凭据、日志、浏览器运行时或 FFmpeg；实际解压文件清单、大小与 SHA-256 逐项核对通过。
+- [ ] 新增自解压工具版本/下载/模块摘要已核对，许可证与修改说明随包交付，外层 PE 版本及 asInvoker 权限声明正确；中文路径、空格路径及取消/失败边界按本次记录验收。
+- [ ] 生成自解压 EXE、联合 CycloneDX SBOM、`SHA256SUMS`；SBOM 包含外层解压模块、NuGet、Python、.NET runtime 和实际文件摘要；发布前为三份资产生成并验证 attestation。
 - [ ] 发布后用 API 核对 Release 状态、标题、tag/commit、资产名称/数量/大小及 digest；本地同一份资产已验证过 attestation，无需再验一遍或重新下载。
 - [ ] 本次提交使用维护者 Git 身份；保留远端 main 已完成的作者信息处理，不把旧 bot 作者历史重新合入。既有公开标签及 Release 不改写。
 
@@ -54,6 +55,7 @@ python -m pip check
 
 # 仅需验证打包时执行；普通开发构建会如实标记 dirty 状态
 .\build.ps1
-.\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v3.8.win-x64\BiliDownloader.v3.8.exe
-.\build\.venv\Scripts\python.exe tools\audit_release_artifact.py --executable .\dist\BiliDownloader.v3.8.win-x64.zip --expected-version 3.8
+.\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v3.9.win-x64\BiliDownloader.v3.9.exe
+.\tools\sfx_smoke.ps1 -Executable .\dist\BiliDownloader.v3.9.win-x64.exe -Version 3.9
+.\build\.venv\Scripts\python.exe tools\audit_release_artifact.py --executable .\dist\BiliDownloader.v3.9.win-x64.exe --expected-version 3.9
 ```
