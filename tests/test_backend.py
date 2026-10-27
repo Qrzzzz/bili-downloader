@@ -32,10 +32,43 @@ def backend():
         request_id = id or f"r{len(host.seen) + 1}"
         host.request({"id": request_id, "method": method, "params": params or {}})
         return next(m for m in reversed(messages) if m.get("id") == request_id)
-    send("hello", {"protocol_version": 2, "frontend_version": "3.9"})
+    send("hello", {"protocol_version": 2, "frontend_version": "3.10"})
     yield host, messages, send
     host.close()
     host.wait()
+
+
+def test_input_inspection_is_offline_and_does_not_discard_parses(backend, monkeypatch):
+    host, messages, send = backend
+    monkeypatch.setattr("app.backend.host.parse_video", lambda *args: pytest.fail("inspection must not access the network"))
+    host.parses["preserved"] = object()
+    response = send("parse.inspect", {"input": "分享 https://www.bilibili.com/video/BV1234567890?share_source=test\nBV1234567890\nhttps://evil.example/a"})
+    assert response["ok"]
+    rows = response["result"]["items"]
+    assert len(rows) == 2
+    assert rows[0]["input"] == "https://www.bilibili.com/video/BV1234567890"
+    assert rows[1]["message"]
+    assert host.active is None and "preserved" in host.parses
+    assert not send("parse.inspect", {"input": "x" * 24001})["ok"]
+    assert not send("parse.inspect", {"input": "BV1234567890", "unknown": True})["ok"]
+    for retained in ("invalid", [None], ["x"] * 52, ["x" * 81]):
+        assert not send("parse.inspect", {"input": "BV1234567890", "retained_parse_ids": retained})["ok"]
+
+
+def test_retained_composer_parses_survive_bounded_cache_eviction(backend):
+    from types import SimpleNamespace
+    host, messages, send = backend
+    for i in range(51):
+        host.remember_parse(SimpleNamespace(id=f"kept-{i}"))
+    kept = list(host.parses)
+    assert send("parse.inspect", {"input": "BV1234567890", "retained_parse_ids": kept})["ok"]
+    for i in range(200):
+        host.remember_parse(SimpleNamespace(id=f"new-{i}"))
+    assert len(host.parses) == 100 and set(kept) <= host.parses.keys()
+    assert send("parse.inspect", {"input": "BV1234567890"})["ok"]
+    for i in range(100):
+        host.remember_parse(SimpleNamespace(id=f"last-{i}"))
+    assert len(host.parses) == 100 and not (set(kept) & host.parses.keys())
 
 
 def finish(host):
@@ -75,7 +108,7 @@ def test_parse_share_text_through_backend(backend, monkeypatch, share):
 
 def test_handshake_and_duplicate_requests_fail_closed(backend):
     host, messages, send = backend
-    assert not send("hello", {"protocol_version": 1, "frontend_version": "3.9"})["ok"]
+    assert not send("hello", {"protocol_version": 1, "frontend_version": "3.10"})["ok"]
     assert send("settings.get", id="unique")["ok"]
     assert send("settings.get", id="unique")["error"]["code"] == "duplicate_request"
     assert send("download.start", {"parse_id": "untrusted"})["ok"] is False
@@ -186,10 +219,10 @@ sys.meta_path.insert(0, NoQt())
 sys.path.insert(0, sys.argv[1])
 runpy.run_module("app.backend", run_name="__main__")
 '''
-    requests = [dict(v=2, type='request', id='r1', method='hello', params={'protocol_version': 2, 'frontend_version': '3.9'}),
+    requests = [dict(v=2, type='request', id='r1', method='hello', params={'protocol_version': 2, 'frontend_version': '3.10'}),
                 dict(v=2, type='request', id='r2', method='shutdown', params={})]
     process = subprocess.run([sys.executable, '-I', '-c', code, str(root)], input=''.join(json.dumps(r)+'\n' for r in requests), capture_output=True, text=True, encoding='utf-8', timeout=15)
     assert process.returncode == 0, process.stderr
     output = [json.loads(line) for line in process.stdout.splitlines()]
-    assert output[0]['result']['backend_version'] == '3.9'
+    assert output[0]['result']['backend_version'] == '3.10'
     assert output[-1]['event'] == 'shutdown.ready'

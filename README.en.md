@@ -1,4 +1,4 @@
-> **3.9 candidate** adds a Chinese GUI self-extracting EXE for one-time portable extraction; application packages use EXE only from 3.9 onward. See [3.9 release notes](docs/releases/v3.9.md).
+> **3.10** simplifies adding downloads: one parsing entry, append without losing drafts, batch selection, undo removal, and per-item parse retry. It also provides a Chinese GUI self-extracting EXE. See [3.10 release notes](docs/releases/v3.10.md).
 
 <div align="center">
 
@@ -17,7 +17,7 @@
 <p>
   <strong>Navigation</strong><br/>
   <a href="https://github.com/Qrzzzz/bili-downloader/releases/latest">Download</a> ·
-  <a href="./docs/releases/v3.9.md">v3.9 Release Notes</a> ·
+  <a href="./docs/releases/v3.10.md">v3.10 Release Notes</a> ·
   <a href="#features">Features</a> ·
   <a href="./docs/architecture/v2.5-winui.md">Architecture</a> ·
   <a href="./SECURITY.md">Security</a> ·
@@ -49,27 +49,27 @@
 
 Download the latest stable release from [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest).
 
-3.9 is currently a local candidate, not a published release. The names below describe candidate artifacts and the planned release format.
+This version provides an EXE application package, plus an SBOM and SHA-256 checksums.
 
-**v3.9** adds one-time portable extraction. Open the outer EXE, choose a directory, extract, then run the application inside the resulting folder. See the [release notes](./docs/releases/v3.9.md) and [validation record](./docs/validation/v3.9.md). The 3.9 asset names are:
+**v3.10** provides one-time portable extraction. Open the outer EXE, choose a directory, extract, then run the application inside the resulting folder. See the [release notes](./docs/releases/v3.10.md) and [validation record](./docs/validation/v3.10.md). The 3.10 asset names are:
 
 | File                              | Purpose                                 |
 | --------------------------------- | --------------------------------------- |
-| `BiliDownloader.v3.9.win-x64.exe` | Recommended self-extracting package      |
-| `BiliDownloader.v3.9.sbom.json`   | Software bill of materials              |
+| `BiliDownloader.v3.10.win-x64.exe` | Recommended self-extracting package      |
+| `BiliDownloader.v3.10.sbom.json`   | Software bill of materials              |
 | `SHA256SUMS`                      | SHA-256 checksums for release artifacts |
 
 ### Installation
 
-1. Download `BiliDownloader.v3.9.win-x64.exe`.
-2. Run the outer EXE and extract into a fresh writable directory. Open the resulting folder and run `BiliDownloader.v3.9.exe`; the extractor does not automatically launch the app.
+1. Download `BiliDownloader.v3.10.win-x64.exe`.
+2. Run the outer EXE and extract into a fresh writable directory. Open the resulting folder and run `BiliDownloader.v3.10.exe`; the extractor does not automatically launch the app.
 3. Keep the main executable, backend executable, and runtime files in their original directory structure.
 4. Configure FFmpeg as described below.
 
 5. Run:
 
 ```text
-BiliDownloader.v3.9.exe
+BiliDownloader.v3.10.exe
 ```
 
 Keep the old version until the new one works. Do not overwrite a running copy. User-provided FFmpeg is not copied automatically. Cancellation or extraction errors can leave partial files: retry in a fresh empty directory. Settings, credentials, task records, and downloads keep their existing storage locations.
@@ -83,7 +83,7 @@ Bili Downloader Lite **does not download, install, or bundle FFmpeg**.
 Obtain `ffmpeg.exe` yourself from a lawful and trusted source, then either place it at:
 
 ```text
-BiliDownloader.v3.9.exe
+BiliDownloader.v3.10.exe
 tools/
 └── ffmpeg.exe
 ```
@@ -104,11 +104,12 @@ On supported Windows 11 systems, the application can use native Windows effects 
 
 1. Open Bili Downloader Lite.
 2. Paste a Bilibili URL, `b23.tv` short link, BV ID, or av ID. You can also paste a title and URL, multiline share text, or a Markdown link directly.
-3. Parse the video to retrieve its title, uploader, cover, parts, and currently available formats.
+3. Click the single parse button for one or multiple videos. Enter inserts a newline; Ctrl+Enter parses. The source section collapses when results are ready.
 4. If account-authorized formats are required, sign in from the Account page using the in-app QR code.
 5. Select the parts, quality, MP4 / MP3 mode, and output directory.
-6. Add the video to the queue. Use batch parsing for multiple links; each item defaults to the part addressed by its link and can be configured individually.
+6. Add a single video or check the batch items to submit. Each item defaults to the part addressed by its link. Quality, part-selection, and missing-directory problems appear before submission. Batch overrides do not change global preferences.
 7. Open Tasks to follow independent progress, cancel, retry failed parts, continue unfinished parts, or open output files. Parsing remains available during downloads.
+8. Continue adding links without losing prepared drafts. Duplicate links with the same access mode are skipped; access changes apply to new links. Failed parses can be retried individually. Removing an item supports one undo; cancelling parsing keeps completed rows. Up to 50 items remain in this session; unsubmitted drafts are not restored after exit.
 
 > [!NOTE]
 > The application only shows formats that are **actually available to the current account, video, region, and platform policy**. Signing in does not grant access to content or qualities the account is not entitled to use.
@@ -436,8 +437,8 @@ from the application directory. It does not search the system `PATH` for an arbi
 
 | Document                                                | Contents                                             |
 | ------------------------------------------------------- | ---------------------------------------------------- |
-| [v3.9 Release Notes](./docs/releases/v3.9.md)           | Current release changes                              |
-| [v3.9 Validation](./docs/validation/v3.9.md)            | Validation record for the current release            |
+| [v3.10 Release Notes](./docs/releases/v3.10.md)           | Current release changes                              |
+| [v3.10 Validation](./docs/validation/v3.10.md)            | Validation record for the current release            |
 | [WinUI Architecture](./docs/architecture/v2.5-winui.md) | Native Windows architecture and migration boundary   |
 | [IPC v1](./docs/architecture/ipc-v1.md)                 | WinUI ↔ Python protocol                              |
 | [Security Policy](./SECURITY.md)                        | Credentials, sensitive data, vulnerability reporting |
@@ -541,7 +542,7 @@ The current build output is written to:
 
 ```text
 dist\
-└── BiliDownloader.v3.9.win-x64\
+└── BiliDownloader.v3.10.win-x64\
 ```
 
 with a corresponding self-extracting EXE candidate.
@@ -550,7 +551,7 @@ Run the packaged smoke test with:
 
 ```powershell
 .\tools\package_smoke.ps1 `
-  -Executable .\dist\BiliDownloader.v3.9.win-x64\BiliDownloader.v3.9.exe
+  -Executable .\dist\BiliDownloader.v3.10.win-x64\BiliDownloader.v3.10.exe
 ```
 
 PR / main CI runs Python regression tests, WinUI compilation, and C# pipeline tests.

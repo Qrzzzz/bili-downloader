@@ -28,6 +28,9 @@ public static class NativeAcceptance
         }
         bool Visible(FrameworkElement element)
         {
+            // Minimal navigation keeps its off-canvas item containers in the
+            // visual tree while the pane is closed (including its animation).
+            if (element is NavigationViewItem && navigation.DisplayMode == NavigationViewDisplayMode.Minimal && !navigation.IsPaneOpen) return false;
             for (DependencyObject? node = element; node is not null; node = VisualTreeHelper.GetParent(node))
                 if (node is UIElement ui && ui.Visibility == Visibility.Collapsed) return false;
             return element.ActualWidth > 0 && element.ActualHeight > 0;
@@ -73,7 +76,7 @@ public static class NativeAcceptance
         }
         async Task InvokeButton(string content)
         {
-            var button = Elements(frame).OfType<Button>().First(b => b.Content as string == content);
+            var button = Elements(frame).OfType<Button>().First(b => b.Content as string == content && Visible(b));
             button.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0.5 });
             root.UpdateLayout();
             await Task.Delay(150);
@@ -83,7 +86,7 @@ public static class NativeAcceptance
         }
         void ScrollTop()
         {
-            Elements(frame).OfType<ScrollViewer>().First(s => s.Name == "PageScroll").ChangeView(null, 0, null, true);
+            Elements(frame).OfType<ScrollViewer>().First(s => s.Name == "EditorScroll").ChangeView(null, 0, null, true);
         }
 
         if (Environment.GetCommandLineArgs().Contains("--ui-regression"))
@@ -224,8 +227,8 @@ public static class NativeAcceptance
         window.AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(1024 * root.XamlRoot.RasterizationScale), (int)(800 * root.XamlRoot.RasterizationScale)));
         root.RequestedTheme = ElementTheme.Light;
         await Task.Delay(300);
-        var batchExpander = Elements(frame).OfType<Expander>().First(e => e.Header as string == "批量待添加项目");
-        batchExpander.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 });
+        session.Shell.IsOpen = false;
+        model.EditingBatch = false;
         await Snapshot("batch-drafts-light", true);
         Check(Elements(frame).OfType<TextBlock>().Any(t => t.Text == batchA.ConfigurationSummary), "native_batch_summary_is_rendered");
         root.RequestedTheme = ElementTheme.Dark;
@@ -237,6 +240,26 @@ public static class NativeAcceptance
             new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 });
         await Snapshot("batch-editor-narrow-dark", true);
         Check(model.ModeIndex == 1 && model.SelectedParts.SetEquals([1]), "native_batch_editor_restores_selected_part");
+        model.EditingBatch = false;
+        root.UpdateLayout();
+        var configureButton = Elements(frame).OfType<Button>().First(b => b.Content as string == "配置" && b.DataContext == batchB);
+        ((IInvokeProvider)new ButtonAutomationPeer(configureButton).GetPattern(PatternInterface.Invoke)).Invoke();
+        await Task.Delay(150);
+        var modeControl = Elements(frame).OfType<ComboBox>().Single(c => AutomationProperties.GetAutomationId(c) == "DownloadMode");
+        Check(model.EditorVisibility == Visibility.Visible && model.BatchListVisibility == Visibility.Collapsed && modeControl.FocusState != FocusState.Unfocused,
+            "native_configure_opens_editor_and_moves_keyboard_focus");
+        await Snapshot("batch-editor-focus-narrow-dark", true);
+        await InvokeButton("完成配置");
+        Check(model.BatchListVisibility == Visibility.Visible && model.EditorVisibility == Visibility.Collapsed, "native_done_returns_to_batch_list");
+        var batchSubmit = Elements(frame).First(e => AutomationProperties.GetAutomationId(e) == "AddBatch");
+        var batchSubmitPoint = batchSubmit.TransformToVisual(root).TransformPoint(new Windows.Foundation.Point());
+        Check(batchSubmitPoint.Y >= 0 && batchSubmitPoint.Y + batchSubmit.ActualHeight <= root.ActualHeight, "native_batch_submit_stays_in_narrow_viewport");
+        window.AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(1280 * root.XamlRoot.RasterizationScale), (int)(800 * root.XamlRoot.RasterizationScale)));
+        root.RequestedTheme = ElementTheme.Light;
+        await Task.Delay(250);
+        Check(model.WideLayout && model.BatchListVisibility == Visibility.Visible && model.EditorVisibility == Visibility.Visible, "native_wide_batch_shows_list_and_editor_together");
+        await Snapshot("batch-editor-wide-light", true);
+        model.BatchItems.Clear();
         model.Input = "BV1nativeFixture2";
         model.ModeIndex = 0;
         await model.WaitForPreferenceSaveAsync();
@@ -251,7 +274,12 @@ public static class NativeAcceptance
         partsExpander.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 });
         await Task.Delay(150);
         await InvokeButton("全选");
+        var selectedPartsList = Elements(frame).OfType<ListView>().Single(l => l.Name == "PartsList");
+        Check(selectedPartsList.SelectedItems.Count == 2, "native_parts_selection_matches_model");
         Check(model.SelectedParts.SetEquals([1, 2]), "native_select_all");
+        selectedPartsList.SelectedItems.Remove(selectedPartsList.Items[1]);
+        await Task.Delay(50);
+        Check(selectedPartsList.SelectedItems.Count == 1 && model.SelectedParts.SetEquals([1]), "native_control_deselect_updates_download_spec");
         await InvokeButton("清空选择");
         Check(model.SelectedParts.Count == 0 && !model.CanDownload, "native_clear_selection_disables_download");
         await InvokeButton("全选");
@@ -260,6 +288,9 @@ public static class NativeAcceptance
         string narrowNavigationMode = navigation.DisplayMode.ToString();
         ScrollTop();
         await Snapshot("parsed-narrow", true);
+        var pinnedSubmit = Elements(frame).First(e => AutomationProperties.GetAutomationId(e) == "DownloadButton");
+        var pinnedPoint = pinnedSubmit.TransformToVisual(root).TransformPoint(new Windows.Foundation.Point());
+        Check(pinnedPoint.Y >= 0 && pinnedPoint.Y + pinnedSubmit.ActualHeight <= root.ActualHeight, "native_single_submit_stays_in_narrow_viewport");
         partsExpander.IsExpanded = false;
         model.ModeIndex = 1;
         var downloadButton = Elements(frame).First(e => AutomationProperties.GetAutomationId(e) == "DownloadButton");
@@ -296,6 +327,12 @@ public static class NativeAcceptance
         Check(model.RetryVisibility == Visibility.Collapsed, "native_cancelled_result_no_false_retry");
         model.CollapseResult();
         Check(model.VideoVisibility == Visibility.Visible, "native_return_to_download_options");
+        // Keep completed download-page evidence even if a later, unrelated
+        // system integration check (for example clipboard access) fails.
+        await File.WriteAllTextAsync(Path.Combine(output, "download-evidence.json"), JsonSerializer.Serialize(new {
+            version = App.AppVersion, scope = "download-page-and-frontend-state", backend_connected = session.Connected,
+            state_checks = stateChecks, ui_checks = uiChecks.ToArray(), snapshots = snapshots.ToArray()
+        }, new JsonSerializerOptions { WriteIndented = true }));
         window.AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(640 * root.XamlRoot.RasterizationScale), (int)(480 * root.XamlRoot.RasterizationScale)));
         navigation.SelectedItem = navigation.MenuItems.OfType<NavigationViewItem>().First(i => (string)i.Tag == "account");
         await Snapshot("account-narrow", false);

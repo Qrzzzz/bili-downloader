@@ -1,138 +1,128 @@
 <Page x:Class="BiliDownloader.WinUI.Views.DownloadPage"
-      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-      xmlns:views="using:BiliDownloader.WinUI.Controls"
-      Loaded="Page_Loaded" Unloaded="Page_Unloaded" SizeChanged="Page_SizeChanged">
-    <Grid>
-        <VisualStateManager.VisualStateGroups>
-            <VisualStateGroup>
-                <VisualState x:Name="Narrow"/>
-                <VisualState x:Name="Wide">
-                    <VisualState.Setters>
-                        <Setter Target="FormatField.(Grid.Row)" Value="0"/>
-                        <Setter Target="FormatField.(Grid.Column)" Value="2"/>
-                        <Setter Target="FormatColumn.Width" Value="*"/>
-                        <Setter Target="FormatGap.Width" Value="16"/>
-                    </VisualState.Setters>
-                </VisualState>
-            </VisualStateGroup>
-        </VisualStateManager.VisualStateGroups>
-        <ScrollViewer x:Name="PageScroll" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
-            <StackPanel Style="{StaticResource PageContentStyle}" Width="{Binding ViewportWidth, ElementName=PageScroll}">
-                <StackPanel Spacing="6">
-                    <TextBlock Text="添加下载" Style="{StaticResource PageHeadingStyle}"/>
-                    <TextBlock Text="粘贴视频链接或分享文本，选择规格，保存到本机。" Style="{StaticResource SecondaryTextStyle}"/>
-                </StackPanel>
-                <Border Style="{StaticResource SurfaceCardStyle}">
-                    <StackPanel Spacing="16">
-                        <TextBlock Text="视频来源" Style="{StaticResource SectionHeadingStyle}"/>
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <TextBox x:Name="InputBox" Header="视频链接、分享文本或 BV / av 号" PlaceholderText="可直接粘贴含标题和链接的分享文本"
-                                     AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="144" ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                     Text="{Binding Input, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PreviewKeyDown="Input_KeyDown"
-                                     IsEnabled="{Binding CanEditInput}" AutomationProperties.AutomationId="VideoInput"/>
-                            <Button Grid.Column="1" Content="解析" MinWidth="80" Click="Parse_Click" VerticalAlignment="Bottom"
-                                    Style="{StaticResource AccentButtonStyle}" IsEnabled="{Binding CanParse}" AutomationProperties.AutomationId="ParseButton"/>
-                        </Grid>
-                        <StackPanel Orientation="Horizontal" Spacing="12">
-                            <TextBlock Text="访问方式" VerticalAlignment="Center"/>
-                            <ComboBox SelectedIndex="{Binding CredentialIndex, Mode=TwoWay}" IsEnabled="{Binding CanChoose}"
-                                      AutomationProperties.Name="访问方式" AutomationProperties.AutomationId="CredentialMode">
-                                <ComboBoxItem Content="使用本机登录态"/><ComboBoxItem Content="匿名访问"/>
-                            </ComboBox>
-                        </StackPanel>
-                        <TextBlock Text="{Binding AccessHint}" Style="{StaticResource SecondaryTextStyle}"/>
-                        <Button Content="批量解析多个链接" Click="BatchParse_Click" IsEnabled="{Binding CanParse}" AutomationProperties.AutomationId="BatchParse"/>
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource SurfaceCardStyle}" Visibility="{Binding QueueMessageVisibility}">
-                    <StackPanel Spacing="12">
-                    <TextBlock Text="{Binding QueueMessage}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
-                    <Button Content="查看任务" Click="Tasks_Click"/>
-                    </StackPanel>
-                </Border>
-                <Expander Header="批量待添加项目" Visibility="{Binding BatchVisibility}" IsExpanded="True" HorizontalAlignment="Stretch">
-                    <StackPanel Spacing="8">
-                        <ListView ItemsSource="{Binding BatchItems}" SelectionMode="None" MaxHeight="240" AutomationProperties.Name="批量解析结果">
-                            <ListView.ItemTemplate><DataTemplate><StackPanel Spacing="4" Padding="0,8">
-                                <TextBlock Text="{Binding Title}" TextWrapping="Wrap"/>
-                                <TextBlock Text="{Binding Message}" TextWrapping="Wrap"/>
-                                <TextBlock Text="{Binding ConfigurationSummary}" Style="{StaticResource SecondaryTextStyle}"/>
-                                <Button Content="单项配置" Click="ConfigureBatch_Click" IsEnabled="{Binding CanConfigure}"/>
-                            </StackPanel></DataTemplate></ListView.ItemTemplate>
-                        </ListView>
-                        <TextBlock Text="每项保留独立草稿；初始使用共用默认值和链接指向的分 P。全部加入采用各项草稿，入队后冻结。重新解析或更换输入、账号模式会清除本批次草稿。" Style="{StaticResource SecondaryTextStyle}"/>
-                        <TextBlock Text="{Binding BatchDefaultsSummary}" Style="{StaticResource SecondaryTextStyle}"/>
-                        <Button Content="将其余有效项目加入队列" Click="AddBatch_Click" IsEnabled="{Binding CanAddBatch}" AutomationProperties.AutomationId="AddBatch"/>
-                    </StackPanel>
-                </Expander>
-                <TextBlock Text="{Binding OtherTaskStatus}" Visibility="{Binding OtherTaskVisibility}" Style="{StaticResource SecondaryTextStyle}"/>
-                <Border x:Name="VideoCard" Visibility="{Binding VideoVisibility}" Style="{StaticResource SurfaceCardStyle}">
-                    <StackPanel Spacing="16">
-                        <StackPanel Spacing="8" Visibility="{Binding BatchVisibility}">
-                            <TextBlock Text="{Binding BatchEditorHint}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
-                            <Button Content="将当前规格设为共用默认值" Click="ApplyBatchDefaults_Click" IsEnabled="{Binding CanResetBatch}"/>
-                            <Button Content="此项恢复共用默认值" Click="ResetBatchDraft_Click" IsEnabled="{Binding CanResetBatch}"/>
-                        </StackPanel>
-                        <Grid ColumnSpacing="{Binding ThumbnailSpacing}">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                            <Image Source="{Binding Thumbnail}" Visibility="{Binding ThumbnailVisibility}" Width="144" Height="90"
-                                   Stretch="Uniform" VerticalAlignment="Top" AutomationProperties.Name="视频封面"/>
-                            <StackPanel Grid.Column="1" Spacing="8">
-                                <TextBlock Text="{Binding Title}" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" IsTextSelectionEnabled="True"/>
-                                <TextBlock Text="{Binding Metadata}" Style="{StaticResource SecondaryTextStyle}"/>
-                            </StackPanel>
-                        </Grid>
-                        <Expander Header="{Binding SelectionSummary}" Visibility="{Binding PartsVisibility}" HorizontalAlignment="Stretch">
-                            <StackPanel Spacing="8">
-                                <ListView x:Name="PartsList" ItemsSource="{Binding Parts}" SelectionMode="Multiple"
-                                          SelectionChanged="Parts_SelectionChanged" IsEnabled="{Binding CanEditSpecification}" MaxHeight="220"
-                                          AutomationProperties.Name="分 P 列表" AutomationProperties.AutomationId="PartsList">
-                                    <ListView.ItemTemplate><DataTemplate><TextBlock Text="{Binding Label}" TextWrapping="Wrap"/></DataTemplate></ListView.ItemTemplate>
-                                </ListView>
-                                <StackPanel Orientation="Horizontal" Spacing="12">
-                                    <Button Content="全选" Click="SelectAll_Click" IsEnabled="{Binding CanEditSpecification}"/>
-                                    <Button Content="清空选择" Click="SelectNone_Click" IsEnabled="{Binding CanEditSpecification}"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </Expander>
-                        <Grid RowSpacing="12">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition x:Name="FormatGap" Width="0"/><ColumnDefinition x:Name="FormatColumn" Width="0"/></Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                            <ComboBox x:Name="ModeField" Header="下载内容" SelectedIndex="{Binding ModeIndex, Mode=TwoWay}" IsEnabled="{Binding CanEditSpecification}"
-                                      HorizontalAlignment="Stretch" AutomationProperties.AutomationId="DownloadMode">
-                                <ComboBoxItem Content="音视频（MP4）"/><ComboBoxItem Content="仅音频（MP3，192 kbps）"/>
-                            </ComboBox>
-                            <ComboBox x:Name="FormatField" Grid.Row="1" Header="画质" ItemsSource="{Binding Formats}" DisplayMemberPath="Label"
-                                      SelectedItem="{Binding SelectedFormat, Mode=TwoWay}" Visibility="{Binding FormatVisibility}"
-                                      IsEnabled="{Binding CanEditSpecification}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="VideoFormat"/>
-                        </Grid>
-                        <TextBlock Text="{Binding QualityHint}" Visibility="{Binding FormatVisibility}" Style="{StaticResource SecondaryTextStyle}" AutomationProperties.LiveSetting="Polite" AutomationProperties.AutomationId="QualityPreferenceHint"/>
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <TextBox Header="保存目录" Text="{Binding DownloadDirectory, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                     IsEnabled="{Binding CanEditSpecification}" AutomationProperties.AutomationId="DownloadDirectory"/>
-                            <Button Grid.Column="1" Content="浏览…" Click="Browse_Click" IsEnabled="{Binding CanEditSpecification}" VerticalAlignment="Bottom" AutomationProperties.Name="选择下载目录"/>
-                        </Grid>
-                        <Button Content="加入队列" Click="Download_Click" Style="{StaticResource AccentButtonStyle}" IsEnabled="{Binding CanDownload}"
-                                HorizontalAlignment="Right" AutomationProperties.AutomationId="DownloadButton"/>
-                    </StackPanel>
-                </Border>
-                <Border x:Name="ProgressCard" Style="{StaticResource SurfaceCardStyle}" Visibility="{Binding ProgressVisibility}">
-                    <StackPanel Spacing="12">
-                        <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Style="{ThemeResource BodyStrongTextBlockStyle}" AutomationProperties.LiveSetting="Polite"/>
-                        <TextBlock Text="{Binding Title}" TextWrapping="Wrap" Visibility="{Binding ActiveTitleVisibility}" Style="{StaticResource SecondaryTextStyle}"/>
-                        <ProgressBar Value="{Binding Percent}" IsIndeterminate="{Binding IsIndeterminate}" AutomationProperties.Name="任务进度" AutomationProperties.AutomationId="TaskProgress"/>
-                        <TextBlock Text="{Binding Metrics}" TextWrapping="Wrap" Visibility="{Binding MetricsVisibility}"/>
-                        <Button Content="{Binding CancelText}" Click="Cancel_Click" IsEnabled="{Binding CanCancel}" AutomationProperties.AutomationId="CancelButton"/>
-                    </StackPanel>
-                </Border>
-                <views:DownloadResultView x:Name="ResultCard" Visibility="{Binding ResultVisibility}" AutomationProperties.AutomationId="DownloadResult"/>
-                <Expander Header="任务日志" HorizontalAlignment="Stretch" Visibility="{Binding LogsVisibility}">
-                    <TextBox Text="{Binding Logs}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="240" AutomationProperties.Name="脱敏任务日志"/>
-                </Expander>
-            </StackPanel>
-        </ScrollViewer>
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:views="using:BiliDownloader.WinUI.Controls" Loaded="Page_Loaded" Unloaded="Page_Unloaded" SizeChanged="Page_SizeChanged">
+ <Grid Padding="24,12,24,16" RowSpacing="12" MaxWidth="1200" HorizontalAlignment="Stretch">
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+  <TextBlock Text="添加下载" Style="{StaticResource PageHeadingStyle}"/>
+  <Expander Grid.Row="1" Header="{Binding InputHeading}" IsExpanded="{Binding SourceExpanded, Mode=TwoWay}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" AutomationProperties.AutomationId="SourceExpander">
+   <StackPanel Spacing="8">
+    <Grid ColumnSpacing="8">
+     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+     <TextBox x:Name="InputBox" PlaceholderText="粘贴链接、分享文本或 BV / av 号，支持多个视频" AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="104" MinHeight="56" ScrollViewer.VerticalScrollBarVisibility="Auto"
+      Text="{Binding Input, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PreviewKeyDown="Input_KeyDown" IsEnabled="{Binding CanEditInput}" AutomationProperties.Name="视频链接，Enter 换行，Ctrl+Enter 解析" AutomationProperties.AutomationId="VideoInput"/>
+     <Button Grid.Column="1" Content="解析链接" Click="Parse_Click" VerticalAlignment="Bottom" Style="{StaticResource AccentButtonStyle}" IsEnabled="{Binding CanParse}" AutomationProperties.AutomationId="ParseButton" ToolTipService.ToolTip="自动识别单个或多个视频。Ctrl+Enter 解析。"/>
     </Grid>
+    <Grid ColumnSpacing="12">
+     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+     <ComboBox SelectedIndex="{Binding CredentialIndex, Mode=TwoWay}" IsEnabled="{Binding CanChoose}" AutomationProperties.Name="新链接的访问方式" AutomationProperties.AutomationId="CredentialMode">
+      <ComboBoxItem Content="使用本机登录态"/><ComboBoxItem Content="匿名访问"/>
+     </ComboBox>
+     <TextBlock Grid.Column="1" Text="{Binding AccessHint}" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+    </Grid>
+   </StackPanel>
+  </Expander>
+  <StackPanel Grid.Row="2" Spacing="6">
+   <Grid Visibility="{Binding QueueMessageVisibility}" ColumnSpacing="12">
+    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <TextBlock Text="{Binding QueueMessage}" TextWrapping="Wrap" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite"/>
+    <HyperlinkButton Grid.Column="1" Content="撤销移除" Click="UndoRemove_Click" Visibility="{Binding UndoVisibility}" IsEnabled="{Binding CanUndo}"/>
+    <HyperlinkButton Grid.Column="2" Content="查看任务" Click="Tasks_Click" Visibility="{Binding TasksLinkVisibility}"/>
+   </Grid>
+   <TextBlock Text="{Binding OtherTaskStatus}" Visibility="{Binding OtherTaskVisibility}" Style="{StaticResource SecondaryTextStyle}"/>
+   <Grid x:Name="ProgressCard" Visibility="{Binding ProgressVisibility}" ColumnSpacing="12">
+    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <StackPanel Spacing="4">
+     <TextBlock Text="{Binding Status}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+     <ProgressBar Value="{Binding Percent}" IsIndeterminate="{Binding IsIndeterminate}" AutomationProperties.Name="解析进度" AutomationProperties.AutomationId="TaskProgress"/>
+     <TextBlock Text="{Binding Metrics}" Visibility="{Binding MetricsVisibility}" TextWrapping="Wrap"/>
+    </StackPanel>
+    <Button Grid.Column="1" Content="{Binding CancelText}" Click="Cancel_Click" IsEnabled="{Binding CanCancel}" AutomationProperties.AutomationId="CancelButton"/>
+   </Grid>
+  </StackPanel>
+  <Grid x:Name="Workspace" Grid.Row="3" MinHeight="0">
+   <Grid.ColumnDefinitions><ColumnDefinition x:Name="ListColumn" Width="*"/><ColumnDefinition x:Name="WorkspaceGap" Width="0"/><ColumnDefinition x:Name="EditorColumn" Width="0"/></Grid.ColumnDefinitions>
+   <Grid x:Name="BatchPanel" Visibility="{Binding BatchListVisibility}" RowSpacing="8">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+    <StackPanel Spacing="4">
+     <TextBlock Text="待添加视频" Style="{StaticResource SectionHeadingStyle}"/>
+     <StackPanel Orientation="Horizontal" Spacing="8"><HyperlinkButton Content="全选" Click="SelectBatchAll_Click" IsEnabled="{Binding CanChoose}"/><HyperlinkButton Content="取消全选" Click="SelectBatchNone_Click" IsEnabled="{Binding CanChoose}"/></StackPanel>
+    </StackPanel>
+    <ListView x:Name="BatchList" Grid.Row="1" ItemsSource="{Binding BatchItems}" SelectionMode="None" IsEnabled="{Binding CanChoose}" HorizontalContentAlignment="Stretch" AutomationProperties.Name="待添加的视频" AutomationProperties.AutomationId="BatchList">
+     <ListView.ItemTemplate><DataTemplate>
+      <Border BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="0,10">
+       <Grid ColumnSpacing="8">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" IsEnabled="{Binding CanSelect}" MinWidth="0" Width="32" Padding="0" VerticalAlignment="Top" AutomationProperties.Name="{Binding Title}"/>
+        <StackPanel Grid.Column="1" Spacing="4">
+         <TextBlock Text="正在编辑" Visibility="{Binding EditingVisibility}" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+         <TextBlock Text="{Binding Title}" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" FontWeight="SemiBold" ToolTipService.ToolTip="{Binding Title}"/>
+         <TextBlock Text="{Binding ConfigurationSummary}" Style="{StaticResource SecondaryTextStyle}" ToolTipService.ToolTip="{Binding ConfigurationDetail}"/>
+         <TextBlock Text="{Binding ValidationMessage}" Visibility="{Binding ValidationVisibility}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+         <StackPanel Orientation="Horizontal" Spacing="8">
+          <Button Content="配置" Click="ConfigureBatch_Click" Visibility="{Binding ConfigureVisibility}"/>
+          <Button Content="重试解析" Click="RetryBatch_Click" Visibility="{Binding RetryVisibility}"/>
+          <Button Content="移除" Click="RemoveBatch_Click" ToolTipService.ToolTip="从待添加列表移除，不影响已入队的任务。"/>
+         </StackPanel>
+        </StackPanel>
+       </Grid>
+      </Border>
+     </DataTemplate></ListView.ItemTemplate>
+    </ListView>
+   </Grid>
+   <ScrollViewer x:Name="EditorScroll" Visibility="{Binding EditorVisibility}" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+    <StackPanel x:Name="VideoCard" Spacing="12" Padding="0,0,8,8">
+     <HyperlinkButton Content="返回列表" Click="BackToBatch_Click" Visibility="{Binding BackVisibility}"/>
+     <Grid ColumnSpacing="12">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <Image Source="{Binding Thumbnail}" Visibility="{Binding ThumbnailVisibility}" Width="96" Height="60" Stretch="Uniform" VerticalAlignment="Top" AutomationProperties.Name="视频封面"/>
+      <StackPanel Grid.Column="1" Spacing="4">
+       <TextBlock Text="{Binding Title}" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" IsTextSelectionEnabled="True"/>
+       <TextBlock Text="{Binding Metadata}" Style="{StaticResource SecondaryTextStyle}"/>
+      </StackPanel>
+      <Button Grid.Column="2" Content="更多" VerticalAlignment="Top" Visibility="{Binding BatchVisibility}" IsEnabled="{Binding CanResetBatch}">
+       <Button.Flyout><MenuFlyout>
+        <MenuFlyoutItem Text="将规格用于其他未单独修改的项目" Click="ApplyBatchDefaults_Click"/>
+        <MenuFlyoutItem Text="此项恢复本批次默认规格" Click="ResetBatchDraft_Click"/>
+       </MenuFlyout></Button.Flyout>
+      </Button>
+     </Grid>
+     <Expander Header="{Binding SelectionSummary}" Visibility="{Binding PartsVisibility}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+      <StackPanel Spacing="8">
+       <ListView x:Name="PartsList" ItemsSource="{Binding Parts}" SelectionMode="Multiple" SelectionChanged="Parts_SelectionChanged" IsEnabled="{Binding CanEditSpecification}" MaxHeight="180" AutomationProperties.Name="分 P 列表" AutomationProperties.AutomationId="PartsList">
+        <ListView.ItemTemplate><DataTemplate><TextBlock Text="{Binding Label}" TextWrapping="Wrap"/></DataTemplate></ListView.ItemTemplate>
+       </ListView>
+       <StackPanel Orientation="Horizontal" Spacing="8"><Button Content="全选" Click="SelectAll_Click" IsEnabled="{Binding CanEditSpecification}"/><Button Content="清空选择" Click="SelectNone_Click" IsEnabled="{Binding CanEditSpecification}"/></StackPanel>
+      </StackPanel>
+     </Expander>
+     <Grid ColumnSpacing="12">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <ComboBox x:Name="ModeField" Header="下载内容" SelectedIndex="{Binding ModeIndex, Mode=TwoWay}" IsEnabled="{Binding CanEditSpecification}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="DownloadMode">
+       <ComboBoxItem Content="视频 MP4"/><ComboBoxItem Content="音频 MP3 · 192 kbps"/>
+      </ComboBox>
+      <ComboBox x:Name="FormatField" Grid.Column="1" Header="画质" ItemsSource="{Binding Formats}" DisplayMemberPath="Label" SelectedItem="{Binding SelectedFormat, Mode=TwoWay}" Visibility="{Binding FormatVisibility}" IsEnabled="{Binding CanEditSpecification}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="VideoFormat"/>
+     </Grid>
+     <TextBlock Text="{Binding QualityHint}" Visibility="{Binding FormatVisibility}" Style="{StaticResource SecondaryTextStyle}" AutomationProperties.AutomationId="QualityPreferenceHint"/>
+     <Grid ColumnSpacing="8">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <TextBox Header="保存到" Text="{Binding DownloadDirectory, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanEditSpecification}" AutomationProperties.AutomationId="DownloadDirectory"/>
+      <Button Grid.Column="1" Content="浏览…" Click="Browse_Click" IsEnabled="{Binding CanEditSpecification}" VerticalAlignment="Bottom" AutomationProperties.Name="选择下载目录"/>
+     </Grid>
+    </StackPanel>
+   </ScrollViewer>
+   <ScrollViewer Grid.ColumnSpan="3" Visibility="{Binding ResultVisibility}"><views:DownloadResultView x:Name="ResultCard" AutomationProperties.AutomationId="DownloadResult"/></ScrollViewer>
+  </Grid>
+  <Border Grid.Row="4" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="0,12,0,0">
+   <Grid ColumnSpacing="8">
+    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <StackPanel VerticalAlignment="Center">
+     <TextBlock Text="{Binding SubmissionHint}" TextWrapping="Wrap" Visibility="{Binding SingleSubmitVisibility}" AutomationProperties.LiveSetting="Polite"/>
+     <TextBlock Text="{Binding BatchSummary}" TextWrapping="Wrap" Visibility="{Binding BatchSubmitVisibility}"/>
+    </StackPanel>
+    <HyperlinkButton Grid.Column="1" Content="诊断日志" Click="Logs_Click" Visibility="{Binding LogsVisibility}"/>
+    <Button Grid.Column="2" Content="加入队列" Click="Download_Click" Style="{StaticResource AccentButtonStyle}" IsEnabled="{Binding CanDownload}" Visibility="{Binding SingleSubmitVisibility}" AutomationProperties.AutomationId="DownloadButton"/>
+    <Button Grid.Column="2" Content="{Binding BatchSubmitText}" Click="AddBatch_Click" Style="{StaticResource AccentButtonStyle}" IsEnabled="{Binding CanAddBatch}" Visibility="{Binding BatchSubmitVisibility}" AutomationProperties.AutomationId="AddBatch"/>
+    <Button Grid.Column="2" Content="完成配置" Click="BackToBatch_Click" Visibility="{Binding BackVisibility}"/>
+   </Grid>
+  </Border>
+ </Grid>
 </Page>
