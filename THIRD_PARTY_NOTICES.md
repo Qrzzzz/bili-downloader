@@ -6,6 +6,12 @@
 
 项目从源码运行需要 Python。Python 本身遵循 Python Software Foundation License。发布 Windows 二进制包时，如包含 Python 运行时文件，请确认对应版本的许可证和通知要求。
 
+## 7-Zip GUI 自解压模块（3.9 起）
+
+外层便携 EXE 使用从官方 7-Zip 26.05 x64 发行包提取的 `7z.sfx`，遵循 LGPL-2.1-or-later；仅替换图标、Windows 版本资源、asInvoker 权限声明和目录选择窗口的中文文字，不修改解压代码。该官方模块自身为 32 位，解出的应用仍为 Windows x64。原始下载、模块与构建工具的 SHA-256 固定在 `tools/portable-sfx.lock.json`。源码：[ip7z/7zip 26.05](https://github.com/ip7z/7zip/tree/26.05)，再构建方法见 `tools/portable_sfx.py`。
+
+解压后的 `licenses/7zip/` 包含上游 License、完整 LGPL 2.1 文本及来源/修改说明；联合 SBOM 记录外层模块版本、摘要和源码地址。构建所用 `7zr.exe`、`7z.exe`、`7z.dll` 不复制到应用目录，不在用户系统安装 7-Zip。
+
 ## Windows App SDK / WinUI 3 / .NET
 
 v2.5 使用 Microsoft.WindowsAppSDK 2.4.0、Windows SDK BuildTools 10.0.28000.2705 与 .NET 10。直接和传递 NuGet 版本固定于 `BiliDownloader.WinUI/packages.lock.json`，由自包含发布复制官方运行库。实际 .NET 运行时版本由发布目录 runtimeconfig 与联合 SBOM 记录。

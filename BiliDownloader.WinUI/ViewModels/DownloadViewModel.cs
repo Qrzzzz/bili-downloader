@@ -28,6 +28,30 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     private readonly Dictionary<string, string> submissionTokens = [];
     private BatchInputRow? activeBatch;
     private BatchConfiguration? batchDefaults;
+    private BatchInputRow? removedRow;
+    private int removedIndex;
+    private bool sourceExpanded = true, editingBatch, wideLayout, hasQueued;
+    public bool SourceExpanded { get => sourceExpanded; set => Set(ref sourceExpanded, value); }
+    public bool IsBatch => BatchItems.Count > 1 || BatchItems.Any(r => r.Video is null);
+    public bool EditingBatch { get => editingBatch; set { if (Set(ref editingBatch, value)) { UpdateEditingMarker(); Refresh(); } } }
+    public bool WideLayout { get => wideLayout; set { if (Set(ref wideLayout, value)) { UpdateEditingMarker(); Refresh(); } } }
+    private void UpdateEditingMarker() { foreach (var row in BatchItems) row.IsEditing = row == activeBatch && (EditingBatch || WideLayout); }
+    public string InputHeading => BatchItems.Count == 0 && video is null ? "添加视频链接" : "继续添加链接";
+    public Visibility BatchListVisibility => IsBatch && (WideLayout || !EditingBatch) ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility EditorVisibility => (!IsBatch || WideLayout || EditingBatch) && VideoVisibility == Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility BackVisibility => IsBatch && EditingBatch && !WideLayout ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility BatchSubmitVisibility => IsBatch && (!EditingBatch || WideLayout) ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility SingleSubmitVisibility => !IsBatch && VideoVisibility == Visibility.Visible ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility TasksLinkVisibility => hasQueued ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility UndoVisibility => removedRow is null ? Visibility.Collapsed : Visibility.Visible;
+    public bool CanUndo => removedRow is not null && CanChoose && BatchItems.Count < 50;
+    public int ReadyCount => BatchItems.Count(r => r.IsSelected && r.Ready);
+    public int BlockedCount => BatchItems.Count(r => r.IsSelected && !r.Added && !r.Ready);
+    public string BatchSubmitText => $"添加所选 {ReadyCount} 项";
+    public string BatchSummary => $"{BatchItems.Count} 项 · 可添加 {ReadyCount} 项" + (BlockedCount > 0 ? $" · {BlockedCount} 项需处理" : "");
+    public string SubmissionHint => activeBatch?.Added == true ? "此项目已加入任务。可继续添加其他视频。"
+        : video is null ? "" : SelectedParts.Count == 0 ? "请至少选择一个分 P。" : string.IsNullOrWhiteSpace(directory) ? "请选择保存目录。"
+        : ModeIndex == 0 && SelectedFormat is null ? "请选择此视频可用的画质。" : $"{SelectedParts.Count} 个分 P · {(ModeIndex == 1 ? "MP3" : SelectedFormat?.Label)}";
     internal bool ApplyingConfiguration => applyingPreferences;
     public string BatchEditorHint => activeBatch is null ? "" : activeBatch.Added
         ? "此项目已入队，下载规格已冻结。可继续配置其他项目。"
@@ -38,8 +62,8 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     public ObservableCollection<BatchInputRow> BatchItems { get; } = [];
     public string QueueMessage { get => queueMessage; private set { Set(ref queueMessage, value); Refresh(); } }
     public Visibility QueueMessageVisibility => string.IsNullOrEmpty(QueueMessage) ? Visibility.Collapsed : Visibility.Visible;
-    public Visibility BatchVisibility => BatchItems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-    public bool CanAddBatch => session.Available && !adding && BatchItems.Any(r => r.Video is not null && !r.Added);
+    public Visibility BatchVisibility => IsBatch ? Visibility.Visible : Visibility.Collapsed;
+    public bool CanAddBatch => session.Available && !adding && ReadyCount > 0;
     public ObservableCollection<VideoPart> Parts { get; } = [];
     public ObservableCollection<FormatChoice> Formats { get; } = [];
     public ObservableCollection<PartResult> Results { get; } = [];
@@ -67,7 +91,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     public string ResultDirectory => SelectedOutput is { } path ? Path.GetDirectoryName(path) ?? "" : result?.OutputDir ?? "";
     public bool CanOpenFolder => Directory.Exists(ResultDirectory);
     public string Input { get => input; set { if (CanEditInput && Set(ref input, value)) Invalidate(); } }
-    public int CredentialIndex { get => credentialIndex; set { if (Set(ref credentialIndex, value)) Invalidate(); } }
+    public int CredentialIndex { get => credentialIndex; set { if (Set(ref credentialIndex, value)) { if (BatchItems.Count == 0) Invalidate(); else Refresh(); } } }
     public int ModeIndex
     {
         get => modeIndex;
@@ -81,7 +105,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     }
     private void RememberPreference(object patch)
     {
-        if (rememberPreferences && session.Connected && !session.Closing)
+        if (rememberPreferences && !IsBatch && activeBatch?.IsBatchDraft != true && session.Connected && !session.Closing)
             preferenceSave = session.ExecuteAsync(() => session.UpdateSettingsAsync(patch, fromDownload: true));
     }
     internal void ApplyPreferences(AppSettings settings)
@@ -125,7 +149,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     public bool CanChoose => session.Available && !adding;
     public bool CanEditInput => !session.Closing && !IsDownloading && !adding;
     public bool CanCancel => IsLocalTask && session.CanCancel;
-    public string CancelText => session.CancelRequested ? "正在安全取消…" : "取消当前任务";
+    public string CancelText => session.CancelRequested ? "正在安全取消…" : IsDownloading ? "取消当前任务" : "取消解析";
     private bool IsLocalTask => session.Busy && session.ActiveMethod is "parse.start" or "parse.batch" or "media.thumbnail" or "download.start" or "download.retry";
     public bool IsIndeterminate => IsLocalTask && (!IsDownloading || progressPhase is "preparing" or "merging" or "converting");
     public Visibility VideoVisibility => video is null || showResult || IsDownloading ? Visibility.Collapsed : Visibility.Visible;
@@ -161,6 +185,8 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     public void Invalidate()
     {
         inputRevision++;
+        // The input is an append buffer. Prepared items own their parse and draft.
+        if (BatchItems.Count > 0 || removedRow is not null) { Refresh(); return; }
         activeBatch = null; batchDefaults = null;
         BatchItems.Clear(); QueueMessage = ""; submissionTokens.Clear();
         video = null; Thumbnail = null;
@@ -183,7 +209,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
         if (revision != inputRevision || session.Closing) return;
         ApplyVideo(parsed);
         Status = "解析完成，请选择下载规格。"; Refresh();
-        session.Shell.Notify(Status, InfoBarSeverity.Success);
+        QueueMessage = Status;
         if (parsed.ThumbnailAvailable)
         {
             Status = "正在加载封面…";
@@ -204,6 +230,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
 
     internal void ApplyVideo(VideoInfo parsed)
     {
+        SourceExpanded = false;
         activeBatch = null;
         video = parsed; result = null; showResult = false; Thumbnail = null;
         applyingPreferences = true;
@@ -236,7 +263,6 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
         foreach (var row in BatchItems.Where(r => r.Video is not null && !r.Added && !r.HasOverride))
             row.UseDefaults(batchDefaults with { PartIndices = [DefaultPart(row.Video!)] });
         QueueMessage = "已将当前模式、画质和目录设为共用默认值。单项覆盖与已入队任务保留。";
-        session.Shell.Notify(QueueMessage, InfoBarSeverity.Success);
         Refresh();
     }
     public void ResetBatchDraft()
@@ -245,7 +271,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
         var row = activeBatch!;
         row.UseDefaults(batchDefaults with { PartIndices = [DefaultPart(row.Video!)] });
         LoadBatchDraft(row);
-        session.Shell.Notify("此项目已恢复共用默认配置。", InfoBarSeverity.Success);
+        QueueMessage = "此项目已恢复本批次的默认规格。";
     }
     private void LoadBatchDraft(BatchInputRow row)
     {
@@ -254,6 +280,8 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
         try
         {
             activeBatch = row;
+            UpdateEditingMarker();
+            Thumbnail = row.Thumbnail;
             var draft = row.Draft!;
             ModeIndex = draft.ModeIndex; preferredHeight = draft.Height; DownloadDirectory = draft.Directory;
             SelectedFormat = ResolveFormat(Formats);
@@ -266,33 +294,105 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     public async Task ParseBatchAsync()
     {
         if (!CanParse) return;
-        batchDefaults = CurrentConfiguration() with { PartIndices = [] };
-        activeBatch = null; submissionTokens.Clear();
-        long revision = ++inputRevision;
-        BatchItems.Clear(); QueueMessage = ""; video = null; showResult = false;
-        Status = "正在逐项解析…"; Refresh();
-        var batch = Protocol.Read<BatchParseResult>(await session.RunAsync("parse.batch", new { input, credential_mode = CredentialIndex == 0 ? "saved" : "anonymous" }));
-        if (revision != inputRevision || session.Closing) return;
-        foreach (var item in batch.Items)
+        SaveBatchDraft();
+        batchDefaults ??= CurrentConfiguration() with { PartIndices = [] };
+        int access = CredentialIndex;
+        adding = true; session.Shell.IsOpen = false; QueueMessage = ""; Refresh();
+        try
         {
-            var row = new BatchInputRow(item);
-            if (item.Video is { Parts.Length: > 0 } parsed)
-                row.UseDefaults(batchDefaults with { PartIndices = [DefaultPart(parsed)] });
-            BatchItems.Add(row);
+            var retained = BatchItems.Select(r => r.Video?.ParseId).Append(removedRow?.Video?.ParseId).Where(id => id is not null).Distinct().ToArray();
+            var inspected = Protocol.Read<BatchParseResult>(await session.Client.RequestAsync("parse.inspect", new { input, retained_parse_ids = retained }));
+            var pending = inspected.Items.Where(i => !string.IsNullOrEmpty(i.Message) || !BatchItems.Any(r => r.Input == i.Input && r.CredentialIndex == access)).ToArray();
+            if (BatchItems.Count + pending.Length > 50) { QueueMessage = "本页最多保留 50 项，请移除已添加的项目后继续。"; return; }
+            int addedCount = 0;
+            for (int i = 0; i < pending.Length; i++)
+            {
+                Status = $"正在解析 {i + 1} / {pending.Length}…"; Refresh();
+                var item = pending[i];
+                if (string.IsNullOrEmpty(item.Message))
+                {
+                    var parsed = Protocol.Read<BatchParseResult>(await session.RunAsync("parse.batch", new { input = item.Input, credential_mode = access == 0 ? "saved" : "anonymous" }));
+                    item = parsed.Items.Single();
+                }
+                if (session.Closing) return;
+                if (item.Video is { } candidate && BatchItems.Any(r => r.Video?.RawId == candidate.RawId && r.Video.CurrentPartIndex == candidate.CurrentPartIndex && r.CredentialIndex == access)) continue;
+                var row = new BatchInputRow(item) { CredentialIndex = access };
+                if (item.Video is { Parts.Length: > 0 } info) row.UseDefaults(batchDefaults with { PartIndices = [DefaultPart(info)] });
+                AttachRow(row); BatchItems.Add(row); addedCount++;
+                if (IsBatch) foreach (var existing in BatchItems) existing.IsBatchDraft = true;
+                Refresh();
+            }
+            input = ""; Refresh();
+            QueueMessage = addedCount == 0 ? "这些链接已在列表中，保留原有配置。" : $"已解析 {addedCount} 项。";
+            if (BatchItems.Count == 1 && BatchItems[0].Video is { ThumbnailAvailable: true } thumbnailInfo)
+            {
+                LoadBatchDraft(BatchItems[0]);
+                Status = "正在加载封面…";
+                try
+                {
+                    var image = await session.RunAsync("media.thumbnail", new { parse_id = thumbnailInfo.ParseId });
+                    BatchItems[0].Thumbnail = await WindowsShellService.DecodeImageAsync(image.GetProperty("base64").GetString()!);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) { AppendLog("封面加载失败，视频仍可下载。"); FrontendLog.Write(ex); }
+            }
         }
-        QueueMessage = $"解析成功 {BatchItems.Count(r => r.Video is not null)} / {BatchItems.Count}。默认只选择链接指向的分 P，可逐项配置。";
-        var first = BatchItems.FirstOrDefault(r => r.Video is not null);
-        if (first is not null) LoadBatchDraft(first);
-        int succeeded = BatchItems.Count(r => r.Video is not null);
-        session.Shell.Notify(QueueMessage, succeeded == BatchItems.Count && succeeded > 0 ? InfoBarSeverity.Success
-            : succeeded == 0 ? InfoBarSeverity.Error : InfoBarSeverity.Warning);
-        Refresh();
+        finally
+        {
+            adding = false;
+            var first = activeBatch ?? BatchItems.FirstOrDefault(r => r.Video is not null);
+            if (first is not null) { LoadBatchDraft(first); Thumbnail = first.Thumbnail; }
+            SourceExpanded = BatchItems.Count == 0;
+            EditingBatch = false;
+            Refresh();
+        }
+    }
+
+    private void AttachRow(BatchInputRow row) => row.SelectionChanged = Refresh;
+    public void SelectBatch(bool selected)
+    { if (!CanChoose) return; foreach (var row in BatchItems.Where(r => !r.Added)) row.IsSelected = selected; Refresh(); }
+    public void RemoveBatch(BatchInputRow row)
+    {
+        if (!CanChoose || !BatchItems.Contains(row)) return;
+        SaveBatchDraft(); removedRow = row; removedIndex = BatchItems.IndexOf(row); BatchItems.Remove(row);
+        if (activeBatch == row)
+        {
+            activeBatch = null; video = null; Thumbnail = null;
+            var next = BatchItems.FirstOrDefault(r => r.Video is not null);
+            if (next is not null) LoadBatchDraft(next);
+        }
+        EditingBatch = false; SourceExpanded = BatchItems.Count == 0;
+        QueueMessage = "已从待添加列表移除，可撤销。已入队的任务不受影响。"; Refresh();
+    }
+    public void UndoRemove()
+    {
+        if (!CanUndo) return;
+        var row = removedRow!; BatchItems.Insert(Math.Min(removedIndex, BatchItems.Count), row); removedRow = null;
+        if (video is null && row.Video is not null) LoadBatchDraft(row);
+        SourceExpanded = false; QueueMessage = "已恢复项目及原有配置。"; Refresh();
+    }
+    public async Task RetryBatchAsync(BatchInputRow row)
+    {
+        if (!CanChoose || !row.CanRetry || !BatchItems.Contains(row)) return;
+        adding = true; Status = "正在重试解析…"; session.Shell.IsOpen = false; Refresh();
+        try
+        {
+            var parsed = Protocol.Read<BatchParseResult>(await session.RunAsync("parse.batch", new { input = row.Input, credential_mode = row.CredentialIndex == 0 ? "saved" : "anonymous" }));
+            row.Replace(parsed.Items.Single());
+            if (row.Video is { Parts.Length: > 0 } info)
+            {
+                row.UseDefaults((batchDefaults ?? CurrentConfiguration()) with { PartIndices = [DefaultPart(info)] });
+                if (video is null) LoadBatchDraft(row);
+            }
+            QueueMessage = row.Video is null ? "解析仍未成功，请查看该项提示。" : "此项解析成功，其他项目配置已保留。";
+        }
+        finally { adding = false; Refresh(); }
     }
 
     public void ConfigureBatch(BatchInputRow row)
     {
         if (row.CanConfigure && row.Draft is not null && CanChoose)
-        { SaveBatchDraft(); LoadBatchDraft(row); QueueMessage = "正在配置：" + row.Title; }
+        { SaveBatchDraft(); LoadBatchDraft(row); EditingBatch = true; Refresh(); }
     }
 
     private async Task<TaskReply> EnqueueVideoAsync(VideoInfo parsed, BatchConfiguration draft, string? formatId)
@@ -315,9 +415,9 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
         {
             var reply = await EnqueueVideoAsync(video!, draft, draft.ModeIndex == 0 ? SelectedFormat?.FormatId : null);
             QueueMessage = reply.Duplicate ? "此任务已存在，可在任务页查看。" : "已加入队列。可继续添加视频，或前往任务页查看。";
+            hasQueued = true;
             foreach (var row in BatchItems.Where(r => r.Video?.ParseId == video!.ParseId)) row.MarkAdded();
             await session.Tasks.ReloadAsync();
-            session.Shell.Notify(QueueMessage, reply.Duplicate ? InfoBarSeverity.Informational : InfoBarSeverity.Success);
         }
         finally { adding = false; Refresh(); }
     }
@@ -326,7 +426,7 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
     {
         if (!CanAddBatch) return;
         SaveBatchDraft();
-        var submissions = BatchItems.Where(r => r.Video is not null && !r.Added)
+        var submissions = BatchItems.Where(r => r.IsSelected && r.Ready)
             .Select(r => (Row: r, Draft: r.Draft! with { PartIndices = r.Draft!.PartIndices.ToArray() })).ToArray();
         adding = true; Refresh();
         int count = 0;
@@ -347,9 +447,9 @@ public sealed class DownloadViewModel(ApplicationSession session) : ViewModelBas
                 }
                 catch (BackendException ex) { row.SetMessage(ex.Message); }
             }
-            QueueMessage = $"已加入 {count} 个任务。未成功的项目可查看提示后重试。";
+            hasQueued |= count > 0;
+            QueueMessage = $"已加入 {count} 个任务。" + (BlockedCount > 0 ? $"另有 {BlockedCount} 项需处理，请查看对应提示。" : "");
             await session.Tasks.ReloadAsync();
-            session.Shell.Notify(QueueMessage, count == submissions.Length ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
         }
         finally { adding = false; Refresh(); }
     }
@@ -417,14 +517,38 @@ public sealed record BatchConfiguration(int ModeIndex, int? Height, string Direc
 
 public sealed class BatchInputRow(BatchParseItem item) : ViewModelBase
 {
+    public bool IsBatchDraft { get; set; }
+    private bool isEditing;
+    public bool IsEditing { get => isEditing; set { if (Set(ref isEditing, value)) Refresh(); } }
+    public Visibility EditingVisibility => IsEditing ? Visibility.Visible : Visibility.Collapsed;
+    public BitmapImage? Thumbnail { get; set; }
+    private bool isSelected = true;
+    public Action? SelectionChanged { get; set; }
+    public bool IsSelected { get => isSelected; set { if (Set(ref isSelected, value)) SelectionChanged?.Invoke(); } }
+    public string Input => item.Input;
+    public int CredentialIndex { get; init; } = 1;
     public VideoInfo? Video => item.Video;
     public string Title => item.Video?.Title ?? item.Input;
     public string Message { get; private set; } = item.Message;
     public bool Added { get; private set; }
     public bool HasOverride { get; private set; }
     public BatchConfiguration? Draft { get; private set; }
-    public string ConfigurationSummary => Draft?.Summary(Added ? "已冻结" : HasOverride ? "单项覆盖" : "共用默认值") ?? "";
+    public string ConfigurationSummary => Draft is null ? "" : $"{(Draft.ModeIndex == 1 ? "MP3" : Draft.Height is { } h ? $"MP4 · {h}p" : "MP4 · 最高可用")} · {Draft.PartIndices.Length} 个分 P · {(CredentialIndex == 0 ? "登录态" : "匿名")} · {Draft.Directory.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries).LastOrDefault()}";
+    public string ConfigurationDetail => Draft?.Summary("下载规格") ?? Input;
+    public Visibility ValidationVisibility => string.IsNullOrEmpty(ValidationMessage) ? Visibility.Collapsed : Visibility.Visible;
     public bool CanConfigure => Video is not null && !Added;
+    public bool CanSelect => !Added;
+    public bool CanRetry => Video is null && Input.StartsWith("https://", StringComparison.Ordinal);
+    public Visibility RetryVisibility => CanRetry ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility ConfigureVisibility => CanConfigure ? Visibility.Visible : Visibility.Collapsed;
+    public string ValidationMessage => Added ? "已加入任务" : Video is null ? Message
+        : Draft is null || Draft.PartIndices.Length == 0 ? "请选择分 P"
+        : string.IsNullOrWhiteSpace(Draft.Directory) ? "请选择保存目录"
+        : Draft.ModeIndex == 0 && !Video.Formats.Any(f => f.Height == Draft.Height) ? $"所选画质不可用（{Draft.Height}p），请选择其他画质"
+        : Message;
+    public bool Ready => Video is not null && !Added && Draft is { PartIndices.Length: > 0 } && !string.IsNullOrWhiteSpace(Draft.Directory)
+        && (Draft.ModeIndex == 1 || Video.Formats.Any(f => f.Height == Draft.Height));
+    public void Replace(BatchParseItem value) { item = value; Message = value.Message; Refresh(); }
     public void MarkAdded() { Added = true; Message = "已加入队列"; Refresh(); }
     public void SetMessage(string text) { Message = text; Refresh(); }
     public void UseDefaults(BatchConfiguration value)
@@ -433,6 +557,6 @@ public sealed class BatchInputRow(BatchParseItem item) : ViewModelBase
     {
         if (Added || Draft is null || (Draft.ModeIndex == value.ModeIndex && Draft.Height == value.Height &&
             Draft.Directory == value.Directory && Draft.PartIndices.SequenceEqual(value.PartIndices))) return;
-        Draft = value; HasOverride = true; Message = "草稿已保留"; Refresh();
+        Draft = value; HasOverride = true; Message = ""; Refresh();
     }
 }

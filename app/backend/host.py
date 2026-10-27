@@ -94,6 +94,7 @@ class Backend:
         self.closing = False
         self.lock = threading.RLock()
         self.parses: dict[str, ParsedVideo] = {}
+        self.retained_parse_ids: set[str] = set()
         self.tasks: TaskManager | None = None
         self.task_seq = 0
         self.task_event_lock = threading.Lock()
@@ -112,7 +113,8 @@ class Backend:
     def remember_parse(self, parsed: ParsedVideo) -> None:
         self.parses[parsed.id] = parsed
         while len(self.parses) > 100:
-            del self.parses[next(iter(self.parses))]
+            oldest = next(key for key in self.parses if key not in self.retained_parse_ids)
+            del self.parses[oldest]
 
     def reply(self, id: str | None, result: dict | None = None, error: dict | None = None) -> None:
         body = {"v": VERSION, "type": "response", "id": id, "ok": error is None}
@@ -187,6 +189,14 @@ class Backend:
             fields(params, set())
             self.invalidate()
             return {"input_revision": self.revision}, None
+        if method == "parse.inspect":
+            fields(params, {"input", "retained_parse_ids"}, {"input"})
+            retained = params.get("retained_parse_ids", [])
+            if not isinstance(retained, list) or len(retained) > 51 or any(not isinstance(key, str) or len(key) > 80 for key in retained):
+                raise ProtocolError("invalid_params", "保留的解析项目无效。")
+            rows = extract_video_inputs(string(params, "input", limit=24000))
+            self.retained_parse_ids = set(retained) & self.parses.keys()
+            return {"items": rows}, None
         if method == "settings.get":
             fields(params, set())
             return asdict(self.config), None

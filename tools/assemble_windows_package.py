@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-import zipfile
 import importlib.metadata
 import sys
 from pathlib import Path
@@ -70,12 +69,7 @@ def assemble(frontend: Path, backend: Path, metadata: Path, output: Path, versio
     for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):
         shutil.copy2(root / name, output / name)
     collect_licenses(output, root / "BiliDownloader.WinUI/obj/project.assets.json")
-    archive = output.with_suffix(output.suffix + ".zip")
-    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zipped:
-        for path in sorted(output.rglob("*")):
-            if path.is_file():
-                zipped.write(path, Path(output.name) / path.relative_to(output))
-    return archive
+    return output
 
 
 def main() -> int:

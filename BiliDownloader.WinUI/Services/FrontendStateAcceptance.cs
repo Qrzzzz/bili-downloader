@@ -10,6 +10,11 @@ namespace BiliDownloader.WinUI.Services;
 // Explicit --ui-regression only. The peer is a test fixture, outside the shipped package.
 internal static class FrontendStateAcceptance
 {
+    private static Exception Failure(string name)
+    {
+        File.WriteAllText(Path.Combine(Environment.GetEnvironmentVariable("BILI_ACCEPTANCE_OUTPUT")!, "state-failure.txt"), name);
+        return new InvalidOperationException(name);
+    }
     internal static async Task<string[]> RunAsync(DispatcherQueue dispatcher, Func<DownloadViewModel, string, Task>? snapshot = null)
     {
         var python = Environment.GetEnvironmentVariable("BILI_BACKEND_PYTHON")!;
@@ -49,7 +54,7 @@ internal static class FrontendStateAcceptance
 
             parse = model.ParseAsync(); await WaitUntil(() => session.CanCancel); await CompleteAsync(video); await parse;
             Check(model.CanDownload && model.SelectedParts.SetEquals([1]), "parse_selects_current_part");
-            Check(session.Shell.IsOpen && session.Shell.Severity == InfoBarSeverity.Success, "parse_success_has_success_bar");
+            Check(!session.Shell.IsOpen && model.QueueMessage.Contains("解析完成"), "parse_success_has_one_inline_message");
             model.SelectedParts.Clear(); model.Refresh();
             Check(!model.CanDownload, "empty_selection_disables_download");
             model.SelectedParts.Add(1); model.ModeIndex = 1;
@@ -270,9 +275,80 @@ internal static class FrontendStateAcceptance
             Check(!session.Busy, "malformed_terminal_shutdown_finishes");
             await CheckWorkerFailuresAsync(dispatcher, python, source, checks);
             await CheckTaskFrontendAsync(dispatcher, python, source, checks);
+            await CheckDownloadComposerAsync(dispatcher, python, source, checks);
             return checks.ToArray();
         }
         finally { if (!session.Closing) await session.ShutdownAsync(); }
+    }
+
+    private static async Task CheckDownloadComposerAsync(DispatcherQueue dispatcher, string python, string source, List<string> checks)
+    {
+        var start = new ProcessStartInfo(python) { WorkingDirectory = source, UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        start.ArgumentList.Add(Path.Combine(source, "tests", "fixtures", "task_peer.py"));
+        string profile = Path.Combine(Environment.GetEnvironmentVariable("BILI_ACCEPTANCE_OUTPUT")!, "composer-profile", Guid.NewGuid().ToString("N"));
+        start.Environment["LOCALAPPDATA"] = Path.Combine(profile, "Local");
+        start.Environment["APPDATA"] = Path.Combine(profile, "Roaming");
+        start.Environment["PYTHONUTF8"] = "1";
+        var session = new ApplicationSession(new BackendClient(() => Process.Start(start)!)) { Dispatcher = dispatcher };
+        void Check(bool ok, string name) { if (!ok) throw Failure(name); checks.Add(name); }
+        try
+        {
+            await session.InitializeAsync(); await session.Tasks.TogglePauseAsync();
+            var model = session.Download;
+            model.Input = "BV1234567810"; await model.ParseBatchAsync();
+            var first = model.BatchItems.Single();
+            Check(model.CanDownload && !model.IsBatch && !model.SourceExpanded, "composer_single_uses_unified_parse_and_compact_source");
+            model.SelectedFormat = model.Formats.Single(f => f.Height == 720);
+            await model.WaitForPreferenceSaveAsync();
+            string parseId = first.Video!.ParseId;
+            model.Input = "BV1234567810\nBV1234567811";
+            Check(first.Draft!.Height == 720 && model.CanDownload, "composer_typing_keeps_prepared_draft");
+            await model.ParseBatchAsync();
+            Check(model.BatchItems.Count == 2 && first.Video.ParseId == parseId && first.Draft.Height == 720, "composer_append_skips_existing_link_and_preserves_spec");
+            var second = model.BatchItems[1]; model.ConfigureBatch(second); model.ModeIndex = 1;
+            await model.WaitForPreferenceSaveAsync();
+            var settings = Protocol.Read<AppSettings>(await session.Client.RequestAsync("settings.get"));
+            Check(settings.DownloadMode == "audio_video" && settings.PreferredQuality == 720, "composer_batch_override_does_not_change_global_preferences");
+            second.IsSelected = false;
+            Check(model.ReadyCount == 1, "composer_selection_controls_submit_count");
+            model.RemoveBatch(second);
+            model.ModeIndex = 1;
+            await model.WaitForPreferenceSaveAsync();
+            Check(Protocol.Read<AppSettings>(await session.Client.RequestAsync("settings.get")).DownloadMode == "audio_video", "composer_last_remaining_batch_draft_still_does_not_change_preferences");
+            model.ModeIndex = 0;
+            model.UndoRemove();
+            Check(model.BatchItems[1] == second && second.Draft!.ModeIndex == 1 && !second.IsSelected, "composer_undo_restores_draft_order_and_selection");
+            model.CredentialIndex = 0;
+            Check(model.BatchItems.Count == 2 && first.CredentialIndex == 1, "composer_access_change_only_affects_new_links");
+            model.CredentialIndex = 1;
+            await model.EnqueueBatchAsync();
+            Check(first.Added && !second.Added && session.Tasks.Items.Count == 1 && model.TasksLinkVisibility == Visibility.Visible, "composer_only_selected_ready_item_is_submitted");
+            model.SelectBatch(false);
+            Check(!model.CanAddBatch && model.ReadyCount == 0, "composer_no_selection_disables_submit");
+            model.Input = "BV1234567819"; await model.ParseBatchAsync();
+            var failed = model.BatchItems.Last();
+            Check(failed.CanRetry && model.BlockedCount == 1 && !model.CanAddBatch, "composer_failed_parse_has_retry_and_preflight_reason");
+            await model.RetryBatchAsync(failed);
+            Check(failed.Video is not null && failed.Ready && first.Added && second.Draft!.ModeIndex == 1, "composer_retry_repairs_only_failed_item");
+            model.ConfigureBatch(failed); model.SelectedParts.Clear(); model.SaveBatchDraft(); model.Refresh();
+            Check(model.BlockedCount == 1 && failed.ValidationMessage.Contains("分 P") && !model.CanAddBatch, "composer_empty_parts_block_before_submission");
+            model.SelectedParts.Add(1); model.SaveBatchDraft(); model.Refresh();
+            int beforeCancel = model.BatchItems.Count;
+            model.Input = "BV1234567812\nBV1234567818\nBV1234567813";
+            Task parsing = model.ParseBatchAsync();
+            var watch = Stopwatch.StartNew();
+            while (!(model.Status.Contains("2 / 3") && session.CanCancel))
+            { if (watch.Elapsed > TimeSpan.FromSeconds(8)) throw new TimeoutException("Composer cancel fixture not ready"); await Task.Delay(10); }
+            await session.CancelAsync();
+            try { await parsing; throw new InvalidOperationException("Expected parse cancellation"); }
+            catch (OperationCanceledException) { }
+            Check(model.BatchItems.Count == beforeCancel + 1 && model.BatchItems.Last().Video!.RawId == "BV1234567812", "composer_cancel_retains_completed_rows");
+            await model.ParseBatchAsync();
+            Check(model.BatchItems.Count == beforeCancel + 3 && model.CanChoose, "composer_resume_input_skips_already_parsed_rows");
+            Check(first.Added && second.Draft!.ModeIndex == 1, "composer_append_cancel_retry_keep_existing_drafts");
+        }
+        finally { await session.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8)); }
     }
 
     private static async Task CheckWorkerFailuresAsync(DispatcherQueue dispatcher, string python, string source, List<string> checks)
@@ -317,7 +393,7 @@ internal static class FrontendStateAcceptance
         start.Environment["PYTHONUTF8"] = "1";
         var client = new BackendClient(() => Process.Start(start)!);
         var session = new ApplicationSession(client) { Dispatcher = dispatcher };
-        void Check(bool ok, string name) { if (!ok) throw new InvalidOperationException(name); checks.Add(name); }
+        void Check(bool ok, string name) { if (!ok) throw Failure(name); checks.Add(name); }
         try
         {
             await session.InitializeAsync();
@@ -328,7 +404,7 @@ internal static class FrontendStateAcceptance
             await session.Download.ParseBatchAsync();
             Check(session.Download.BatchItems.Count == 2 && session.Download.CanAddBatch, "native_vm_batch_ready");
             await session.Download.EnqueueBatchAsync();
-            Check(session.Tasks.Items.Count == 1 && !session.Download.BatchItems[1].Added && session.Download.BatchItems[1].Message.Contains("画质不可用"),
+            Check(session.Tasks.Items.Count == 1 && !session.Download.BatchItems[1].Added && session.Download.BatchItems[1].ValidationMessage.Contains("画质不可用"),
                 "native_vm_batch_skips_unavailable_preference_without_downgrade");
             session.Settings.PreferredQuality = session.Settings.QualityOptions.Single(q => q.Height is null);
             await session.Settings.SaveAsync();
@@ -376,7 +452,7 @@ internal static class FrontendStateAcceptance
             session.Download.ConfigureBatch(a);
             Check(session.Download.ModeIndex == 0 && session.Download.SelectedFormat?.Height == 1080 &&
                 session.Download.DownloadDirectory.EndsWith("draft-a") && session.Download.SelectedParts.SetEquals([1, 2]) &&
-                a.ConfigurationSummary.Contains("单项覆盖"), "native_vm_a_b_a_restores_full_draft");
+                a.HasOverride, "native_vm_a_b_a_restores_full_draft");
             await session.Download.EnqueueBatchAsync();
             Check(a.Added && !b.Added && b.Draft?.ModeIndex == 1 && b.Draft.Directory == blockedDirectory &&
                 session.Tasks.Items.Count == 4, "native_vm_partial_create_failure_retains_draft");
@@ -389,7 +465,7 @@ internal static class FrontendStateAcceptance
                 "native_vm_retry_freezes_each_spec_without_duplicate_success");
             session.Download.Input = "BV1234567895\nBV1234567896";
             await session.Download.ParseBatchAsync();
-            a = session.Download.BatchItems[0]; b = session.Download.BatchItems[1];
+            a = session.Download.BatchItems[^2]; b = session.Download.BatchItems[^1];
             session.Download.ConfigureBatch(a); session.Download.ModeIndex = 1;
             session.Download.DownloadDirectory = Path.Combine(profile, "common");
             session.Download.ApplyBatchDefaults();
@@ -399,7 +475,7 @@ internal static class FrontendStateAcceptance
             Check(!a.HasOverride && session.Download.SelectedParts.SetEquals([1]), "native_vm_reset_restores_default_part");
             session.Download.SelectedParts.Clear(); session.Download.SaveBatchDraft();
             await session.Download.EnqueueBatchAsync();
-            Check(!a.Added && b.Added && a.Message.Contains("分 P"), "native_vm_empty_selection_is_per_item_failure");
+            Check(!a.Added && b.Added && a.ValidationMessage.Contains("分 P"), "native_vm_empty_selection_is_per_item_failure");
         }
         finally { await session.ShutdownAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
     }

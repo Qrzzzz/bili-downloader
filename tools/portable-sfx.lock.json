@@ -1,0 +1,24 @@
+{
+  "version": "26.05",
+  "source": "https://github.com/ip7z/7zip/tree/26.05",
+  "downloads": {
+    "7zr.exe": {
+      "url": "https://github.com/ip7z/7zip/releases/download/26.05/7zr.exe",
+      "sha256": "9bf582b894dfa665f852d7e9112b02290a1c303c2d95a21fcdc41ffcb03143b7"
+    },
+    "7z2605-x64.exe": {
+      "url": "https://github.com/ip7z/7zip/releases/download/26.05/7z2605-x64.exe",
+      "sha256": "fd99e86f57d8f429ef5ed045bf98315af962e2309b0f1ba87a147a44c71647d0"
+    },
+    "COPYING.LGPL-2.1.txt": {
+      "url": "https://raw.githubusercontent.com/ip7z/7zip/26.05/DOC/copying.txt",
+      "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+    }
+  },
+  "extracted": {
+    "7z.exe": "94205cfc054dd3bbeb978905bc619a65b3f04e9e73bb2717841110b6f46d962e",
+    "7z.dll": "78bf6b668d75801e3aa180b4ccb16e6d8395fba80dec8a065055bb6f8dfabb82",
+    "7z.sfx": "5e2b45e773df40fec504e1afe7e511c8815057f8edb92e8b57e5015dd3bf760a",
+    "License.txt": "519ac0a4bded9c18ea02e0afb71f663d8c47373bd9facd3ac96a79f51d77765d"
+  }
+}

@@ -1,6 +1,6 @@
 # IPC v2：持久任务与并行队列
 
-应用版本 3.5，协议版本 2。私有 stdin/stdout JSONL 的编码、大小、字段拒绝、错误分类、ACK 在 worker 事件之前、单操作终态、EOF 收尾和前后端精确版本握手继续沿用 [IPC v1](ipc-v1.md)。v1 客户端不能连接 v2 后端。
+应用版本 3.10，协议版本 2。私有 stdin/stdout JSONL 的编码、大小、字段拒绝、错误分类、ACK 在 worker 事件之前、单操作终态、EOF 收尾和前后端精确版本握手继续沿用 [IPC v1](ipc-v1.md)。v1 客户端不能连接 v2 后端。
 
 ## 状态所有权
 
@@ -14,6 +14,7 @@ SQLite `tasks.sqlite3` 存储任务快照、执行轮次、逐 P 结果和有界
 
 | method | params | result |
 | --- | --- | --- |
+| parse.inspect | input、retained_parse_ids? | 离线识别、规范化与去重；`{items:[{input,message}]}`，不联网。可保留当前 50 项及 1 项撤销记录的解析标识，最多 51 个；缓存总上限仍为 100 |
 | parse.batch | input、credential_mode | 异步 operation；终态 `{items:[{input,message,video?}]}` |
 | tasks.create | parse_id、part_indices、format_id?、download_mode、download_dir、token | `{task,duplicate}`；立即确认持久任务，不等待执行 |
 | tasks.list | {} | `{tasks,paused,max_parallel,revision}`，列表摘要 |

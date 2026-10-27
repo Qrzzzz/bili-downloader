@@ -2,7 +2,7 @@
 
 # 📺 Bili Downloader Lite
 
-**3.8**：补齐各页面的原生成功、警告和错误提示，修复检查更新受 GitHub 限流影响的问题，并说明暂存清理与还原的作用。见 [3.8 发布说明](./docs/releases/v3.8.md)。
+**3.10**：整理添加下载页，统一链接解析，支持保留配置继续添加、批量勾选、移除撤销与单项重试；提供中文自解压 EXE。见 [3.10 发布说明](./docs/releases/v3.10.md)。
 
 ### 简洁、原生的 Bilibili 视频解析与下载工具
 
@@ -11,7 +11,7 @@
 <p>
   <strong>导航</strong><br/>
   <a href="https://github.com/Qrzzzz/bili-downloader/releases/latest">下载最新版</a> ·
-  <a href="./docs/releases/v3.8.md">v3.8 发布说明</a> ·
+  <a href="./docs/releases/v3.10.md">v3.10 发布说明</a> ·
   <a href="#主要功能">主要功能</a> ·
   <a href="#从源码运行">从源码运行</a> ·
   <a href="./SECURITY.md">安全策略</a> ·
@@ -34,15 +34,21 @@
 
 ## 📦 下载与使用
 
-**v3.8** 在解析、入队、任务结果、账号、诊断、更新、复制和文件操作中提供原生结果提示。暂存弹窗也会直接显示处理结果；文件移入暂存回收区后可还原，仍占用磁盘。见 [3.8 发布说明](./docs/releases/v3.8.md) 和 [验证记录](./docs/validation/v3.8.md)。
+**v3.10** 提供便携自解压包：选择目录、解压，再运行解出的应用。无需安装，也不会每次启动都重复解压。见 [3.10 发布说明](./docs/releases/v3.10.md) 和 [验证记录](./docs/validation/v3.10.md)。
 
-Windows x64 正式版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest) 获取，以 Release 的版本号为准。3.8 使用以下资产名称：
+Windows x64 正式版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-downloader/releases/latest) 获取，以 Release 的版本号为准。3.10 使用以下资产名称：
 
-* 完整应用包：`BiliDownloader.v3.8.win-x64.zip`
-* 软件物料清单：`BiliDownloader.v3.8.sbom.json`
+本版只提供 EXE 应用包，另附 SBOM 与 SHA-256 校验文件。
+
+* 推荐自解压包：`BiliDownloader.v3.10.win-x64.exe`
+* 软件物料清单：`BiliDownloader.v3.10.sbom.json`
 * 校验文件：`SHA256SUMS`
 
-完整解压对应版本的 ZIP 后运行其中的 `BiliDownloader.v3.8.exe`，保留相邻的后端 EXE 和运行库。包中包含 .NET、Windows App SDK 和 Python 运行时，无需另装这些运行环境。下载前请自行准备合法来源的 `ffmpeg.exe`，并选择以下任一方式放置：
+双击外层 `BiliDownloader.v3.10.win-x64.exe`，在中文窗口选择目录并点击“解压”，再打开生成的 `BiliDownloader.v3.10.win-x64` 文件夹，运行其中的 `BiliDownloader.v3.10.exe`。外层 EXE 只负责解压，不会自动启动应用；以后直接运行文件夹中的程序即可。
+
+请优先解压到新的可写目录，避免覆盖正在使用的程序。更新版本时保留旧目录，确认新版本可用后再自行处理；用户提供的 FFmpeg 不会自动从旧目录复制。取消或解压失败可能留下部分文件，应换用空目录重新解压，不要运行未完整解出的文件。配置、凭据和任务记录仍使用原有用户数据目录，下载文件也不会被解压器修改。
+
+保留应用相邻的后端 EXE 和运行库。包中包含 .NET、Windows App SDK 和 Python 运行时，无需另装这些运行环境。下载前请自行准备合法来源的 `ffmpeg.exe`，并选择以下任一方式放置：
 
 1. 放入主程序相邻的 `tools\ffmpeg.exe`。
 2. 将 FFmpeg 所在的绝对目录加入系统 `PATH`。
@@ -51,14 +57,15 @@ Windows x64 正式版本请从 [GitHub Releases](https://github.com/Qrzzzz/bili-
 
 ### 基本流程
 
-1. 运行完整解压目录中的 `BiliDownloader.v3.8.exe`。
-2. 在“添加下载”粘贴链接、BV/av 号或分享文本。单视频点击“解析”，多个视频点击“批量解析多个链接”，一次最多 50 个。
+1. 运行完整解压目录中的 `BiliDownloader.v3.10.exe`。
+2. 在“添加下载”粘贴链接、BV/av 号或分享文本，点击“解析链接”。自动识别一个或多个视频；Enter 换行，Ctrl+Enter 解析，页面最多保留 50 项。
 3. 如需账号权限下的更多可用画质，可在“账号”页使用应用内二维码扫码登录。
-4. 选择 MP4 或 MP3、分 P、画质和目录后“加入队列”。批量项目初始使用共用默认值和链接指向的分 P；单项配置自动保留草稿，全部加入采用各自配置。共用默认值只更新未覆盖项目；入队后冻结规格。切页保留草稿，重新解析、更换输入/账号模式或退出会清除本批次草稿。
-5. 前往“任务”查看并行进度、结果、文件和日志，按需取消、重试失败项或继续未完成项；可同时回到添加页继续解析。
-6. 默认同时下载 2 个任务，设置支持 1—3 个。暂停队列不打断在途任务；重启后需确认继续，移除记录保留媒体文件。
-7. 下载页主动选择的 MP4/MP3 模式和画质会自动保存；在“设置 → 下载偏好”可直接调整，或关闭自动记忆。关闭后，本次会话的选择不会覆盖保存的偏好。指定画质不可用时需重新选择，MP3 不会清除视频画质偏好；设置变化不影响已入队任务。
-8. “任务 → 暂存管理”扫描当前及任务使用过的下载目录。活动任务、可恢复断点与异常路径受保护；孤立残留和已完成暂存可多选清理。清理仅移入同卷 `.bili-tasks-recycle`，不会释放磁盘空间；可在此还原，或打开回收区自行删除以释放空间。成功后的空暂存目录自动回收。
+4. 选择 MP4 或 MP3、分 P、画质和目录后“加入队列”。多个视频可勾选后“添加所选 N 项”；画质不可用、未选分 P 或缺少目录会在提交前标出。点击“配置”修改单项，窄窗口完成后返回列表。
+5. “继续添加链接”保留原有项目和规格，相同链接不重复解析；更改访问方式只作用于新链接。解析失败项可单独重试，移除项目可以撤销，取消解析保留已成功项目。草稿仅在本次会话保留，退出后不恢复；已入队任务不受影响。
+6. 前往“任务”查看并行进度、结果、文件和日志，按需取消、重试失败项或继续未完成项；可同时回到添加页继续解析。
+7. 默认同时下载 2 个任务，设置支持 1—3 个。暂停队列不打断在途任务；重启后需确认继续，移除记录保留媒体文件。
+8. 单视频主动选择的 MP4/MP3 模式和画质会自动保存；批量中的个别修改只作用于该项。可在“设置 → 下载偏好”关闭自动记忆。编辑区“更多”可将规格用于其他未单独修改的项目；已入队规格不变。
+9. “任务 → 暂存管理”扫描当前及任务使用过的下载目录。活动任务、可恢复断点与异常路径受保护；孤立残留和已完成暂存可多选清理。清理仅移入同卷 `.bili-tasks-recycle`，不会释放磁盘空间；可在此还原，或打开回收区自行删除以释放空间。成功后的空暂存目录自动回收。
 
 ### WinUI 3 原生界面
 
@@ -160,12 +167,12 @@ $env:BILI_TEST_PYTHON = (Get-Command python).Source
 $env:BILI_BACKEND_SOURCE = (Get-Location).Path
 dotnet run --project BiliDownloader.WinUI.Tests
 
-# 构建自包含目录与 ZIP 候选包
+# 构建自包含目录与自解压 EXE 候选包
 .\build.ps1 -Clean
-.\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v3.8.win-x64\BiliDownloader.v3.8.exe
+.\tools\package_smoke.ps1 -Executable .\dist\BiliDownloader.v3.10.win-x64\BiliDownloader.v3.10.exe
 ```
 
-当前源码构建输出为 `dist\BiliDownloader.v3.8.win-x64\` 与同名 ZIP；未提交构建会保留 dirty 标记。`build.ps1` 重新创建 `build\.venv`，使用哈希锁与 NuGet locked restore。`python -m app.main` 是兼容后端入口，UI 入口已迁移至 WinUI 工程。
+当前源码构建输出为 `dist\BiliDownloader.v3.10.win-x64\` 与同名自解压 EXE；未提交构建会保留 dirty 标记。`build.ps1` 重新创建 `build\.venv`，使用哈希锁与 NuGet locked restore。`python -m app.main` 是兼容后端入口，UI 入口已迁移至 WinUI 工程。
 
 PR/main CI 执行 Python 回归、WinUI 编译和 C# 管道测试，纯 Markdown 变更跳过。正式打包集中在 Release，校验前后端版本、原生启动、包内容及联合 SBOM，再生成摘要和来源证明。真实扫码、下载、DPI、读屏和窗口交互的外部验收单独记录。详见 [发布检查清单](./RELEASE_CHECKLIST.md) 与 [维护者说明](./MAINTAINER_NOTES.md)。
 

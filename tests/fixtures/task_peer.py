@@ -11,9 +11,17 @@ from app.downloader import VideoInfoResult, VideoPart, FormatChoice, DownloadBat
 from app.video_urls import normalize_video_input
 
 
+parse_attempts = {}
+
+
 def parse(value, *args):
     url = normalize_video_input(value)
     name = url.split("/")[-1]
+    parse_attempts[name] = parse_attempts.get(name, 0) + 1
+    if name == "BV1234567819" and parse_attempts[name] == 1:
+        raise RuntimeError("Deterministic first-attempt failure")
+    if name == "BV1234567818":
+        time.sleep(1.5)
     formats = [FormatChoice("最高可用", "bestvideo+bestaudio/best")]
     if not name.endswith("1"):
         formats.append(FormatChoice("1080p", "bestvideo[height=1080]+bestaudio/best[height=1080]", 1080, "exact_height"))
