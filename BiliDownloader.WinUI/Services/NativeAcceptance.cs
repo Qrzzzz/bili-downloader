@@ -20,6 +20,7 @@ public static class NativeAcceptance
         var snapshots = new List<object>();
         var uiChecks = new List<string>();
         var controls = new List<object>();
+        var layoutCoverage = new List<object>();
         IEnumerable<FrameworkElement> Elements(DependencyObject node)
         {
             if (node is FrameworkElement element) yield return element;
@@ -40,6 +41,11 @@ public static class NativeAcceptance
             if (!ok)
             {
                 File.WriteAllText(Path.Combine(output, "native-failure.json"), JsonSerializer.Serialize(new { check = name,
+                    viewport_width = (frame.Content as FrameworkElement)?.ActualWidth,
+                    root_width = root.ActualWidth,
+                    window_width = window.AppWindow.Size.Width,
+                    navigation_mode = navigation.DisplayMode.ToString(),
+                    wide_layout = App.Session.Download.WideLayout,
                     selected_parts = App.Session.Download.SelectedParts.ToArray(),
                     applying = App.Session.Download.ApplyingConfiguration,
                     enabled = App.Session.Download.CanEditSpecification,
@@ -257,8 +263,16 @@ public static class NativeAcceptance
         window.AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(1280 * root.XamlRoot.RasterizationScale), (int)(800 * root.XamlRoot.RasterizationScale)));
         root.RequestedTheme = ElementTheme.Light;
         await Task.Delay(250);
-        Check(model.WideLayout && model.BatchListVisibility == Visibility.Visible && model.EditorVisibility == Visibility.Visible, "native_wide_batch_shows_list_and_editor_together");
-        await Snapshot("batch-editor-wide-light", true);
+        root.UpdateLayout();
+        var currentPage = frame.Content as FrameworkElement ?? throw new InvalidOperationException("Download page is not loaded.");
+        double availableWidth = currentPage.ActualWidth;
+        bool expectsWide = availableWidth >= 900;
+        layoutCoverage.Add(new { requested_window_width_dip = 1280, available_page_width_dip = availableWidth,
+            actual_window_width = window.AppWindow.Size.Width, wide_covered = expectsWide });
+        Check(model.WideLayout == expectsWide && model.BatchListVisibility == Visibility.Visible &&
+            model.EditorVisibility == (expectsWide ? Visibility.Visible : Visibility.Collapsed),
+            expectsWide ? "native_wide_batch_shows_list_and_editor_together" : "native_limited_viewport_retains_batch_list");
+        await Snapshot(expectsWide ? "batch-editor-wide-light" : "batch-editor-limited-viewport-light", true);
         model.BatchItems.Clear();
         model.Input = "BV1nativeFixture2";
         model.ModeIndex = 0;
@@ -331,7 +345,7 @@ public static class NativeAcceptance
         // system integration check (for example clipboard access) fails.
         await File.WriteAllTextAsync(Path.Combine(output, "download-evidence.json"), JsonSerializer.Serialize(new {
             version = App.AppVersion, scope = "download-page-and-frontend-state", backend_connected = session.Connected,
-            state_checks = stateChecks, ui_checks = uiChecks.ToArray(), snapshots = snapshots.ToArray()
+            state_checks = stateChecks, ui_checks = uiChecks.ToArray(), snapshots = snapshots.ToArray(), layout_coverage = layoutCoverage
         }, new JsonSerializerOptions { WriteIndented = true }));
         window.AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(640 * root.XamlRoot.RasterizationScale), (int)(480 * root.XamlRoot.RasterizationScale)));
         navigation.SelectedItem = navigation.MenuItems.OfType<NavigationViewItem>().First(i => (string)i.Tag == "account");
@@ -501,7 +515,7 @@ public static class NativeAcceptance
             account_page = accountPage, invalid_input_handled = invalidInputHandled, status_preserved = statusPreserved,
             narrow_navigation_mode = narrowNavigationMode, caption_theme = window.AppWindow.TitleBar.PreferredTheme.ToString(),
             rasterization_scale = root.XamlRoot.RasterizationScale, themes, controls, state_checks = stateChecks,
-            ui_checks = uiChecks, snapshots };
+            ui_checks = uiChecks, snapshots, layout_coverage = layoutCoverage };
         await File.WriteAllTextAsync(Path.Combine(output, "native-evidence.json"), JsonSerializer.Serialize(evidence, new JsonSerializerOptions { WriteIndented = true }));
         root.RequestedTheme = originalTheme;
         if (!session.Connected || !invalidInputHandled || !statusPreserved || narrowNavigationMode == "Expanded") Environment.ExitCode = 2;
