@@ -7,7 +7,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $executablePath = (Resolve-Path -LiteralPath $Executable).Path
 $package = Split-Path -Parent $executablePath
-$metadata = Get-Content -LiteralPath (Join-Path $package "build-info.json") -Raw | ConvertFrom-Json
+$metadata = Get-Content -LiteralPath (Join-Path $package "build-info.json") -Raw -Encoding UTF8 | ConvertFrom-Json
 $version = $metadata.version
 $frontendVersion = (Get-Item -LiteralPath $executablePath).VersionInfo
 $backendVersion = (Get-Item -LiteralPath (Join-Path $package "BiliDownloader.Backend.exe")).VersionInfo
@@ -39,7 +39,7 @@ try {
     if ($process.ExitCode -ne 0) { throw "Native package smoke failed with exit code $($process.ExitCode)." }
     $evidencePath = Join-Path $output "native-evidence.json"
     if ((Get-Item -LiteralPath $evidencePath).LastWriteTimeUtc -lt $startedAt) { throw "Native evidence is stale." }
-    $evidence = Get-Content -LiteralPath $evidencePath -Raw | ConvertFrom-Json
+    $evidence = Get-Content -LiteralPath $evidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     if (-not $evidence.backend_connected -or -not $evidence.extends_content_into_titlebar -or
         $evidence.window_type -ne "Microsoft.UI.Xaml.Window" -or
         $evidence.titlebar_type -ne "Microsoft.UI.Xaml.Controls.TitleBar" -or
